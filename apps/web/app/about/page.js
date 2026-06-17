@@ -2,19 +2,19 @@
 
 import { nzProfile } from "@mortgage/country-adapters";
 
-export default function Settings() {
+export default function About() {
   return (
-    <div className="settings-container">
-      <header className="settings-header">
-        <h1 className="title">系统设置 & 声明</h1>
-        <p className="subtitle">管理系统偏好设置并查阅安全与合规声明。</p>
+    <div className="about-container">
+      <header className="about-header">
+        <h1 className="title gradient-text-primary">关于 RatePath</h1>
+        <p className="subtitle">了解 RatePath 的本地优先设计理念、市场配置及安全与合规声明。</p>
       </header>
 
-      <div className="settings-grid">
+      <div className="about-grid">
         
         {/* Market Config */}
-        <section className="glass-panel config-section">
-          <h2 className="section-title">本地化与市场配置</h2>
+        <section className="glass-panel config-section accent-primary">
+          <h2 className="section-title"><span className="step-num">1</span>本地化与市场配置</h2>
           
           <div className="detail-row">
             <span className="detail-lbl">适用房贷市场</span>
@@ -39,8 +39,8 @@ export default function Settings() {
         </section>
 
         {/* Privacy Section */}
-        <section className="glass-panel privacy-section">
-          <h2 className="section-title">数据隐私与离线原则</h2>
+        <section className="glass-panel privacy-section accent-cyan">
+          <h2 className="section-title"><span className="step-num">2</span>数据隐私与离线原则</h2>
           <div className="card-body">
             <p><strong>RatePath 严格遵循“本地优先”的隐私安全原则：</strong></p>
             <ul>
@@ -52,8 +52,8 @@ export default function Settings() {
         </section>
 
         {/* Disclaimer Section */}
-        <section className="glass-panel disclaimer-section" style={{ gridColumn: "1 / -1" }}>
-          <h2 className="section-title">免责声明</h2>
+        <section className="glass-panel disclaimer-section accent-amber" style={{ gridColumn: "1 / -1" }}>
+          <h2 className="section-title"><span className="step-num">3</span>免责声明</h2>
           <div className="card-body">
             <p><strong>在使用本模拟器进行决策前，请务必仔细阅读以下免责声明：</strong></p>
             <ul>
@@ -66,8 +66,8 @@ export default function Settings() {
         </section>
 
         {/* Version & Build Info */}
-        <section className="glass-panel version-section" style={{ gridColumn: "1 / -1" }}>
-          <h2 className="section-title">版本与构建信息</h2>
+        <section className="glass-panel version-section accent-emerald" style={{ gridColumn: "1 / -1" }}>
+          <h2 className="section-title"><span className="step-num">4</span>版本与构建信息</h2>
           <div className="detail-row">
             <span className="detail-lbl">应用版本</span>
             <span className="detail-val">0.1.0</span>
@@ -85,7 +85,7 @@ export default function Settings() {
       </div>
 
       <style jsx>{`
-        .settings-container {
+        .about-container {
           display: flex;
           flex-direction: column;
           gap: 24px;
@@ -95,15 +95,16 @@ export default function Settings() {
           font-size: 28px;
           font-weight: 800;
           color: #fff;
+          letter-spacing: -0.02em;
         }
 
         .subtitle {
           font-size: 14px;
           color: var(--text-secondary);
-          margin-top: 4px;
+          margin-top: 6px;
         }
 
-        .settings-grid {
+        .about-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
           gap: 24px;
@@ -113,9 +114,28 @@ export default function Settings() {
           font-size: 16px;
           font-weight: 700;
           color: #fff;
+          letter-spacing: -0.01em;
           border-bottom: 1px solid rgba(255,255,255,0.06);
-          padding-bottom: 8px;
+          padding-bottom: 10px;
           margin-bottom: 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .section-title :global(.step-num) {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: rgba(99, 102, 241, 0.18);
+          color: var(--color-primary);
+          font-size: 11px;
+          font-weight: 800;
+          border: 1px solid rgba(99, 102, 241, 0.35);
+          flex-shrink: 0;
         }
 
         .detail-row {

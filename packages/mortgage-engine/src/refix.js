@@ -3,6 +3,9 @@
 
 /**
  * Determines the next product code for a tranche that has reached maturity.
+ * Behaviour is identical regardless of whether the refix is scheduled (term
+ * matured) or early (user broke the term). Break-fee economics are handled
+ * separately by `calculateBreakFee`.
  * @param {string} currentProductCode - Current product code (e.g., "fixed-1y")
  * @param {RefixRule} [refixRule] - Refix rule configuration
  * @param {number} [refixCount] - Number of times this tranche has been refixed
@@ -27,6 +30,42 @@ export function determineRefixProduct(currentProductCode, refixRule = undefined,
   }
 
   return "floating";
+}
+
+/**
+ * Calculates the break-fee in dollars for a user-initiated early exit from a
+ * fixed-term product, per spec section 6.7. The fee is added to the period's
+ * interest (NZ market convention).
+ *
+ * The function is a stub in this iteration: callers may pass `userInitiatedBreak`
+ * to `simulateMortgageTimeline` (always `false` for now) and the amortiser will
+ * invoke this when a break is requested. The fee is read from
+ * `breakFeeSchedule[productCode]`, an entry of `{ monthsToMaturity, feeBps }`
+ * points. The closest entry to `monthsToMaturity` is used.
+ *
+ * @param {Object} input
+ * @param {string} input.productCode - Product being broken (e.g. "fixed-1y")
+ * @param {number} input.balance - Current outstanding principal
+ * @param {number} input.monthsToMaturity - Months remaining until scheduled maturity
+ * @param {Record<string, Array<{monthsToMaturity: number, feeBps: number}>>} [input.breakFeeSchedule] - Country-adapter break-fee schedule
+ * @returns {number} Fee amount in dollars (0 if schedule is empty or unknown)
+ */
+export function calculateBreakFee({ productCode, balance, monthsToMaturity, breakFeeSchedule = {} }) {
+  const entries = breakFeeSchedule[productCode];
+  if (!entries || entries.length === 0) {
+    return 0;
+  }
+  // Find the entry with the closest monthsToMaturity.
+  let best = entries[0];
+  let bestDiff = Math.abs(best.monthsToMaturity - monthsToMaturity);
+  for (let i = 1; i < entries.length; i++) {
+    const diff = Math.abs(entries[i].monthsToMaturity - monthsToMaturity);
+    if (diff < bestDiff) {
+      best = entries[i];
+      bestDiff = diff;
+    }
+  }
+  return Math.round(balance * best.feeBps / 10000 * 100) / 100;
 }
 
 /**

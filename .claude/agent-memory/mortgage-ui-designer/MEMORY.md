@@ -1,0 +1,3 @@
+- [Brand colour is indigo](brand-color-is-indigo.md) — keep `--color-primary: #6366f1`; other palette colours are accents only.
+- [Design tokens added 2026-06](design-token-additions-2026-06.md) — accent palette, gradients, glows, stat-tile and accent-* modifier classes added to globals.css.
+- [SvgChart upgrade pattern](svg-chart-upgrade-pattern.md) — recipe for gradient fills, animated entry, year axis, interactive legend and the `globalThis.getComputedStyle` linter workaround.

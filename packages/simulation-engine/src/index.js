@@ -44,15 +44,19 @@ export function simulateStrategyScenario({
       annualRate: initialRate,
       fixedUntil,
       remainingTermMonths: mortgage.remainingTermMonths,
-      repaymentType: mortgage.repaymentType
+      repaymentType: mortgage.repaymentType,
+      linkedOffsetBalance: 0
     };
   });
 
-  // Construct temporary mortgage object
+  // Construct temporary mortgage object. Forward the new payment-policy, offset
+  // event, and target fields per spec section 4 and 7.
   /** @type {import("@mortgage/schemas").Mortgage} */
   const tempMortgage = {
     ...mortgage,
-    tranches
+    tranches,
+    paymentPolicy: mortgage.paymentPolicy,
+    offsetEvents: mortgage.offsetEvents
   };
 
   // Run the timeline simulation
@@ -157,6 +161,10 @@ export function simulateStrategyScenario({
     maximumConcurrentRefixPercentage: maxConcurrentRefixPercentage,
     floatingExposure,
     affordabilityBreaches,
+    payoffTime: rawResult.payoffTime,
+    offsetUtilisation: rawResult.offsetUtilisation,
+    isInfeasible: rawResult.isInfeasible,
+    infeasibilityReason: rawResult.infeasibilityReason,
     refixEvents: rawResult.refixEvents,
     timeline
   };

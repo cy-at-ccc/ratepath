@@ -34,7 +34,27 @@ export default [
         document: "readonly",
         ResizeObserver: "readonly",
         URL: "readonly",
-        Worker: "readonly"
+        Worker: "readonly",
+        // Web Platform APIs (browser & Next.js Route Handlers)
+        fetch: "readonly",
+        AbortSignal: "readonly",
+        Request: "readonly",
+        Response: "readonly",
+        Headers: "readonly",
+        crypto: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        localStorage: "readonly",
+        sessionStorage: "readonly",
+        navigator: "readonly",
+        location: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        getComputedStyle: "readonly",
+        MutationObserver: "readonly",
+        IntersectionObserver: "readonly"
       }
     },
     rules: {

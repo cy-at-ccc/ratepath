@@ -66,6 +66,10 @@ export const MarketRulesSchema = z.object({
  * @property {MortgageProductDefinition[]} products
  * @property {MarketRules} rules
  * @property {string} modelConfigVersion
+ * @property {Record<string, Array<{monthsToMaturity: number, feeBps: number}>>} [breakFeeSchedule]
+ *   - Per-product break-fee schedule (basis points keyed by months to maturity).
+ *     Empty in this iteration: no NZ product exposes a break fee yet. Reserved for
+ *     future use per spec section 4.5.
  */
 export const MarketProfileSchema = z.object({
   countryCode: z.string().length(2),
@@ -76,6 +80,10 @@ export const MarketProfileSchema = z.object({
   products: z.array(MortgageProductDefinitionSchema),
   rules: MarketRulesSchema,
   modelConfigVersion: z.string(),
+  breakFeeSchedule: z.record(z.array(z.object({
+    monthsToMaturity: z.number().int().nonnegative(),
+    feeBps: z.number().nonnegative()
+  }))).optional(),
 });
 
 /**
@@ -87,6 +95,7 @@ export const MarketProfileSchema = z.object({
  * @property {string|null} fixedUntil
  * @property {number} remainingTermMonths
  * @property {"principal-and-interest"|"interest-only"} repaymentType
+ * @property {number} [linkedOffsetBalance] - Starting cash in the linked offset account (0 if not an offset-eligible tranche).
  */
 export const MortgageTrancheSchema = z.object({
   id: z.string(),
@@ -96,6 +105,7 @@ export const MortgageTrancheSchema = z.object({
   fixedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), // YYYY-MM-DD
   remainingTermMonths: z.number().int().positive(),
   repaymentType: z.enum(["principal-and-interest", "interest-only"]),
+  linkedOffsetBalance: z.number().nonnegative().default(0),
 });
 
 /**
@@ -119,6 +129,26 @@ export const ExtraRepaymentSchema = z.object({
 });
 
 /**
+ * @typedef {Object} OffsetEvent
+ * @property {string} id
+ * @property {"one-off"|"recurring"} type
+ * @property {number} amount - Signed: positive = top-up cash into offset; negative = withdrawal.
+ * @property {"weekly"|"fortnightly"|"monthly"} frequency
+ * @property {string} startDate - ISO YYYY-MM-DD
+ * @property {string|null} endDate - ISO YYYY-MM-DD
+ * @property {string|null} targetTrancheId - Floating tranche this offset is linked to.
+ */
+export const OffsetEventSchema = z.object({
+  id: z.string(),
+  type: z.enum(["one-off", "recurring"]),
+  amount: z.number(),
+  frequency: z.enum(["weekly", "fortnightly", "monthly"]),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  targetTrancheId: z.string().nullable(),
+});
+
+/**
  * @typedef {Object} Mortgage
  * @property {string} id
  * @property {string} name
@@ -128,6 +158,8 @@ export const ExtraRepaymentSchema = z.object({
  * @property {number} remainingTermMonths
  * @property {"term"|"payment"} [targetMode]
  * @property {number} [targetPeriodicPayment]
+ * @property {"exact"|"maximum"|"minimum"} [paymentPolicy] - Per-period debit policy when in payment mode.
+ * @property {OffsetEvent[]} [offsetEvents] - Date-based offset account events.
  * @property {"weekly"|"fortnightly"|"monthly"} repaymentFrequency
  * @property {"principal-and-interest"|"interest-only"} repaymentType
  * @property {MortgageTranche[]} tranches
@@ -142,10 +174,58 @@ export const MortgageSchema = z.object({
   remainingTermMonths: z.number().int().positive(),
   targetMode: z.enum(["term", "payment"]).optional(),
   targetPeriodicPayment: z.number().positive().optional(),
+  paymentPolicy: z.enum(["exact", "maximum", "minimum"]).default("minimum"),
+  offsetEvents: z.array(OffsetEventSchema).default([]),
   repaymentFrequency: z.enum(["weekly", "fortnightly", "monthly"]),
   repaymentType: z.enum(["principal-and-interest", "interest-only"]),
   tranches: z.array(MortgageTrancheSchema),
   extraRepayments: z.array(ExtraRepaymentSchema),
+});
+
+/**
+ * @typedef {Object} SimulationResult
+ * @property {string} strategyId
+ * @property {string} scenarioId
+ * @property {number} totalInterest
+ * @property {number} totalRepayments
+ * @property {number} endingBalance
+ * @property {number} maximumPayment
+ * @property {number} minimumPayment
+ * @property {number} averagePayment
+ * @property {number} maximumPaymentIncrease
+ * @property {number} paymentVolatility
+ * @property {number} refixEventCount
+ * @property {number} maximumConcurrentRefixPercentage
+ * @property {number} floatingExposure
+ * @property {number} affordabilityBreaches
+ * @property {number} [payoffTime] - Month index of full payoff; forecastMonths+1 if not paid off.
+ * @property {number} [offsetUtilisation] - Average offset utilisation ratio across active periods.
+ * @property {boolean} [isInfeasible] - True if the strategy cannot satisfy its payment policy.
+ * @property {string|null} [infeasibilityReason] - Human-readable reason when isInfeasible is true.
+ * @property {any[]} refixEvents
+ * @property {any[]} timeline
+ */
+export const SimulationResultSchema = z.object({
+  strategyId: z.string(),
+  scenarioId: z.string(),
+  totalInterest: z.number(),
+  totalRepayments: z.number(),
+  endingBalance: z.number(),
+  maximumPayment: z.number(),
+  minimumPayment: z.number(),
+  averagePayment: z.number(),
+  maximumPaymentIncrease: z.number(),
+  paymentVolatility: z.number(),
+  refixEventCount: z.number().int().nonnegative(),
+  maximumConcurrentRefixPercentage: z.number(),
+  floatingExposure: z.number(),
+  affordabilityBreaches: z.number().int().nonnegative(),
+  payoffTime: z.number().int().nonnegative().optional(),
+  offsetUtilisation: z.number().optional(),
+  isInfeasible: z.boolean().default(false),
+  infeasibilityReason: z.string().nullable().default(null),
+  refixEvents: z.array(z.any()),
+  timeline: z.array(z.any())
 });
 
 /**

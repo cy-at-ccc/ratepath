@@ -49,10 +49,10 @@ export default function Navbar() {
       )
     },
     {
-      label: "设置",
-      href: "/settings",
+      label: "关于",
+      href: "/about",
       icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
       )
     }
   ];
@@ -60,16 +60,18 @@ export default function Navbar() {
   return (
     <nav className={`nav-sidebar ${isCollapsed ? "collapsed" : ""}`}>
       <div className="nav-logo">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        <span>RatePath</span>
-        <span className="badge badge-emerald" style={{ marginLeft: "6px", fontSize: "10px", padding: "2px 6px" }}>NZ</span>
+        <span className="nav-logo-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </span>
+        <span className="nav-logo-text">RatePath</span>
+        <span className="badge badge-emerald nav-logo-badge">NZ</span>
       </div>
       
       <div className="nav-links">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           return (
-            <Link key={item.href} href={item.href} className={`nav-link ${isActive ? "active" : ""}`}>
+            <Link key={item.href} href={item.href} data-label={item.label} className={`nav-link ${isActive ? "active" : ""}`}>
               {item.icon}
               <span>{item.label}</span>
             </Link>
@@ -93,13 +95,22 @@ export default function Navbar() {
       <style jsx>{`
         .nav-sidebar {
           width: var(--sidebar-width);
-          background: rgba(10, 15, 30, 0.9);
+          background:
+            linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, rgba(11, 15, 25, 0.0) 30%),
+            rgba(10, 15, 30, 0.9);
           border-right: 1px solid var(--border-glass);
           display: flex;
           flex-direction: column;
-          padding: 30px 20px;
+          padding: 28px 18px;
           min-height: 100vh;
           transition: var(--transition-smooth);
+          position: sticky;
+          top: 0;
+          align-self: flex-start;
+          max-height: 100vh;
+          overflow-y: auto;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
         }
 
         .nav-logo {
@@ -110,26 +121,52 @@ export default function Navbar() {
           font-size: 20px;
           font-weight: 800;
           color: #fff;
-          margin-bottom: 40px;
-          padding-left: 8px;
+          margin-bottom: 36px;
+          padding: 4px 8px;
+          border-radius: 10px;
           transition: var(--transition-smooth);
         }
 
-        .nav-logo :global(.text-primary) {
-          color: var(--color-primary);
+        .nav-logo-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          background: var(--gradient-primary);
+          color: #fff;
+          box-shadow: var(--glow-primary);
+          flex-shrink: 0;
+        }
+
+        .nav-logo-text {
+          background: var(--gradient-text-primary);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          color: transparent;
+          letter-spacing: -0.02em;
+        }
+
+        .nav-logo-badge {
+          margin-left: 4px;
+          font-size: 10px;
+          padding: 2px 7px;
+          letter-spacing: 0.05em;
         }
 
         .nav-links {
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 6px;
         }
 
         :global(.nav-link) {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 14px 16px;
+          padding: 12px 14px;
           border-radius: 10px;
           color: var(--text-secondary);
           font-family: var(--font-heading);
@@ -137,17 +174,31 @@ export default function Navbar() {
           font-size: 14px;
           transition: var(--transition-smooth);
           width: 100%;
+          position: relative;
         }
 
         :global(.nav-link:hover) {
           color: #fff;
-          background: rgba(255, 255, 255, 0.03);
+          background: rgba(255, 255, 255, 0.04);
+          transform: translateX(2px);
         }
 
         :global(.nav-link.active) {
           color: #fff;
-          background: rgba(99, 102, 241, 0.12);
-          border: 1px solid rgba(99, 102, 241, 0.2);
+          background: linear-gradient(90deg, rgba(99, 102, 241, 0.18), rgba(99, 102, 241, 0.06));
+          box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.3);
+        }
+
+        :global(.nav-link.active)::before {
+          content: "";
+          position: absolute;
+          left: -2px;
+          top: 8px;
+          bottom: 8px;
+          width: 3px;
+          border-radius: 2px;
+          background: var(--gradient-primary);
+          box-shadow: var(--glow-primary);
         }
 
         :global(.nav-link svg) {
@@ -156,6 +207,11 @@ export default function Navbar() {
 
         :global(.nav-link.active svg) {
           color: var(--color-primary);
+          filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.5));
+        }
+
+        :global(.nav-link:hover svg) {
+          color: #fff;
         }
 
         /* Collapsed Sidebar Styles */
@@ -171,29 +227,60 @@ export default function Navbar() {
           margin-bottom: 30px;
         }
 
-        .nav-sidebar.collapsed .nav-logo span {
+        .nav-sidebar.collapsed .nav-logo-text,
+        .nav-sidebar.collapsed .nav-logo-badge {
           display: none;
         }
 
         .nav-sidebar.collapsed .nav-links {
           align-items: center;
           width: 100%;
+          gap: 8px;
         }
 
         .nav-sidebar.collapsed :global(.nav-link) {
-          padding: 14px 0;
+          padding: 0;
           justify-content: center;
           width: 44px;
           height: 44px;
+          position: relative;
         }
 
         .nav-sidebar.collapsed :global(.nav-link span) {
           display: none;
         }
 
+        /* Collapsed-mode hover tooltip — pure CSS */
+        .nav-sidebar.collapsed :global(.nav-link)::after {
+          content: attr(data-label);
+          position: absolute;
+          left: calc(100% + 12px);
+          top: 50%;
+          transform: translateY(-50%) translateX(-4px);
+          background: rgba(15, 26, 46, 0.96);
+          color: #fff;
+          font-size: 12px;
+          font-family: var(--font-heading);
+          padding: 6px 10px;
+          border-radius: 6px;
+          white-space: nowrap;
+          opacity: 0;
+          pointer-events: none;
+          border: 1px solid rgba(99, 102, 241, 0.3);
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+          transition: opacity 0.15s ease, transform 0.15s ease;
+          z-index: 50;
+        }
+
+        .nav-sidebar.collapsed :global(.nav-link:hover)::after,
+        .nav-sidebar.collapsed :global(.nav-link:focus-visible)::after {
+          opacity: 1;
+          transform: translateY(-50%) translateX(0);
+        }
+
         /* Collapse Toggle Button */
         .collapse-btn {
-          margin-top: auto;
+          margin-top: 18px;
           background: rgba(255, 255, 255, 0.03);
           border: 1px solid var(--border-glass);
           border-radius: 10px;
@@ -202,15 +289,16 @@ export default function Navbar() {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 12px;
+          padding: 10px;
           width: 100%;
           transition: var(--transition-smooth);
         }
 
         .collapse-btn:hover {
           color: #fff;
-          background: rgba(255, 255, 255, 0.08);
-          border-color: rgba(255, 255, 255, 0.15);
+          background: rgba(99, 102, 241, 0.1);
+          border-color: rgba(99, 102, 241, 0.3);
+          box-shadow: var(--glow-primary);
         }
 
         .nav-sidebar.collapsed .collapse-btn {

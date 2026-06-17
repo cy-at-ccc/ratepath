@@ -197,7 +197,7 @@ export default function MortgageSetup() {
   return (
     <div className="setup-container">
       <header className="setup-header">
-        <h1 className="title">房贷信息配置</h1>
+        <h1 className="title gradient-text-primary">房贷信息配置</h1>
         <p className="subtitle">录入您的房贷全局参数，系统将在此基础上计算出最优的贷款拆包（Split）方案。</p>
       </header>
 
@@ -205,8 +205,8 @@ export default function MortgageSetup() {
         {error && <div className="error-banner">{error}</div>}
 
         {/* Global Mortgage Settings Card */}
-        <section className="glass-panel form-section">
-          <h2 className="section-title">1. 房贷基础信息设定</h2>
+        <section className="glass-panel form-section accent-primary">
+          <h2 className="section-title"><span className="step-num">1</span>房贷基础信息设定</h2>
           
           <div className="form-row">
             <div className="form-group flex-1">
@@ -252,8 +252,8 @@ export default function MortgageSetup() {
         </section>
 
         {/* Repayment Target Settings Card */}
-        <section className="glass-panel form-section">
-          <h2 className="section-title">2. 还款目标设定方式</h2>
+        <section className="glass-panel form-section accent-cyan">
+          <h2 className="section-title"><span className="step-num">2</span>还款目标设定方式</h2>
           
           {/* Target Mode Selector Tabs */}
           <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
@@ -353,12 +353,13 @@ export default function MortgageSetup() {
           font-size: 28px;
           font-weight: 800;
           color: #fff;
+          letter-spacing: -0.02em;
         }
 
         .subtitle {
           font-size: 14px;
           color: var(--text-secondary);
-          margin-top: 4px;
+          margin-top: 6px;
         }
 
         .setup-form {
@@ -387,8 +388,28 @@ export default function MortgageSetup() {
           font-size: 16px;
           font-weight: 700;
           color: #fff;
+          letter-spacing: -0.01em;
+          margin-bottom: 12px;
+          padding-bottom: 10px;
           border-bottom: 1px solid rgba(255,255,255,0.06);
-          padding-bottom: 8px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .section-title :global(.step-num) {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: rgba(99, 102, 241, 0.18);
+          color: var(--color-primary);
+          font-size: 11px;
+          font-weight: 800;
+          border: 1px solid rgba(99, 102, 241, 0.35);
+          flex-shrink: 0;
         }
 
         .form-row {

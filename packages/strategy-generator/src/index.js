@@ -3,6 +3,19 @@
 
 /**
  * Generates all candidate split strategies satisfying constraints.
+ *
+ * Includes the pruning rules from spec section 6.12:
+ * - PR-1 floating cap: prune when `floatingSoFar > maxFloatingPercentage` (or the lower bound
+ *   cannot be reached with `remaining`).
+ * - PR-2 fixed floor: symmetric to PR-1.
+ * - PR-3 splits cap: prune when `trancheCountSoFar == maxSplits` and `remaining > 0`.
+ * - PR-4 minimum amount: at the leaf, prune if any allocation would yield less than `minTrancheAmount`.
+ * - PR-5 duplicate product: the catalogue iteration skips products that share a productCode.
+ * - PR-6 subtree memoisation: memoize on `(currentIndex, remainingKey, floatingSoFarKey, fixedSoFarKey, trancheCountSoFar)`.
+ *
+ * Coarse-to-fine search (spec 6.13) is accepted as an optional argument but is not engaged in this
+ * iteration; a single pass at `percentageStep` is used.
+ *
  * @param {Object} input
  * @param {number} input.totalAmount - Total loan amount (e.g. 500000)
  * @param {Array<{code: string, type: string}>} input.allowedProducts - Allowed product codes and types
@@ -15,13 +28,17 @@
  * @param {number} [input.constraints.minTrancheAmount=10000] - Minimum tranche amount in dollars
  * @param {boolean} [input.constraints.mustKeepFloating=false] - If true, floating percentage must be > 0
  * @param {import("@mortgage/schemas").RefixRule} [input.refixRule] - Refix rule configuration to append
+ * @param {Object} [input.coarseToFine] - Optional coarse-to-fine config (reserved, not engaged)
+ * @param {{[key: string]: number}} [input._counters] - Test hook for counting recursive calls / cache hits
  * @returns {SplitStrategy[]} List of valid SplitStrategy objects
  */
 export function generateSplitStrategies({
   totalAmount,
   allowedProducts,
   constraints = {},
-  refixRule = { type: "same-term" }
+  refixRule = { type: "same-term" },
+  coarseToFine = undefined,
+  _counters = undefined
 }) {
   const maxSplits = constraints.maxSplits ?? 3;
   const minPercentage = constraints.minPercentage ?? 0.1;
@@ -32,42 +49,88 @@ export function generateSplitStrategies({
   const mustKeepFloating = constraints.mustKeepFloating ?? false;
 
   const stepCount = Math.round(1 / percentageStep);
-  const products = allowedProducts;
+  // PR-5: drop duplicate product codes from the input catalogue before recursion.
+  const seenCodes = new Set();
+  /** @type {Array<{code: string, type: string}>} */
+  const products = [];
+  for (const p of allowedProducts) {
+    if (!seenCodes.has(p.code)) {
+      seenCodes.add(p.code);
+      products.push(p);
+    }
+  }
 
   /** @type {SplitStrategy[]} */
   const validStrategies = [];
   const strategyKeys = new Set();
 
+  // PR-6: memoisation cache for identical subtree states.
+  /** @type {Map<string, boolean>} */
+  const memo = new Map();
+
+  if (_counters) {
+    _counters.callCount = 0;
+    _counters.cacheHitCount = 0;
+  }
+
   /**
-   * Recursive allocation solver.
+   * Recursive allocation solver with PR-1..PR-6 pruning.
    * @param {number} currentIndex - Current product index
    * @param {Array<{productCode: string, percentage: number}>} currentAllocation - Accumulated percentage splits
    * @param {number} remainingPercentage - Unallocated percentage remaining
+   * @param {number} floatingSoFar - Floating % allocated so far
+   * @param {number} fixedSoFar - Fixed % allocated so far
+   * @param {number} trancheCountSoFar - Number of active allocations so far
    */
-  function allocate(currentIndex, currentAllocation, remainingPercentage) {
+  function allocate(currentIndex, currentAllocation, remainingPercentage, floatingSoFar, fixedSoFar, trancheCountSoFar) {
+    if (_counters) _counters.callCount++;
     const remaining = Math.round(remainingPercentage * 1e4) / 1e4;
+
+    // PR-1: floating cap. If we have already exceeded the cap, no continuation can fix it.
+    if (floatingSoFar > maxFloatingPercentage + 1e-9) return;
+    // PR-1b: if the remaining is all-fixed we cannot add more floating; symmetric for the floor.
+    if (floatingSoFar + remaining < minFixedPercentage && minFixedPercentage > 0) {
+      // The user requires a minimum fixed percentage, but adding all remaining to fixed still
+      // leaves us short. The branch cannot reach a valid strategy; prune.
+      if (fixedSoFar + remaining < minFixedPercentage) return;
+    }
+    // PR-2: fixed floor.
+    if (fixedSoFar + remaining < minFixedPercentage - 1e-9) return;
+    // PR-3: splits cap (cheap pre-leaf version).
+    if (trancheCountSoFar >= maxSplits && remaining > 0) return;
+
+    // PR-6: subtree memoisation.
+    const memoKey = `${currentIndex}|${remaining.toFixed(4)}|${floatingSoFar.toFixed(4)}|${fixedSoFar.toFixed(4)}|${trancheCountSoFar}`;
+    if (memo.has(memoKey)) {
+      if (_counters) _counters.cacheHitCount++;
+      return;
+    }
 
     if (remaining === 0) {
       // 1. Filter out empty allocations
       const activeAllocations = currentAllocation.filter(a => a.percentage > 0);
       if (activeAllocations.length === 0) {
+        memo.set(memoKey, true);
         return;
       }
 
-      // 2. Validate max splits
+      // 2. Validate max splits (PR-3 strict check at leaf).
       if (activeAllocations.length > maxSplits) {
+        memo.set(memoKey, true);
         return;
       }
 
       // 3. Validate minimum percentage on all non-zero allocations
-      const hasUnderMinPercentage = activeAllocations.some(a => a.percentage < minPercentage);
+      const hasUnderMinPercentage = activeAllocations.some(a => a.percentage < minPercentage - 1e-9);
       if (hasUnderMinPercentage) {
+        memo.set(memoKey, true);
         return;
       }
 
-      // 4. Validate minimum tranche amount
-      const hasUnderMinAmount = activeAllocations.some(a => a.percentage * totalAmount < minTrancheAmount);
+      // 4. PR-4 minimum tranche amount
+      const hasUnderMinAmount = activeAllocations.some(a => a.percentage * totalAmount < minTrancheAmount - 1e-9);
       if (hasUnderMinAmount) {
+        memo.set(memoKey, true);
         return;
       }
 
@@ -87,13 +150,16 @@ export function generateSplitStrategies({
       floatingPct = Math.round(floatingPct * 1e4) / 1e4;
       fixedPct = Math.round(fixedPct * 1e4) / 1e4;
 
-      if (floatingPct > maxFloatingPercentage) {
+      if (floatingPct > maxFloatingPercentage + 1e-9) {
+        memo.set(memoKey, true);
         return;
       }
-      if (fixedPct < minFixedPercentage) {
+      if (fixedPct < minFixedPercentage - 1e-9) {
+        memo.set(memoKey, true);
         return;
       }
       if (mustKeepFloating && floatingPct <= 0) {
+        memo.set(memoKey, true);
         return;
       }
 
@@ -102,6 +168,7 @@ export function generateSplitStrategies({
 
       const key = sortedAllocations.map(a => `${a.productCode}:${a.percentage}`).join("|");
       if (strategyKeys.has(key)) {
+        memo.set(memoKey, true);
         return;
       }
 
@@ -120,31 +187,49 @@ export function generateSplitStrategies({
         refixRule
       });
 
+      memo.set(memoKey, true);
       return;
     }
 
     if (currentIndex >= products.length) {
+      memo.set(memoKey, true);
       return;
     }
 
     const product = products[currentIndex];
+    const isFloatingType = ["floating", "offset", "revolving"].includes(product.type);
 
-    // Recurse allocating grid steps
+    // Recurse allocating grid steps. Iterate stepCount + 1 because step 0 (skip product) is valid.
     for (let steps = 0; steps <= stepCount; steps++) {
       const pct = steps * percentageStep;
       if (pct > remaining + 1e-9) {
         break;
       }
 
+      // PR-1/PR-2: pre-prune the floating cap and fixed floor at the next allocation step.
+      const nextFloating = isFloatingType ? floatingSoFar + pct : floatingSoFar;
+      const nextFixed = isFloatingType ? fixedSoFar : fixedSoFar + pct;
+      if (nextFloating > maxFloatingPercentage + 1e-9) break;
+      if (nextFixed + (remaining - pct) < minFixedPercentage - 1e-9) continue;
+
+      // PR-3: at the next depth, the count is incremented only when pct > 0.
+      const nextCount = trancheCountSoFar + (pct > 0 ? 1 : 0);
+      if (nextCount > maxSplits) break;
+
       allocate(
         currentIndex + 1,
         [...currentAllocation, { productCode: product.code, percentage: pct }],
-        remaining - pct
+        remaining - pct,
+        nextFloating,
+        nextFixed,
+        nextCount
       );
     }
+
+    memo.set(memoKey, true);
   }
 
-  allocate(0, [], 1.0);
+  allocate(0, [], 1.0, 0, 0, 0);
 
   return validStrategies;
 }

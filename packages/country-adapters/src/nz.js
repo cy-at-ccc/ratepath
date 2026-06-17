@@ -27,7 +27,15 @@ export const nzProfile = {
     minPercentage: 0.1,
     percentageStep: 0.1
   },
-  modelConfigVersion: "nz-1.0.0"
+  modelConfigVersion: "nz-1.0.0",
+  /**
+   * Per-product break-fee schedule (basis points keyed by months to maturity).
+   * Empty in this iteration: no NZ product exposes a break fee yet. The amortiser
+   * only consults this when a `userInitiatedBreak` flag is set, which is not
+   * exposed in the current UI. Reserved for future use per spec section 4.5.
+   * @type {Record<string, Array<{monthsToMaturity: number, feeBps: number}>>}
+   */
+  breakFeeSchedule: {}
 };
 
 /** @type {Record<string, number>} */
