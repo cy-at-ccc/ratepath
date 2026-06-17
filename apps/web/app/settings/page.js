@@ -65,6 +65,23 @@ export default function Settings() {
           </div>
         </section>
 
+        {/* Version & Build Info */}
+        <section className="glass-panel version-section" style={{ gridColumn: "1 / -1" }}>
+          <h2 className="section-title">版本与构建信息</h2>
+          <div className="detail-row">
+            <span className="detail-lbl">应用版本</span>
+            <span className="detail-val">0.1.0</span>
+          </div>
+          <div className="detail-row">
+            <span className="detail-lbl">构建编号</span>
+            <span className="detail-val">{typeof process !== "undefined" && process.env.NEXT_PUBLIC_BUILD_ID ? process.env.NEXT_PUBLIC_BUILD_ID : "dev"}</span>
+          </div>
+          <div className="detail-row">
+            <span className="detail-lbl">Next.js 版本</span>
+            <span className="detail-val">16.2.9</span>
+          </div>
+        </section>
+
       </div>
 
       <style jsx>{`
