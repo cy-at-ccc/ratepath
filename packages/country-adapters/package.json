@@ -1,0 +1,10 @@
+{
+  "name": "@mortgage/country-adapters",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "dependencies": {
+    "@mortgage/schemas": "*"
+  }
+}

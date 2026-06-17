@@ -1,0 +1,30 @@
+{
+  "name": "mortgage-strategy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mortgage Strategy Simulation App",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "check": "tsc -p jsconfig.json --noEmit"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "services/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.5.0",
+    "prettier": "^3.3.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

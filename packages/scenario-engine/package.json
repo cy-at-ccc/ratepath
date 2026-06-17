@@ -1,0 +1,11 @@
+{
+  "name": "@mortgage/scenario-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "dependencies": {
+    "@mortgage/schemas": "*",
+    "@mortgage/rate-engine": "*"
+  }
+}
