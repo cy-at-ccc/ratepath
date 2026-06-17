@@ -381,3 +381,226 @@ describe("Pareto tolerance & mode-specific objectives", () => {
     expect(paymentExp.pros.length).toBeGreaterThan(0);
   });
 });
+
+describe("Weights path and recommendation source semantics", () => {
+  // Scenarios shared by the term-mode weights tests. Identical probabilities
+  // to the main fixture above so the test outputs mirror the production
+  // scenario shape.
+  const scenarios = [
+    { id: "low", probability: 0.2 },
+    { id: "base", probability: 0.6 },
+    { id: "high", probability: 0.2 }
+  ];
+
+  /**
+   * Helper: build a single-scenario simulation result row with sensible
+   * defaults for fields the optimiser touches but the test does not care
+   * about. The defaults are non-degenerate (not all zero) so normalisation
+   * bounds stay well-defined even with a single scenario.
+   *
+   * @param {string} strategyId
+   * @param {string} scenarioId
+   * @param {number} totalInterest
+   * @param {number} endingBalance
+   * @param {number} maximumPayment
+   * @param {number} [floatingExposure]
+   * @param {number} [refixPct]
+   * @returns {any}
+   */
+  const mkRow = (strategyId, scenarioId, totalInterest, endingBalance, maximumPayment, floatingExposure = 0.5, refixPct = 0.1) => ({
+    strategyId,
+    scenarioId,
+    totalInterest,
+    totalRepayments: 0,
+    endingBalance,
+    maximumPayment,
+    minimumPayment: 0,
+    averagePayment: maximumPayment,
+    maximumPaymentIncrease: 0,
+    paymentVolatility: 0,
+    refixEventCount: 0,
+    maximumConcurrentRefixPercentage: refixPct,
+    floatingExposure,
+    affordabilityBreaches: 0,
+    timeline: []
+  });
+
+  // Three strategies with strictly different expectedInterest, endingBalance
+  // and worstCasePayment. Used by tests 1, 2, 3 and 6.
+  //
+  //   expectedInterest   A < B < C
+  //   expectedEndingBalance  C < B < A   (C is fastest principal paydown)
+  //   worstCasePayment    A < B < C
+  //
+  // That way:
+  //   - cost=100      -> preference is A (also lowestCost)
+  //   - principal=100 -> preference is C (not A, so != lowestCost)
+  //   - resilience=100-> preference is A (smallest worstCasePayment)
+  const baseResults = [
+    mkRow("A", "low", 10000, 400000, 3000),
+    mkRow("A", "base", 10000, 400000, 3000),
+    mkRow("A", "high", 10000, 400000, 3000),
+    mkRow("B", "low", 15000, 200000, 3500),
+    mkRow("B", "base", 15000, 200000, 3500),
+    mkRow("B", "high", 15000, 200000, 3500),
+    mkRow("C", "low", 20000, 100000, 4000),
+    mkRow("C", "base", 20000, 100000, 4000),
+    mkRow("C", "high", 20000, 100000, 4000)
+  ];
+
+  it("optimiseStrategies weights drive preference ranking", () => {
+    // cost=100 -> wCost=1, every other weight 0 -> overall score = costScore
+    // -> preference is the strategy with the smallest expectedInterest.
+    const opt = optimizeStrategies({
+      simulationResults: baseResults,
+      scenarios,
+      mode: "term",
+      weights: { cost: 100, principal: 0, refix: 0, resilience: 0, flex: 0, budget: 0 }
+    });
+    expect(opt.recommendations.preference.strategyId).toBe("A");
+    // Sanity: A is the lowestCost strategy in this fixture.
+    expect(opt.recommendations.lowestCost.strategyId).toBe("A");
+  });
+
+  it("optimiseStrategies weights zero weights on cost pushes preference to non-cheapest", () => {
+    // cost=0, principal=100 -> wPrincipal=1, wCost=0. Cost no longer
+    // contributes to overall score. The lowest-cost strategy (A) is the
+    // slowest at principal paydown, so preference should NOT be A.
+    const opt = optimizeStrategies({
+      simulationResults: baseResults,
+      scenarios,
+      mode: "term",
+      weights: { cost: 0, principal: 100, refix: 0, resilience: 0, flex: 0, budget: 0 }
+    });
+    expect(opt.recommendations.preference.strategyId).not.toBe(opt.recommendations.lowestCost.strategyId);
+    // Specifically, C is the fastest principal paydown, so it should win.
+    expect(opt.recommendations.preference.strategyId).toBe("C");
+  });
+
+  it("optimiseStrategies resilience weight aligns preference with worstCasePayment", () => {
+    // resilience=100 -> wResilience=1 -> preference has the smallest
+    // worstCasePayment among the candidates.
+    const opt = optimizeStrategies({
+      simulationResults: baseResults,
+      scenarios,
+      mode: "term",
+      weights: { cost: 0, principal: 0, refix: 0, resilience: 100, flex: 0, budget: 0 }
+    });
+    const pref = opt.rankedStrategies.find(
+      (/** @type {any} */ s) => s.strategyId === opt.recommendations.preference.strategyId
+    );
+    const minWorstCasePayment = Math.min(
+      ...opt.rankedStrategies.map((/** @type {any} */ s) => s.worstCasePayment)
+    );
+    expect(pref.worstCasePayment).toBe(minWorstCasePayment);
+  });
+
+  it("optimiseStrategies mostStable term mode uses worstCasePayment", () => {
+    // Three strategies whose `expectedMaxPayment` ordering DIFFERS from their
+    // `worstCasePayment` ordering. Pre-fix this test would have selected A
+    // (lowest expectedMaxPayment). Post-fix the mostStable slot must select
+    // B (lowest worstCasePayment).
+    //
+    //   A: 3000/5000/3000 (0.2/0.6/0.2) -> expectedMaxPayment=4200, worstCasePayment=5000
+    //   B: 4500/4500/3500                -> expectedMaxPayment=4300, worstCasePayment=4500
+    //   C: 4000/4800/4000                -> expectedMaxPayment=4480, worstCasePayment=4800
+    const results = [
+      mkRow("A", "low", 10000, 400000, 3000),
+      mkRow("A", "base", 10000, 400000, 5000),
+      mkRow("A", "high", 10000, 400000, 3000),
+      mkRow("B", "low", 10000, 400000, 4500),
+      mkRow("B", "base", 10000, 400000, 4500),
+      mkRow("B", "high", 10000, 400000, 3500),
+      mkRow("C", "low", 10000, 400000, 4000),
+      mkRow("C", "base", 10000, 400000, 4800),
+      mkRow("C", "high", 10000, 400000, 4000)
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: results,
+      scenarios,
+      mode: "term"
+    });
+    const minWorstCasePayment = Math.min(
+      ...opt.rankedStrategies.map((/** @type {any} */ s) => s.worstCasePayment)
+    );
+    expect(opt.recommendations.mostStable.strategyId).toBe("B");
+    const mostStable = opt.rankedStrategies.find(
+      (/** @type {any} */ s) => s.strategyId === opt.recommendations.mostStable.strategyId
+    );
+    expect(mostStable.worstCasePayment).toBe(minWorstCasePayment);
+  });
+
+  it("optimiseStrategies mostStable payment mode uses worstCaseEndingBalance", () => {
+    // Payment-mode fixture: three strategies with strictly different
+    // worstCaseEndingBalance. The mostStable slot must select the smallest.
+    const mkPaymentRow = (strategyId, totalInterest, endingBalance, payoffTime) => ({
+      ...mkRow(strategyId, "base", totalInterest, endingBalance, 0, 0.5, 0.1),
+      payoffTime
+    });
+    const paymentResults = [
+      mkPaymentRow("A", 10000, 100000, 24),
+      mkPaymentRow("B", 15000, 200000, 30),
+      mkPaymentRow("C", 20000, 300000, 36)
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: paymentResults,
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "payment"
+    });
+    expect(opt.recommendations.mostStable.strategyId).toBe("A");
+    const mostStable = opt.rankedStrategies.find(
+      (/** @type {any} */ s) => s.strategyId === opt.recommendations.mostStable.strategyId
+    );
+    const minWorstCaseEndingBalance = Math.min(
+      ...opt.rankedStrategies.map((/** @type {any} */ s) => s.worstCaseEndingBalance)
+    );
+    expect(mostStable.worstCaseEndingBalance).toBe(minWorstCaseEndingBalance);
+  });
+
+  it("optimiseStrategies lowestCost ignores weights", () => {
+    // Pass an extreme weights profile (cost=0, principal=100) that would
+    // normally push `preference` to the fastest-paydown strategy. The
+    // `lowestCost` slot must still be the smallest expectedInterest.
+    const opt = optimizeStrategies({
+      simulationResults: baseResults,
+      scenarios,
+      mode: "term",
+      weights: { cost: 0, principal: 100, refix: 0, resilience: 0, flex: 0, budget: 0 }
+    });
+    expect(opt.recommendations.lowestCost.strategyId).toBe("A");
+    // And the preference slot must have moved away from lowestCost,
+    // proving the weights actually had an effect elsewhere.
+    expect(opt.recommendations.preference.strategyId).not.toBe(opt.recommendations.lowestCost.strategyId);
+  });
+
+  it("optimiseStrategies payment-mode weights ignore stability/endingBalance/payoff keys", () => {
+    // The JSDoc on `weights` lists the 6 term-mode keys as the only ones
+    // honoured. In payment mode, the `stability`, `endingBalance`, and
+    // `payoff` objectives are weighted by the slider-derived branch (based
+    // on `sliderCostStability` / `sliderFlexibility`), not by the caller's
+    // `weights` object. This test pins that contract: passing
+    // `endingBalance: 100` in payment mode must NOT steer `preference`
+    // any differently than passing `endingBalance: 0`.
+    const baseOpts = {
+      simulationResults: baseResults,
+      scenarios,
+      mode: "payment"
+    };
+    const withEndingBalance = optimizeStrategies({
+      ...baseOpts,
+      sliderCostStability: 0.5,
+      sliderFlexibility: 0,
+      weights: { endingBalance: 100, cost: 0 }
+    });
+    const withoutEndingBalance = optimizeStrategies({
+      ...baseOpts,
+      sliderCostStability: 0.5,
+      sliderFlexibility: 0,
+      weights: { cost: 0 }
+    });
+    // If a future change starts reading `weights.endingBalance` in payment
+    // mode, this assertion will start to fail — which is the desired alarm.
+    expect(withEndingBalance.recommendations.preference.strategyId)
+      .toBe(withoutEndingBalance.recommendations.preference.strategyId);
+  });
+});

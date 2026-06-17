@@ -25,9 +25,9 @@ export const nzProfile = {
     minTrancheAmount: 10000,
     maxSplits: 3,
     minPercentage: 0.1,
-    percentageStep: 0.1
+    percentageStep: 0.05
   },
-  modelConfigVersion: "nz-1.0.0",
+  modelConfigVersion: "nz-1.1.0",
   /**
    * Per-product break-fee schedule (basis points keyed by months to maturity).
    * Empty in this iteration: no NZ product exposes a break fee yet. The amortiser

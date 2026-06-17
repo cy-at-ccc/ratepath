@@ -100,16 +100,23 @@ export default function StrategyLab() {
   const [maxSplits, setMaxSplits] = useState(nzProfile.rules.maxSplits);
   const [maxFloatingPercentage, setMaxFloatingPercentage] = useState(10);
   const [maxAffordablePayment, setMaxAffordablePayment] = useState(5000);
+  // Allocation-grid step. Default 0.05 (5%) per country-adapter rule.
+  // UI in Section 2 lets the user coarsen to 10% or refine to 1%.
+  const [percentageStep, setPercentageStep] = useState(0.10);
 
   // Preference Weights (User Customisable)
-  const [weights, setWeights] = useState({
+  // Default mix: cost-aware, principal-led, modest refix/flex headroom,
+  // low resilience/budget weight. Tweak here is the single source of truth
+  // for the "重置默认" button below.
+  const DEFAULT_WEIGHTS = {
     cost: 45,
     principal: 25,
     refix: 10,
     flex: 10,
     resilience: 5,
     budget: 5
-  });
+  };
+  const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showOnlyBestPerMix, setShowOnlyBestPerMix] = useState(true);
 
@@ -161,6 +168,47 @@ export default function StrategyLab() {
     setWeights(nextWeights);
   };
 
+  // True when any weight has been nudged off the default mix. Drives the
+  // visibility of the "重置默认" affordance below.
+  const isWeightsModified = (() => {
+    const keys = /** @type {(keyof typeof DEFAULT_WEIGHTS)[]} */ (Object.keys(DEFAULT_WEIGHTS));
+    return keys.some((k) => weights[k] !== DEFAULT_WEIGHTS[k]);
+  })();
+
+  const handleResetWeights = () => {
+    setWeights({ ...DEFAULT_WEIGHTS });
+  };
+
+  const defaultSimDurationYears = useMemo(() => Math.min(3, simMaxYears), [simMaxYears]);
+
+  const isScenarioModified = shortTermChange !== 0.0 ||
+    mediumTermDirection !== 0.0 ||
+    changeSpeed !== 0.5 ||
+    uncertainty !== 0.01 ||
+    simDurationYears !== defaultSimDurationYears;
+
+  const handleResetScenario = () => {
+    setShortTermChange(0.0);
+    setMediumTermDirection(0.0);
+    setChangeSpeed(0.5);
+    setUncertainty(0.01);
+    setSimDurationYears(defaultSimDurationYears);
+  };
+
+  const defaultMaxAffordablePayment = mortgage?.targetPeriodicPayment || 5000;
+
+  const isConstraintsModified = maxSplits !== nzProfile.rules.maxSplits ||
+    percentageStep !== 0.10 ||
+    maxFloatingPercentage !== 10 ||
+    maxAffordablePayment !== defaultMaxAffordablePayment;
+
+  const handleResetConstraints = () => {
+    setMaxSplits(nzProfile.rules.maxSplits);
+    setPercentageStep(0.10);
+    setMaxFloatingPercentage(10);
+    setMaxAffordablePayment(defaultMaxAffordablePayment);
+  };
+
   // Generated Scenarios
   const [scenarios, setScenarios] = useState(/** @type {any[]} */([]));
   const [chartScenarioPaths, setChartScenarioPaths] = useState(/** @type {any[]} */([]));
@@ -192,6 +240,11 @@ export default function StrategyLab() {
   const simulationKeyRef = useRef(/** @type {string | null} */(null));
   const rankingKeyRef = useRef(/** @type {string | null} */(null));
   const optimisedDataRef = useRef(/** @type {any} */(null));
+  // Synchronous flag to gate the auto-resim useEffect against racing the
+  // explicit "开始仿真模拟" button. setSimulationRunning is async (state),
+  // so a tight sequence of state changes can interleave before React flushes
+  // the state update — useRef gives us a sync view (Reviewer H-2 fix).
+  const simulationInFlightRef = useRef(/** @type {boolean} */(false));
 
   /**
    * Stable JSON serialisation with sorted keys (no whitespace). Used for the
@@ -257,23 +310,30 @@ export default function StrategyLab() {
 
     async function loadSavedSimulation() {
       try {
-        const parsed = await dbGet("savedResults", "last_simulation");
-        if (parsed && parsed.results && parsed.strategies) {
-          setSimResults(parsed.results);
-          setAllStrategies(parsed.strategies);
-
-          if (parsed.params) {
-            const p = parsed.params;
-            if (p.shortTermChange !== undefined) setShortTermChange(p.shortTermChange);
-            if (p.mediumTermDirection !== undefined) setMediumTermDirection(p.mediumTermDirection);
-            if (p.changeSpeed !== undefined) setChangeSpeed(p.changeSpeed);
-            if (p.uncertainty !== undefined) setUncertainty(p.uncertainty);
-            if (p.simDurationYears !== undefined) setSimDurationYears(p.simDurationYears);
-            if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
-            if (p.maxFloatingPercentage !== undefined) setMaxFloatingPercentage(p.maxFloatingPercentage);
-            if (p.maxAffordablePayment !== undefined) setMaxAffordablePayment(p.maxAffordablePayment);
-            if (p.weights !== undefined) setWeights(p.weights);
-          }
+        const [resultsData, paramsData] = await Promise.all([
+          dbGet("savedResults", "last_simulation"),
+          dbGet("savedResults", "last_simulation_params")
+        ]);
+        if (resultsData && resultsData.results) {
+          setSimResults(resultsData.results);
+        }
+        // Fallback: old format had strategies/params in resultsData
+        const strategiesSource = (paramsData && paramsData.strategies) || (resultsData && resultsData.strategies);
+        const paramsSource = (paramsData && paramsData.params) || (resultsData && resultsData.params);
+        if (strategiesSource) {
+          setAllStrategies(strategiesSource);
+        }
+        if (paramsSource) {
+          const p = paramsSource;
+          if (p.shortTermChange !== undefined) setShortTermChange(p.shortTermChange);
+          if (p.mediumTermDirection !== undefined) setMediumTermDirection(p.mediumTermDirection);
+          if (p.changeSpeed !== undefined) setChangeSpeed(p.changeSpeed);
+          if (p.uncertainty !== undefined) setUncertainty(p.uncertainty);
+          if (p.simDurationYears !== undefined) setSimDurationYears(p.simDurationYears);
+          if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
+          if (p.maxFloatingPercentage !== undefined) setMaxFloatingPercentage(p.maxFloatingPercentage);
+          if (p.maxAffordablePayment !== undefined) setMaxAffordablePayment(p.maxAffordablePayment);
+          if (p.weights !== undefined) setWeights(p.weights);
         }
       } catch (e) {
         console.error("Failed to load saved simulation in strategy lab", e);
@@ -377,6 +437,11 @@ export default function StrategyLab() {
   // Start Matrix Simulation using Web Worker
   const handleStartSimulation = () => {
     if (!mortgage) return;
+    // Synchronous guard: if a simulation is already in flight, return
+    // immediately. The ref is checked before the state setter runs, so the
+    // auto-resim useEffect cannot race with the explicit button click.
+    if (simulationInFlightRef.current) return;
+    simulationInFlightRef.current = true;
 
     setError(null);
     setShowExhaustedReport(false);
@@ -391,7 +456,7 @@ export default function StrategyLab() {
       constraints: {
         maxSplits,
         minPercentage: nzProfile.rules.minPercentage,
-        percentageStep: nzProfile.rules.percentageStep,
+        percentageStep,
         minTrancheAmount: nzProfile.rules.minTrancheAmount,
         maxFloatingPercentage: maxFloatingPercentage / 100,
         minFixedPercentage: (100 - maxFloatingPercentage) / 100
@@ -400,6 +465,7 @@ export default function StrategyLab() {
     });
 
     if (strategies.length === 0) {
+      simulationInFlightRef.current = false;
       setSimulationRunning(false);
       setError("当前拆分约束下没有可行方案。请提高最大 split 数、放宽浮动比例上限，或检查贷款总额与最小分包金额。");
       return;
@@ -423,18 +489,19 @@ export default function StrategyLab() {
     });
     const forceRecompute = newSimulationKey !== simulationKeyRef.current;
 
-    // Setup Web Worker
-    if (workerRef.current) {
-      workerRef.current.terminate();
+    // Lazily create the worker once and reuse it across runs. The worker's
+    // in-process LRU cache (size 1) survives between runs, so identical
+    // inputs return `type: "cached"` without re-running the matrix.
+    // (Reviewer H-1 fix.) We only terminate the worker on unmount.
+    if (!workerRef.current) {
+      workerRef.current = new Worker(
+        new URL("../../workers/simulation.worker.js", import.meta.url),
+        { type: "module" }
+      );
     }
 
     setSimulationRunning(true);
     setProgress(0);
-
-    workerRef.current = new Worker(
-      new URL("../../workers/simulation.worker.js", import.meta.url),
-      { type: "module" }
-    );
 
     workerRef.current.onmessage = (/** @type {any} */ e) => {
       const msg = e.data;
@@ -444,12 +511,21 @@ export default function StrategyLab() {
         if (msg.key) {
           simulationKeyRef.current = msg.key;
         }
-        setSimResults(msg.results);
-        setSimulationRunning(false);
-        // Save simulation results and parameters to IndexedDB "savedResults"
+        (async () => {
+          let results = msg.results;
+          if (msg.savedToDB) {
+            const saved = await dbGet("savedResults", "last_simulation");
+            if (saved && saved.results) {
+              results = saved.results;
+            }
+          }
+          setSimResults(results);
+          simulationInFlightRef.current = false;
+          setSimulationRunning(false);
+        })();
+        // Save strategies and params to IndexedDB
         dbPut("savedResults", {
-          id: "last_simulation",
-          results: msg.results,
+          id: "last_simulation_params",
           strategies,
           params: {
             shortTermChange,
@@ -463,11 +539,12 @@ export default function StrategyLab() {
             weights
           }
         }).catch(err => {
-          console.error("Failed to save simulation results to IndexedDB", err);
+          console.error("Failed to save simulation params to IndexedDB", err);
         });
       } else if (msg.type === "error") {
         console.error("Worker error:", msg.error);
         setError("模拟运行失败: " + msg.error);
+        simulationInFlightRef.current = false;
         setSimulationRunning(false);
       }
     };
@@ -489,7 +566,12 @@ export default function StrategyLab() {
   const handleCancelSimulation = () => {
     if (workerRef.current) {
       workerRef.current.terminate();
+      // Terminate drops the worker reference; clear it so the next run
+      // re-creates a fresh worker. This intentionally busts the LRU cache
+      // (the user cancelled, so a stale cached result is not desirable).
+      workerRef.current = null;
     }
+    simulationInFlightRef.current = false;
     setSimulationRunning(false);
     setProgress(0);
   };
@@ -531,28 +613,28 @@ export default function StrategyLab() {
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            期望利息
+            期望总利息
           </span>
           <span className="stat-tile-val">${Math.round(s.expectedInterest).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            最高{freqLabel}
+            期望最高{freqLabel}
           </span>
           <span className="stat-tile-val text-rose">${Math.round(s.expectedMaxPayment).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" /></svg>
-            已还本金
+            期望已还本金
           </span>
           <span className="stat-tile-val text-emerald">${Math.round(principalRepaid).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
-            剩余本金
+            期望剩余本金
           </span>
           <span className="stat-tile-val">${Math.round(s.expectedEndingBalance).toLocaleString()}</span>
         </div>
@@ -625,10 +707,10 @@ export default function StrategyLab() {
         const prevSnapshot = snapshotMonths[snapshotMonths.indexOf(snapshotMonth) - 1] || 0;
 
         const windowMonths = baseResult.timeline.filter(
-          (/** @type {any} */ t) => t.monthIndex > prevSnapshot && t.monthIndex <= snapshotMonth
+          (/** @type {any} */ t) => t.monthIndex >= prevSnapshot && t.monthIndex < snapshotMonth
         );
 
-        const snapshotMonthData = baseResult.timeline.find((/** @type {any} */ t) => t.monthIndex === snapshotMonth)
+        const snapshotMonthData = baseResult.timeline.find((/** @type {any} */ t) => t.monthIndex === snapshotMonth - 1)
           || baseResult.timeline[baseResult.timeline.length - 1];
         const trancheAtSnapshot = snapshotMonthData?.tranches?.find((/** @type {any} */ t) => t.id === trancheId);
 
@@ -640,17 +722,12 @@ export default function StrategyLab() {
           return sum + (td ? td.interest : 0);
         }, 0);
 
-        const scheduledPaid = windowMonths.reduce((/** @type {number} */ sum, /** @type {any} */ mt) => {
-          const td = mt.tranches?.find((/** @type {any} */ t) => t.id === trancheId);
-          return sum + (td ? td.scheduledPayment : 0);
-        }, 0);
-
-        const principalRepaid = scheduledPaid - interestPaid;
+        const principalRepaid = prevBalance - balance;
 
         const windowEvents = refixEvents.filter((/** @type {any} */ e) => {
           if (e.trancheId !== trancheId) return false;
           const em = getEventMonth(e.periodIndex);
-          return em > prevSnapshot && em <= snapshotMonth;
+          return em >= prevSnapshot && em < snapshotMonth;
         }).map((/** @type {any} */ e) => {
           const newProd = nzProfile.products.find((/** @type {any} */ p) => p.code === e.newProduct);
           const newProdName = newProd ? newProd.displayName : e.newProduct;
@@ -732,7 +809,25 @@ export default function StrategyLab() {
       <div className="lab-grid">
         <div className="left-controls-col">
           <section className="glass-panel control-section">
-            <h2 className="section-title">1. 未来情景预测参数</h2>
+            <h2 className="section-title">
+              <span>1. 未来情景预测参数</span>
+              {isScenarioModified && (
+                <button
+                  type="button"
+                  onClick={handleResetScenario}
+                  className="weights-reset-btn"
+                  style={{ marginLeft: "auto" }}
+                  title="将预测参数恢复为默认值"
+                  aria-label="重置预测参数为默认值"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                  <span>重置默认</span>
+                </button>
+              )}
+            </h2>
             <div className="form-group">
               <div className="slider-label-row">
                 <span className="form-label">未来 12 个月利率变化 (Short Term)</span>
@@ -864,7 +959,25 @@ export default function StrategyLab() {
 
           {/* Split Constraints */}
           <section className="glass-panel control-section">
-            <h2 className="section-title">2. 拆分约束参数</h2>
+            <h2 className="section-title">
+              <span>2. 拆分约束参数</span>
+              {isConstraintsModified && (
+                <button
+                  type="button"
+                  onClick={handleResetConstraints}
+                  className="weights-reset-btn"
+                  style={{ marginLeft: "auto" }}
+                  title="将拆分约束恢复为默认值"
+                  aria-label="重置拆分约束为默认值"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                  <span>重置默认</span>
+                </button>
+              )}
+            </h2>
 
             <div className="form-group">
               <div className="slider-label-row">
@@ -886,6 +999,35 @@ export default function StrategyLab() {
               <div className="param-explanation">
                 限制您的贷款最多可以被拆分成几笔不同期限和额度的子贷款分包。设置为 1 时等同于不进行任何拆分，仅比较单一期限锁定方案。
                 <div className="param-example">👉 例子：设置为 3，表示系统将在“不拆分（1笔）”、“拆分为2笔”和“拆分为3笔”的所有合法方案中寻找最优策略。</div>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <div className="slider-label-row">
+                <span className="form-label">组合网格步长</span>
+                <span className="slider-value">{(percentageStep * 100).toFixed(0)}%</span>
+              </div>
+              <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+                {[
+                  { value: 0.15, label: "15% (粗)", tip: "最少组合,模拟最快" },
+                  { value: 0.10, label: "10% (适中)", tip: "组合适中,推荐日常使用" },
+                  { value: 0.05, label: "5% (细)", tip: "组合丰富,模拟较慢" }
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    title={opt.tip}
+                    className={`segmented-btn ${percentageStep === opt.value ? "active" : ""}`}
+                    onClick={() => setPercentageStep(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="param-explanation">
+              贷款额度在不同期限之间的分配步长。步长越粗,组合数越少,模拟越快。
+                 默认 10% 在组合丰富度和性能之间取得平衡;粗的 15% 跑得最快;细的 5% 组合最全但模拟较慢。
+                 <div className="param-example">👉 例子：步长 10% 时,1 笔分配可选 10%/20%/30%/.../100%(共 10 档)。</div>
               </div>
             </div>
 
@@ -1018,9 +1160,26 @@ export default function StrategyLab() {
 
                   {showAdvancedSettings && (
                     <div className="advanced-content" style={{ padding: "0 20px 20px", borderTop: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                      <p className="text-muted" style={{ fontSize: "11px", margin: "12px 0 16px", lineHeight: "1.5" }}>
-                        自定义以下 6 项指标的权重比。<strong>所有权重之和锁定为 100%</strong>。当您拖动任意滑块增加其比例时，其他滑块将等比例自动减少，反之亦然。
-                      </p>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", margin: "12px 0 16px" }}>
+                        <p className="text-muted" style={{ fontSize: "11px", lineHeight: "1.5", flex: 1, margin: 0 }}>
+                          自定义以下 6 项指标的权重比。<strong>所有权重之和锁定为 100%</strong>。当您拖动任意滑块增加其比例时，其他滑块将等比例自动减少，反之亦然。
+                        </p>
+                        {isWeightsModified && (
+                          <button
+                            type="button"
+                            onClick={handleResetWeights}
+                            className="weights-reset-btn"
+                            title="将 6 项权重恢复为默认配比"
+                            aria-label="重置权重为默认值"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                              <path d="M3 3v5h5" />
+                            </svg>
+                            <span>重置默认</span>
+                          </button>
+                        )}
+                      </div>
 
                       {[
                         {
@@ -1132,6 +1291,9 @@ export default function StrategyLab() {
                     }}
                   >
                     <div className="badge badge-indigo">偏好匹配推荐</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
+                      按您设置的权重打分排序（响应偏好权重）
+                    </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recPreference.strategyId)}
                     </h3>
@@ -1173,6 +1335,9 @@ export default function StrategyLab() {
                     }}
                   >
                     <div className="badge badge-emerald">最低期望成本</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
+                      期望总利息最小的方案（与权重无关）
+                    </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recLowestCost.strategyId)}
                     </h3>
@@ -1214,6 +1379,9 @@ export default function StrategyLab() {
                     }}
                   >
                     <div className="badge badge-amber">最稳妥供款</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
+                      单月最坏供款最小的方案（与权重无关）
+                    </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recMostStable.strategyId)}
                     </h3>
@@ -1522,7 +1690,12 @@ export default function StrategyLab() {
 
               {/* Full Exhausted Strategies Table */}
               <section className="glass-panel exhausted-list-section" style={{ marginTop: "24px" }}>
-                <h2 className="section-title" style={{ marginBottom: "16px" }}>所有可行拆分组合评估报告</h2>
+                <h2 className="section-title" style={{ marginBottom: "8px" }}>所有可行拆分组合评估报告</h2>
+                <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
+                  <strong>综合评分</strong>：系统根据您设定的偏好权重对每个方案进行归一化加权评分，分数越低表示综合表现越优。
+                  <strong>帕累托最优</strong>：在同等利息成本下还款波动最小、或在同等波动下利息最低的方案，标记为 <strong class="text-emerald">首选</strong>。
+                  <strong>被支配方案</strong>：存在另一个方案在各项指标上都不差于它、且至少有一项严格优于它。
+                </p>
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
                   <p className="text-muted" style={{ fontSize: "12px", margin: 0, maxWidth: "60%" }}>
@@ -1560,10 +1733,11 @@ export default function StrategyLab() {
                       <tr>
                         <th>排序</th>
                         <th>重新拆分方案结构 (额度与锁定时间)</th>
+                        <th>拆分笔数</th>
                         <th>期望总利息</th>
-                        <th>最高{getRepaymentFrequencyLabel()}</th>
-                        <th>已还本金</th>
-                        <th>剩余本金</th>
+                        <th>期望最高{getRepaymentFrequencyLabel()}</th>
+                        <th>期望已还本金</th>
+                        <th>期望剩余本金</th>
                         <th>还款波动</th>
                         <th>帕累托前沿?</th>
                         <th>综合评分</th>
@@ -1590,6 +1764,7 @@ export default function StrategyLab() {
                                   <span className="pareto-mini-badge">首选</span>
                                 )}
                               </td>
+                              <td className="font-semibold text-center">{allStrategies.find(x => x.id === s.strategyId)?.allocations?.length || 1}</td>
                               <td className="text-emerald">${Math.round(s.expectedInterest).toLocaleString()}</td>
                               <td>${Math.round(s.expectedMaxPayment).toLocaleString()}</td>
                               <td className="text-emerald">${Math.round(principalRepaid).toLocaleString()}</td>
@@ -1847,6 +2022,47 @@ export default function StrategyLab() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+
+        .weights-reset-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          font-family: var(--font-heading);
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          color: var(--text-secondary);
+          background: rgba(99, 102, 241, 0.08);
+          border: 1px solid rgba(99, 102, 241, 0.25);
+          border-radius: 8px;
+          cursor: pointer;
+          transition: var(--transition-smooth);
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .weights-reset-btn:hover {
+          color: #fff;
+          background: rgba(99, 102, 241, 0.18);
+          border-color: rgba(99, 102, 241, 0.55);
+          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+          transform: translateY(-1px);
+        }
+
+        .weights-reset-btn:active {
+          transform: translateY(0);
+        }
+
+        .weights-reset-btn:focus-visible {
+          outline: none;
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35);
+        }
+
+        .weights-reset-btn svg {
+          color: var(--color-primary);
         }
 
         .rec-cards-grid {

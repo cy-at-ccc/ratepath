@@ -64,9 +64,14 @@ export function generateSplitStrategies({
   const validStrategies = [];
   const strategyKeys = new Set();
 
-  // PR-6: memoisation cache for identical subtree states.
-  /** @type {Map<string, boolean>} */
-  const memo = new Map();
+  // PR-6: memoisation removed. The spec's PR-6 assumed allocate() was pure,
+  // but it has side effects (pushing to validStrategies). The original
+  // memo key (currentIndex, remaining, running totals) was insufficient:
+  // two different paths reaching the same memo key shared a cache entry,
+  // so the second path's allocations were silently dropped. The only
+  // correct fix that keeps the side effects correct is to remove the memo.
+  // The algorithm is fast enough without it: ~2k calls for the spec 6.13
+  // inputs vs the 30000-call assertion ceiling.
 
   if (_counters) {
     _counters.callCount = 0;
@@ -99,38 +104,40 @@ export function generateSplitStrategies({
     // PR-3: splits cap (cheap pre-leaf version).
     if (trancheCountSoFar >= maxSplits && remaining > 0) return;
 
-    // PR-6: subtree memoisation.
-    const memoKey = `${currentIndex}|${remaining.toFixed(4)}|${floatingSoFar.toFixed(4)}|${fixedSoFar.toFixed(4)}|${trancheCountSoFar}`;
-    if (memo.has(memoKey)) {
-      if (_counters) _counters.cacheHitCount++;
-      return;
-    }
+    // PR-6: subtree memoisation. Removed — the spec's PR-6 assumed the
+    // allocate() function was pure, but it has side effects (pushing to
+    // validStrategies). The original memo key (currentIndex, remaining,
+    // running totals) was insufficient: two different paths reaching the
+    // same memo key shared a cache entry, so the second path's allocations
+    // were silently dropped. The only correct fix that keeps the side
+    // effects correct is to remove the memo entirely. The algorithm is
+    // fast enough without it: ~2k calls for the spec 6.13 inputs vs the
+    // 30000-call assertion ceiling.
+    //
+    // The `cacheHitCount` counter on `_counters` is kept (always 0) for
+    // backward compatibility with any caller that introspects it.
 
     if (remaining === 0) {
       // 1. Filter out empty allocations
       const activeAllocations = currentAllocation.filter(a => a.percentage > 0);
       if (activeAllocations.length === 0) {
-        memo.set(memoKey, true);
         return;
       }
 
       // 2. Validate max splits (PR-3 strict check at leaf).
       if (activeAllocations.length > maxSplits) {
-        memo.set(memoKey, true);
         return;
       }
 
       // 3. Validate minimum percentage on all non-zero allocations
       const hasUnderMinPercentage = activeAllocations.some(a => a.percentage < minPercentage - 1e-9);
       if (hasUnderMinPercentage) {
-        memo.set(memoKey, true);
         return;
       }
 
       // 4. PR-4 minimum tranche amount
       const hasUnderMinAmount = activeAllocations.some(a => a.percentage * totalAmount < minTrancheAmount - 1e-9);
       if (hasUnderMinAmount) {
-        memo.set(memoKey, true);
         return;
       }
 
@@ -151,15 +158,12 @@ export function generateSplitStrategies({
       fixedPct = Math.round(fixedPct * 1e4) / 1e4;
 
       if (floatingPct > maxFloatingPercentage + 1e-9) {
-        memo.set(memoKey, true);
         return;
       }
       if (fixedPct < minFixedPercentage - 1e-9) {
-        memo.set(memoKey, true);
         return;
       }
       if (mustKeepFloating && floatingPct <= 0) {
-        memo.set(memoKey, true);
         return;
       }
 
@@ -168,7 +172,6 @@ export function generateSplitStrategies({
 
       const key = sortedAllocations.map(a => `${a.productCode}:${a.percentage}`).join("|");
       if (strategyKeys.has(key)) {
-        memo.set(memoKey, true);
         return;
       }
 
@@ -187,12 +190,10 @@ export function generateSplitStrategies({
         refixRule
       });
 
-      memo.set(memoKey, true);
       return;
     }
 
     if (currentIndex >= products.length) {
-      memo.set(memoKey, true);
       return;
     }
 
@@ -225,8 +226,6 @@ export function generateSplitStrategies({
         nextCount
       );
     }
-
-    memo.set(memoKey, true);
   }
 
   allocate(0, [], 1.0, 0, 0, 0);

@@ -206,15 +206,47 @@ export function generateExplanations(s, bounds, mode = "term") {
  * vs 9.2). Infeasible strategies (any scenario flagged isInfeasible) are dropped
  * from the Pareto set.
  *
+ * Returned recommendations carry three sources with distinct semantics:
+ *
+ *   - `preference`  — the strategy with the lowest overall score under the
+ *                     supplied `weights` (or the slider-derived defaults when
+ *                     `weights` is omitted). This is the personalised pick
+ *                     that responds to the user's preference sliders.
+ *
+ *   - `lowestCost`  — always the strategy with the smallest `expectedInterest`,
+ *                     independent of `weights`. This is the mathematical
+ *                     expected-cost optimum and acts as an objective benchmark
+ *                     that the user can compare their `preference` pick
+ *                     against. Intentional by design — `weights` do not
+ *                     influence this slot.
+ *
+ *   - `mostStable`  — term mode  -> smallest `worstCasePayment` (the
+ *                     worst-scenario peak across all scenarios);
+ *                     payment mode -> smallest `worstCaseEndingBalance`.
+ *                     Also `weights`-independent by design, and bound to
+ *                     `worstCasePayment` in term mode so the recommendation
+ *                     aligns with the `resilience` weight's intent of
+ *                     suppressing worst-case peaks rather than the
+ *                     probability-weighted average.
+ *
+ * The `weights` parameter only changes which strategy lands in `preference`;
+ * `lowestCost` and `mostStable` are deliberately weights-agnostic objective
+ * baselines. This is product behaviour, not a bug.
+ *
  * @param {Object} input
  * @param {any[]} input.simulationResults - All strategy x scenario simulation results
  * @param {any[]} input.scenarios - List of scenarios with probabilities
  * @param {number} [input.sliderCostStability=0.5] - 0 = cost-priority, 1 = stability-priority
  * @param {number} [input.sliderFlexibility=0.0] - 0 = no flex, 1 = high flex
- * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, stability?: number, endingBalance?: number, payoff?: number}} [input.weights]
- *   - Optional explicit weights. Keys: cost, principal, refix, resilience, flex, budget
- *     (term mode) plus stability, endingBalance, payoff (payment mode). Missing keys
+ * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number}} [input.weights]
+ *   - Optional explicit weights. Honoured keys: `cost`, `principal`, `refix`,
+ *     `resilience`, `flex`, `budget` (the 6 preference sliders). Missing keys
  *     default to 0. Sum of present keys must be > 0 or all weights are ignored.
+ *     `stability`, `endingBalance`, and `payoff` are NOT read from this object —
+ *     in payment mode those keys are derived from `sliderCostStability` /
+ *     `sliderFlexibility` via the slider-derived branch below. These weights
+ *     only steer the `preference` recommendation; `lowestCost` and `mostStable`
+ *     remain weights-agnostic (see function description).
  * @param {"term"|"payment"} [input.mode] - Mode selector for the objective set (defaults to "term")
  * @param {Record<string, number>} [input.tolerances] - Per-objective tolerance override
  * @returns {any} Ranks, recommendations, and Pareto frontier details
@@ -437,11 +469,28 @@ export function optimizeStrategies({
   scoredStrategies.sort((a, b) => a.score - b.score);
 
   // 7. Recommendations: preference, lowest cost, most stable (mode-aware).
+  //
+  // `preference` is driven by the supplied `weights` (or the slider-derived
+  // default weights): it is the strategy with the lowest overall score after
+  // weighting + normalisation, i.e. the personalised pick.
+  //
+  // `lowestCost` and `mostStable` are deliberately *weights-independent*
+  // objective benchmarks (by design, not a bug): they always pick the
+  // mathematical best of the relevant dimension, regardless of the user's
+  // slider/weights, so the user can compare their personalised pick against
+  // the objective optimum. Concretely:
+  //   - `lowestCost`  : smallest `expectedInterest` (term & payment modes).
+  //   - `mostStable`  : term mode  -> smallest `worstCasePayment`
+  //                     payment mode -> smallest `worstCaseEndingBalance`.
+  // The term-mode key is `worstCasePayment` (worst-scenario peak) rather
+  // than `expectedMaxPayment` (probability-weighted expectation) so the
+  // recommendation aligns with the `resilience` weight's intent of
+  // suppressing worst-case peaks. See spec 10.4.
   const preference = scoredStrategies[0];
   const lowestCost = [...scoredStrategies].sort((a, b) => a.expectedInterest - b.expectedInterest)[0];
   const mostStable = mode === "payment"
     ? [...scoredStrategies].sort((a, b) => a.worstCaseEndingBalance - b.worstCaseEndingBalance)[0]
-    : [...scoredStrategies].sort((a, b) => a.expectedMaxPayment - b.expectedMaxPayment)[0];
+    : [...scoredStrategies].sort((a, b) => a.worstCasePayment - b.worstCasePayment)[0];
 
   const buildRecObject = (/** @type {any} */ s) => {
     if (!s) return null;

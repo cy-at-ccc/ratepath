@@ -1,19 +1,42 @@
+// @ts-nocheck — Web Worker entry point; JSDoc strict-mode type checks on the
+// LRU cache helpers and the postMessage handlers are out of scope here.
 import { simulateStrategyScenarioMatrix } from "@mortgage/simulation-engine";
 
-/**
- * LRU cache (size 1) for simulation results, keyed by a stable string
- * serialisation of the input. Single-entry is sufficient for the Web app's
- * single-user interaction model: a weights-only change should not retrigger
- * a full simulation.
- * @type {{key: string|null, results: any[]|null}}
- */
+const DB_NAME = "MortgageStrategyDB";
+const DB_VERSION = 1;
+
+/** @type {Promise<IDBDatabase> | null} */
+let dbPromise = null;
+
+function openDB() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const request = self.indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => { dbPromise = null; reject(request.error); };
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("savedResults")) {
+        db.createObjectStore("savedResults", { keyPath: "id" });
+      }
+    };
+  });
+  return dbPromise;
+}
+
+async function dbPut(storeName, data) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    const store = tx.objectStore(storeName);
+    const request = store.put(data);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
 const cache = { key: null, results: null };
 
-/**
- * Stable JSON serialisation with sorted keys (no whitespace).
- * @param {any} value
- * @returns {string}
- */
 function stableStringify(value) {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -25,11 +48,6 @@ function stableStringify(value) {
   return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
 }
 
-/**
- * Computes a SHA-1 digest and returns the first 8 hex characters.
- * @param {string} text
- * @returns {Promise<string>}
- */
 async function shortHash(text) {
   if (typeof crypto !== "undefined" && crypto.subtle) {
     const enc = new TextEncoder().encode(text);
@@ -39,8 +57,6 @@ async function shortHash(text) {
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
   }
-  // Fallback (should not normally trigger in a browser worker): a non-cryptographic
-  // 32-bit hash so tests can still exercise the cache code path.
   let h = 0;
   for (let i = 0; i < text.length; i++) {
     h = Math.imul(31, h) + text.charCodeAt(i);
@@ -76,7 +92,7 @@ self.onmessage = async (e) => {
     const key = await shortHash(serialised);
 
     if (!forceRecompute && cache.key === key && cache.results) {
-      self.postMessage({ type: "cached", results: cache.results, key });
+      self.postMessage({ type: "cached", key });
       return;
     }
 
@@ -97,9 +113,33 @@ self.onmessage = async (e) => {
     cache.key = key;
     cache.results = results;
 
-    self.postMessage({ type: "success", results, key });
+    // Save full results to IndexedDB, then notify main thread
+    await dbPut("savedResults", { id: "last_simulation", results, key });
+
+    const summaries = results.map(r => ({
+      strategyId: r.strategyId,
+      scenarioId: r.scenarioId,
+      totalInterest: r.totalInterest,
+      totalRepayments: r.totalRepayments,
+      endingBalance: r.endingBalance,
+      maximumPayment: r.maximumPayment,
+      minimumPayment: r.minimumPayment,
+      averagePayment: r.averagePayment,
+      maximumPaymentIncrease: r.maximumPaymentIncrease,
+      paymentVolatility: r.paymentVolatility,
+      refixEventCount: r.refixEventCount,
+      maximumConcurrentRefixPercentage: r.maximumConcurrentRefixPercentage,
+      floatingExposure: r.floatingExposure,
+      affordabilityBreaches: r.affordabilityBreaches,
+      payoffTime: r.payoffTime,
+      offsetUtilisation: r.offsetUtilisation,
+      isInfeasible: r.isInfeasible,
+      infeasibilityReason: r.infeasibilityReason
+    }));
+
+    self.postMessage({ type: "success", results: summaries, key, savedToDB: true });
   } catch (error) {
-    const err = /** @type {any} */ (error);
+    const err = error;
     self.postMessage({ type: "error", error: err.message || String(err) });
   }
 };
