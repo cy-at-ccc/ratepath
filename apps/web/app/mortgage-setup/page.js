@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { dbGetAll, dbPut } from "../../features/storage.js";
+import { NumberInput, Select } from "../../components/index.js";
 
 export default function MortgageSetup() {
   const router = useRouter();
@@ -197,7 +198,7 @@ export default function MortgageSetup() {
   return (
     <div className="setup-container">
       <header className="setup-header">
-        <h1 className="title gradient-text-primary">房贷信息配置</h1>
+        <h1 className="page-title gradient-text-primary">房贷信息配置</h1>
         <p className="subtitle">录入您的房贷全局参数，系统将在此基础上计算出最优的贷款拆包（Split）方案。</p>
       </header>
 
@@ -210,43 +211,46 @@ export default function MortgageSetup() {
           
           <div className="form-row">
             <div className="form-group flex-1">
-              <label className="form-label">总贷款金额 (NZD)</label>
-              <input
-                type="number"
+              <NumberInput
+                label="总贷款金额 (NZD)"
+                ariaLabel="总贷款金额（新西兰元）"
+                min={1000}
+                step={1}
+                prefix="$"
+                size="md"
                 value={isNaN(totalAmount) ? "" : totalAmount}
-                onChange={(e) => {
+                onChange={(/** @type {any} */e) => {
                   const val = parseFloat(e.target.value);
                   setTotalAmount(isNaN(val) ? NaN : val);
                 }}
-                className="form-input"
-                min="1000"
-                required
               />
             </div>
 
             <div className="form-group flex-1">
               <label className="form-label">贷款还款频率</label>
-              <select
+              <Select
+                ariaLabel="贷款还款频率"
                 value={repaymentFrequency}
-                onChange={(e) => setRepaymentFrequency(e.target.value)}
-                className="form-input"
-              >
-                <option value="weekly">每周 (Weekly)</option>
-                <option value="fortnightly">每两周 (Fortnightly)</option>
-                <option value="monthly">每月 (Monthly)</option>
-              </select>
+                onChange={(/** @type {any} */v) => setRepaymentFrequency(v)}
+                options={[
+                  { value: "weekly", label: "每周 (Weekly)" },
+                  { value: "fortnightly", label: "每两周 (Fortnightly)" },
+                  { value: "monthly", label: "每月 (Monthly)" }
+                ]}
+              />
             </div>
 
             <div className="form-group flex-1">
               <label className="form-label">默认还款类型</label>
-              <select
+              <Select
+                ariaLabel="默认还款类型"
                 value={repaymentType}
-                onChange={(e) => setRepaymentType(e.target.value)}
-                className="form-input"
-              >
-                <option value="principal-and-interest">本金加利息 (P&I)</option>
-                <option value="interest-only">仅还利息 (Interest Only)</option>
-              </select>
+                onChange={(/** @type {any} */v) => setRepaymentType(v)}
+                options={[
+                  { value: "principal-and-interest", label: "本金加利息 (P&I)" },
+                  { value: "interest-only", label: "仅还利息 (Interest Only)" }
+                ]}
+              />
             </div>
           </div>
         </section>
@@ -280,50 +284,54 @@ export default function MortgageSetup() {
           {targetMode === "term" ? (
             <div className="form-row" style={{ marginTop: "8px" }}>
               <div className="form-group flex-1">
-                <label className="form-label">期望还清期限 (年)</label>
-                <input
-                  type="number"
+                <NumberInput
+                  label="期望还清期限 (年)"
+                  ariaLabel="期望还清期限年数"
+                  min={1}
+                  max={30}
+                  step={1}
+                  suffix="年"
+                  size="md"
                   value={isNaN(termYears) ? "" : termYears}
-                  onChange={(e) => {
+                  onChange={(/** @type {any} */e) => {
                     const val = parseInt(e.target.value, 10);
                     setTermYears(isNaN(val) ? NaN : val);
                   }}
-                  className="form-input"
-                  min="1"
-                  max="30"
-                  required
                 />
                 <span className="input-tip">通常房贷的最长摊销年限为 25 或 30 年。</span>
               </div>
               <div className="form-group flex-1">
-                <label className="form-label">期望还清期限 (月 - 选填)</label>
-                <input
-                  type="number"
+                <NumberInput
+                  label="期望还清期限 (月 - 选填)"
+                  ariaLabel="期望还清期限月份"
+                  min={0}
+                  max={11}
+                  step={1}
+                  suffix="月"
+                  size="md"
                   value={isNaN(termMonths) ? "" : termMonths}
-                  onChange={(e) => {
+                  onChange={(/** @type {any} */e) => {
                     const val = parseInt(e.target.value, 10);
                     setTermMonths(isNaN(val) ? NaN : val);
                   }}
-                  className="form-input"
-                  min="0"
-                  max="11"
                 />
               </div>
             </div>
           ) : (
             <div style={{ marginTop: "8px" }}>
               <div className="form-group" style={{ maxWidth: "400px" }}>
-                <label className="form-label">期望每次还款金额 (NZD) - {getFrequencyText()}供款额</label>
-                <input
-                  type="number"
+                <NumberInput
+                  label={`期望每次还款金额 (NZD) - ${getFrequencyText()}供款额`}
+                  ariaLabel="期望每次还款金额"
+                  min={10}
+                  step={10}
+                  prefix="$"
+                  size="md"
                   value={isNaN(periodicPayment) ? "" : periodicPayment}
-                  onChange={(e) => {
+                  onChange={(/** @type {any} */e) => {
                     const val = parseFloat(e.target.value);
                     setPeriodicPayment(isNaN(val) ? NaN : val);
                   }}
-                  className="form-input"
-                  min="10"
-                  required
                 />
                 <span className="input-tip">输入您每期期望扣划的金额，系统将基于当前的基准浮动利率，自动换算出与之对应的合理摊销年限。</span>
               </div>
@@ -347,13 +355,6 @@ export default function MortgageSetup() {
           display: flex;
           flex-direction: column;
           gap: 24px;
-        }
-
-        .title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #fff;
-          letter-spacing: -0.02em;
         }
 
         .subtitle {

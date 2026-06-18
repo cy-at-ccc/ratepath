@@ -188,7 +188,7 @@ export function simulateStrategyScenario({
  * @param {number} [input.maxAffordablePayment]
  * @param {boolean} [input.includeTimeline=true]
  * @param {boolean} [input.includeRefixEvents=true]
- * @param {function(number, number, {strategy: import("@mortgage/schemas").SplitStrategy, scenario: import("@mortgage/schemas").RateScenario}): void} [input.onProgress]
+ * @param {function(number, number, {strategy: import("@mortgage/schemas").SplitStrategy, scenario: import("@mortgage/schemas").RateScenario, scenarioIndex: number, scenarioTotal: number}): void} [input.onProgress]
  * @param {AbortSignal} [input.signal]
  * @returns {Promise<any[]>} Flat list of all strategy x scenario simulation results
  */
@@ -210,8 +210,14 @@ export async function simulateStrategyScenarioMatrix({
   const totalSimulations = strategies.length * scenarios.length;
   let completed = 0;
 
-  for (const strategy of strategies) {
-    for (const scenario of scenarios) {
+  // Scenario-grouped iteration (was strategy-outer). The new order — outer
+  // scenario, inner strategy — keeps the rate path hot in CPU caches across
+  // many strategies sharing the same scenario, and gives the progress UI a
+  // more intuitive "scenario 1/3: 33%" signal. For Monte Carlo (sample count
+  // > 1 per family), this also keeps all samples of one family together.
+  for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
+    const scenario = scenarios[scenarioIndex];
+    for (const strategy of strategies) {
       if (signal?.aborted) {
         throw new Error("Simulation cancelled");
       }
@@ -233,7 +239,12 @@ export async function simulateStrategyScenarioMatrix({
       completed++;
 
       if (onProgress) {
-        onProgress(completed, totalSimulations, { strategy, scenario });
+        onProgress(completed, totalSimulations, {
+          strategy,
+          scenario,
+          scenarioIndex,
+          scenarioTotal: scenarios.length
+        });
       }
 
       // Allow event loop to breathe

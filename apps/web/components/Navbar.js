@@ -71,7 +71,7 @@ export default function Navbar() {
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           return (
-            <Link key={item.href} href={item.href} data-label={item.label} className={`nav-link ${isActive ? "active" : ""}`}>
+            <Link key={item.href} href={item.href} data-label={item.label} className={`nav-link ${isActive ? "active" : ""}`} aria-current={isActive ? "page" : undefined}>
               {item.icon}
               <span>{item.label}</span>
             </Link>

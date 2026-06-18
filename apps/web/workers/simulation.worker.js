@@ -151,7 +151,9 @@ self.onmessage = async (e) => {
             scenarioId: current.scenario.id,
             combination: describeStrategy(current.strategy, products),
             fixTerms: describeFixTerms(current.strategy, products),
-            scenarioPath: describeScenario(current.scenario)
+            scenarioPath: describeScenario(current.scenario),
+            scenarioIndex: current.scenarioIndex,
+            scenarioTotal: current.scenarioTotal
           } : null
         });
       }

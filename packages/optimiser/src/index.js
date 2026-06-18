@@ -14,9 +14,24 @@ export const DEFAULT_TOLERANCES_TERM = {
   expectedInterest: 20,
   worstCaseInterest: 50,
   worstCasePayment: 10,
-  expectedMaxConcurrentRefixPercentage: 0.01,
-  expectedAffordabilityBreaches: 0.5,
-  flexibilityPenalty: 0.01
+  // 0.01 -> 0.02: refix concentration differences of <2% between two strategies
+  // are within noise of the spread product catalogue. Loosening by 2x keeps the
+  // Pareto set meaningful without collapsing all strategies into a tie.
+  expectedMaxConcurrentRefixPercentage: 0.02,
+  // 0.5 -> 1: the user perceives "0 vs 1 budget breach" as equivalent (an off-by-one
+  // on the boundary month), but 1 vs 2 as materially worse.
+  expectedAffordabilityBreaches: 1,
+  // 0.01 -> 0.02: aligns with the refix concentration tolerance since both
+  // axes are read off the strategy.allocations share (same denominator).
+  flexibilityPenalty: 0.02,
+  // NZD/period stddev of monthly scheduled payments. Typical values 5-30 NZD.
+  // 0.05 ≈ 0.2-1% of typical payment size — discriminates without collapsing.
+  expectedPaymentVolatility: 0.05,
+  // NZD; ending balance on a $500k loan is in tens of thousands. 200 NZD
+  // tolerance ≈ 0.04% of principal — meaningful but doesn't drown real splits.
+  expectedEndingBalance: 200,
+  // 1: same boundary semantics as `expectedAffordabilityBreaches`.
+  worstCaseAffordabilityBreaches: 1
 };
 
 /** @type {Record<string, number>} */
@@ -24,9 +39,12 @@ export const DEFAULT_TOLERANCES_PAYMENT = {
   // Same tightening as term mode — see DEFAULT_TOLERANCES_TERM comment.
   expectedInterest: 20,
   worstCaseEndingBalance: 50,
-  payoffTime: 1,
-  expectedMaxConcurrentRefixPercentage: 0.01,
-  flexibilityPenalty: 0.01
+  // 1 -> 3: a 30-year loan's `payoffTime` is fuzzy at the single-month level.
+  // ±3 months reflects "拖尾 vs 提前偿清"的实际可感知差异.
+  payoffTime: 3,
+  expectedMaxConcurrentRefixPercentage: 0.02,
+  flexibilityPenalty: 0.02,
+  expectedPaymentVolatility: 0.05
 };
 
 /**
@@ -75,12 +93,15 @@ function getBoundsFor(strategies, key) {
 
 /**
  * Returns the term-mode Pareto objective set per spec 9.1:
- *   1. expectedInterest ($50)
+ *   1. expectedInterest ($20)
  *   2. worstCaseInterest ($50)
  *   3. worstCasePayment ($10)
- *   4. expectedMaxConcurrentRefixPercentage (0.01)
- *   5. expectedAffordabilityBreaches (0.5)
- *   6. flexibilityPenalty = 1 - expectedFloatingExposure (0.01)
+ *   4. expectedMaxConcurrentRefixPercentage (0.02)
+ *   5. expectedAffordabilityBreaches (1)
+ *   6. flexibilityPenalty = 1 - expectedFloatingExposure (0.02)
+ *   7. expectedPaymentVolatility (0.05) — schedule-flow stability
+ *   8. expectedEndingBalance (200) — principal paydown speed (term-mode only)
+ *   9. worstCaseAffordabilityBreaches (1) — tail budget-breach count
  * @param {Record<string, number>} [tolerances]
  * @returns {{objectives: string[], tolerances: Record<string, number>}}
  */
@@ -92,7 +113,10 @@ export function getTermObjectives(tolerances = {}) {
       "worstCasePayment",
       "expectedMaxConcurrentRefixPercentage",
       "expectedAffordabilityBreaches",
-      "flexibilityPenalty"
+      "flexibilityPenalty",
+      "expectedPaymentVolatility",
+      "expectedEndingBalance",
+      "worstCaseAffordabilityBreaches"
     ],
     tolerances: { ...DEFAULT_TOLERANCES_TERM, ...tolerances }
   };
@@ -100,11 +124,16 @@ export function getTermObjectives(tolerances = {}) {
 
 /**
  * Returns the payment-mode Pareto objective set per spec 9.2:
- *   1. expectedInterest ($50)
+ *   1. expectedInterest ($20)
  *   2. worstCaseEndingBalance ($50)
- *   3. payoffTime (1)
- *   4. expectedMaxConcurrentRefixPercentage (0.01)
- *   5. flexibilityPenalty (0.01)
+ *   3. payoffTime (3)
+ *   4. expectedMaxConcurrentRefixPercentage (0.02)
+ *   5. flexibilityPenalty (0.02)
+ *   6. expectedPaymentVolatility (0.05) — schedule-flow stability
+ *
+ * Note: `expectedEndingBalance` is intentionally NOT a payment-mode objective
+ * since `payoffTime` already captures the same signal (loan paid off -> balance
+ * = 0; not paid off -> payoffTime > forecastMonths).
  * @param {Record<string, number>} [tolerances]
  * @returns {{objectives: string[], tolerances: Record<string, number>}}
  */
@@ -115,7 +144,8 @@ export function getPaymentObjectives(tolerances = {}) {
       "worstCaseEndingBalance",
       "payoffTime",
       "expectedMaxConcurrentRefixPercentage",
-      "flexibilityPenalty"
+      "flexibilityPenalty",
+      "expectedPaymentVolatility"
     ],
     tolerances: { ...DEFAULT_TOLERANCES_PAYMENT, ...tolerances }
   };
@@ -214,6 +244,15 @@ export function generateExplanations(s, bounds, mode = "term", opts = {}) {
     }
   }
 
+  // Payment smoothness (term + payment modes; same axis, same copy)
+  // Captures month-to-month stability of the scheduled payment stream, distinct
+  // from worstCasePayment (single peak) which is covered above.
+  if (bounds.smoothness && s.expectedPaymentVolatility <= bounds.smoothness.min + bounds.smoothness.diff * 0.15) {
+    pros.push("供款波动小，家庭现金流可预期性高。");
+  } else if (bounds.smoothness && s.expectedPaymentVolatility >= bounds.smoothness.max - bounds.smoothness.diff * 0.20) {
+    cons.push("供款波动较大，临近 refix 时跳升明显，需预备缓冲。");
+  }
+
   // Flexibility
   if (bounds.flex && s.expectedFloatingExposure >= bounds.flex.max - bounds.flex.diff * 0.15) {
     pros.push("保留较高浮动或Offset额度，资金注入与提前还款极具灵活性。");
@@ -278,15 +317,16 @@ export function generateExplanations(s, bounds, mode = "term", opts = {}) {
  * @param {any[]} input.scenarios - List of scenarios with probabilities
  * @param {number} [input.sliderCostStability=0.5] - 0 = cost-priority, 1 = stability-priority
  * @param {number} [input.sliderFlexibility=0.0] - 0 = no flex, 1 = high flex
- * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number}} [input.weights]
+ * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, smoothness?: number}} [input.weights]
  *   - Optional explicit weights. Honoured keys: `cost`, `principal`, `refix`,
- *     `resilience`, `flex`, `budget` (the 6 preference sliders). Missing keys
- *     default to 0. Sum of present keys must be > 0 or all weights are ignored.
- *     `stability`, `endingBalance`, and `payoff` are NOT read from this object —
- *     in payment mode those keys are derived from `sliderCostStability` /
- *     `sliderFlexibility` via the slider-derived branch below. These weights
- *     only steer the `preference` recommendation; `lowestCost` and `mostStable`
- *     remain weights-agnostic (see function description).
+ *     `resilience`, `flex`, `budget`, `smoothness` (the 7 preference sliders).
+ *     Missing keys default to 0. Sum of present keys must be > 0 or all weights
+ *     are ignored. `stability`, `endingBalance`, and `payoff` are NOT read from
+ *     this object — in payment mode those keys are derived from
+ *     `sliderCostStability` / `sliderFlexibility` via the slider-derived branch
+ *     below. These weights only steer the `preference` recommendation;
+ *     `lowestCost` and `mostStable` remain weights-agnostic (see function
+ *     description).
  * @param {"term"|"payment"} [input.mode] - Mode selector for the objective set (defaults to "term")
  * @param {Record<string, number>} [input.tolerances] - Per-objective tolerance override
  * @param {number} [input.recommendationMinAllocationCount] - Minimum number of
@@ -345,6 +385,7 @@ export function optimizeStrategies({
     let worstCasePayment = 0;
     let worstCaseInterest = 0;
     let worstCaseEndingBalance = 0;
+    let worstCaseAffordabilityBreaches = 0;
     let bestCaseInterest = Infinity;
     let baseCaseInterest = 0;
 
@@ -367,6 +408,7 @@ export function optimizeStrategies({
       if (run.endingBalance > worstCaseEndingBalance) worstCaseEndingBalance = run.endingBalance;
       if (run.totalInterest < bestCaseInterest) bestCaseInterest = run.totalInterest;
       if (run.totalInterest > worstCaseInterest) worstCaseInterest = run.totalInterest;
+      if (run.affordabilityBreaches > worstCaseAffordabilityBreaches) worstCaseAffordabilityBreaches = run.affordabilityBreaches;
       if (run.scenarioId === "base") {
         baseCaseInterest = run.totalInterest;
       }
@@ -401,6 +443,7 @@ export function optimizeStrategies({
       worstCasePayment,
       worstCaseInterest,
       worstCaseEndingBalance,
+      worstCaseAffordabilityBreaches,
       bestCaseInterest,
       baseCaseInterest,
       // Derived Pareto key (spec 9.1: 1 - expectedFloatingExposure).
@@ -434,24 +477,27 @@ export function optimizeStrategies({
     stability: getBoundsFor(aggregatedStrategies, "expectedMaxPayment"),
     budget: getBoundsFor(aggregatedStrategies, "expectedAffordabilityBreaches"),
     endingBalance: getBoundsFor(aggregatedStrategies, "worstCaseEndingBalance"),
-    payoff: getBoundsFor(aggregatedStrategies, "expectedPayoffTime")
+    payoff: getBoundsFor(aggregatedStrategies, "expectedPayoffTime"),
+    smoothness: getBoundsFor(aggregatedStrategies, "expectedPaymentVolatility")
   };
 
   // 5. Weight calculation (mode-aware per spec 10.2)
-  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff;
+  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff, wSmoothness;
   if (weights) {
     const totalRaw = (weights.cost || 0) +
       (weights.principal || 0) +
       (weights.refix || 0) +
       (weights.resilience || 0) +
       (weights.flex || 0) +
-      (weights.budget || 0) || 1;
+      (weights.budget || 0) +
+      (weights.smoothness || 0) || 1;
     wCost = (weights.cost || 0) / totalRaw;
     wPrincipal = (weights.principal || 0) / totalRaw;
     wRefix = (weights.refix || 0) / totalRaw;
     wResilience = (weights.resilience || 0) / totalRaw;
     wFlex = (weights.flex || 0) / totalRaw;
     wBudget = (weights.budget || 0) / totalRaw;
+    wSmoothness = (weights.smoothness || 0) / totalRaw;
     wStability = 0;
     wEndingBalance = 0;
     wPayoff = 0;
@@ -471,6 +517,7 @@ export function optimizeStrategies({
     wStability = 0;
     wResilience = 0;
     wBudget = 0;
+    wSmoothness = 0;
   } else {
     const rawCostWeight = 0.65 - sliderCostStability * 0.40;
     const rawStabilityWeight = 0.15 + sliderCostStability * 0.30;
@@ -487,6 +534,7 @@ export function optimizeStrategies({
     wBudget = 0;
     wEndingBalance = 0;
     wPayoff = 0;
+    wSmoothness = 0;
   }
 
   // 6. Score and rank strategies
@@ -500,6 +548,7 @@ export function optimizeStrategies({
     const budgetScore = (s.expectedAffordabilityBreaches - bounds.budget.min) / bounds.budget.diff;
     const endingBalanceScore = (s.worstCaseEndingBalance - bounds.endingBalance.min) / bounds.endingBalance.diff;
     const payoffScore = (s.expectedPayoffTime - bounds.payoff.min) / bounds.payoff.diff;
+    const smoothnessScore = (s.expectedPaymentVolatility - bounds.smoothness.min) / bounds.smoothness.diff;
 
     const overallScore = wCost * costScore +
       wPrincipal * principalScore +
@@ -509,7 +558,8 @@ export function optimizeStrategies({
       wStability * stabilityScore +
       wBudget * budgetScore +
       wEndingBalance * endingBalanceScore +
-      wPayoff * payoffScore;
+      wPayoff * payoffScore +
+      wSmoothness * smoothnessScore;
 
     return {
       ...s,
@@ -531,22 +581,51 @@ export function optimizeStrategies({
   // mathematical best of the relevant dimension, regardless of the user's
   // slider/weights, so the user can compare their personalised pick against
   // the objective optimum. Concretely:
-  //   - `lowestCost`  : smallest `expectedInterest` (term & payment modes).
-  //   - `mostStable`  : term mode  -> smallest `worstCasePayment`
-  //                     payment mode -> smallest `worstCaseEndingBalance`.
-  // The term-mode key is `worstCasePayment` (worst-scenario peak) rather
-  // than `expectedMaxPayment` (probability-weighted expectation) so the
-  // recommendation aligns with the `resilience` weight's intent of
-  // suppressing worst-case peaks. See spec 10.4.
+  //   - `lowestCost`             : smallest `expectedInterest` (term & payment).
+  //   - `lowestWorstCaseCost`    : smallest `worstCaseInterest` (term only).
+  //   - `lowestWorstCasePayment` : smallest `worstCasePayment` (term only).
+  //   - `lowestRefixConcentration`: smallest `expectedMaxConcurrentRefixPercentage`.
+  //   - `lowestBudgetBreaches`   : smallest `expectedAffordabilityBreaches` (term).
+  //   - `lowestVolatility`       : smallest `expectedPaymentVolatility`.
+  //   - `lowestEndingBalance`    : smallest `expectedEndingBalance` (term only).
+  //   - `mostFloating`           : smallest `flexibilityPenalty` (i.e. largest
+  //                                `expectedFloatingExposure`).
+  //   - `mostStable`             : term -> smallest `worstCasePayment`,
+  //                                payment -> smallest `worstCaseEndingBalance`.
+  //   - `preference`             : weighted-sum preference (responds to `weights`).
+  // Each `lowest*` / `mostFloating` benchmark is weights-independent by design
+  // so users can compare their personalised pick against each objective's
+  // mathematical optimum. See spec 10.4.
   const recommendationPool = scoredStrategies.filter(
     (/** @type {any} */ s) => (s.allocationCount || 1) >= recommendationMinAllocationCount
   );
   const recommendationCandidates = recommendationPool.length > 0 ? recommendationPool : scoredStrategies;
   const preference = recommendationCandidates[0];
-  const lowestCost = [...recommendationCandidates].sort((a, b) => a.expectedInterest - b.expectedInterest)[0];
+
+  /**
+   * @param {any[]} pool
+   * @param {string} key
+   * @param {(a: any, b: any) => number} [cmp]
+   * @returns {any}
+   */
+  const pickMin = (pool, key, cmp) => [...pool].sort((a, b) =>
+    cmp ? cmp(a[key], b[key]) : (a[key] ?? Infinity) - (b[key] ?? Infinity)
+  )[0];
+
+  const lowestCost = pickMin(recommendationCandidates, "expectedInterest");
+  const lowestWorstCaseCost = pickMin(recommendationCandidates, "worstCaseInterest");
+  const lowestWorstCasePayment = pickMin(recommendationCandidates, "worstCasePayment");
+  const lowestRefixConcentration = pickMin(recommendationCandidates, "expectedMaxConcurrentRefixPercentage");
+  const lowestBudgetBreaches = pickMin(recommendationCandidates, "expectedAffordabilityBreaches");
+  const lowestVolatility = pickMin(recommendationCandidates, "expectedPaymentVolatility");
+  const lowestEndingBalance = pickMin(recommendationCandidates, "expectedEndingBalance");
+  // `flexibilityPenalty = 1 - expectedFloatingExposure` (minimise). So min
+  // flexibilityPenalty corresponds to the strategy with the LARGEST floating
+  // exposure — i.e. `mostFloating` semantically.
+  const mostFloating = pickMin(recommendationCandidates, "flexibilityPenalty");
   const mostStable = mode === "payment"
-    ? [...recommendationCandidates].sort((a, b) => a.worstCaseEndingBalance - b.worstCaseEndingBalance)[0]
-    : [...recommendationCandidates].sort((a, b) => a.worstCasePayment - b.worstCasePayment)[0];
+    ? pickMin(recommendationCandidates, "worstCaseEndingBalance")
+    : pickMin(recommendationCandidates, "worstCasePayment");
 
   const buildRecObject = (/** @type {any} */ s) => {
     if (!s) return null;
@@ -565,6 +644,13 @@ export function optimizeStrategies({
     recommendations: {
       preference: buildRecObject(preference),
       lowestCost: buildRecObject(lowestCost),
+      lowestWorstCaseCost: buildRecObject(lowestWorstCaseCost),
+      lowestWorstCasePayment: buildRecObject(lowestWorstCasePayment),
+      lowestRefixConcentration: buildRecObject(lowestRefixConcentration),
+      lowestBudgetBreaches: buildRecObject(lowestBudgetBreaches),
+      lowestVolatility: buildRecObject(lowestVolatility),
+      lowestEndingBalance: buildRecObject(lowestEndingBalance),
+      mostFloating: buildRecObject(mostFloating),
       mostStable: buildRecObject(mostStable)
     }
   };

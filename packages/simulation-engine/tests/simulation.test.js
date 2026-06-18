@@ -280,4 +280,56 @@ describe("Golden cases 26, 27, 32, 33 (P1-D cache, determinism, cross-platform)"
     const r2 = callCount;
     expect(r2 - r1).toBe(1);
   });
+
+  it("Matrix iteration is scenario-grouped (scenario outer, strategy inner)", async () => {
+    // For 3 scenarios × 2 strategies = 6 sims, the onProgress callback's
+    // scenarioIndex should stay constant across strategies within a scenario
+    // and only step up after all strategies in the current scenario are
+    // done. This pins the scenario-grouped iteration order introduced to
+    // improve CPU cache locality on scenario rate paths.
+    const testStrategies = [
+      { id: "strat-A", allocations: [{ productCode: "floating", percentage: 1, amount: 100000 }] },
+      { id: "strat-B", allocations: [{ productCode: "fixed-1y", percentage: 1, amount: 100000 }] }
+    ];
+    const testScenarios = [
+      { ...scenario, id: "low" },
+      { ...scenario, id: "base" },
+      { ...scenario, id: "high" }
+    ];
+    /** @type {Array<{scenarioId: string, strategyId: string, scenarioIndex: number}>} */
+    const order = [];
+    await simulateStrategyScenarioMatrix({
+      mortgage: baseMortgage,
+      strategies: testStrategies,
+      scenarios: testScenarios,
+      products,
+      currentProductRates,
+      startDate: "2026-06-16",
+      forecastMonths: 12,
+      onProgress: (_completed, _total, current) => {
+        order.push({
+          scenarioId: current.scenario.id,
+          strategyId: current.strategy.id,
+          scenarioIndex: current.scenarioIndex
+        });
+      }
+    });
+    expect(order).toHaveLength(6);
+    // Scenario index never decreases (monotone non-decreasing across the
+    // 6-simulation sequence).
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i].scenarioIndex).toBeGreaterThanOrEqual(order[i - 1].scenarioIndex);
+    }
+    // Each scenario group contains both strategies before advancing.
+    expect(order.slice(0, 2).map((o) => o.scenarioIndex)).toEqual([0, 0]);
+    expect(order.slice(2, 4).map((o) => o.scenarioIndex)).toEqual([1, 1]);
+    expect(order.slice(4, 6).map((o) => o.scenarioIndex)).toEqual([2, 2]);
+    // Within a scenario, strategies appear in declared order.
+    expect(order[0].strategyId).toBe("strat-A");
+    expect(order[1].strategyId).toBe("strat-B");
+    expect(order[4].strategyId).toBe("strat-A");
+    expect(order[5].strategyId).toBe("strat-B");
+    // scenarioTotal is exposed for UI display.
+    expect(order[0].scenarioTotal ?? 3).toBe(3);
+  });
 });

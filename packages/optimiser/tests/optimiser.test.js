@@ -696,3 +696,157 @@ describe("Weights path and recommendation source semantics", () => {
       .toBe(withoutEndingBalance.recommendations.preference.strategyId);
   });
 });
+
+describe("Pareto objective expansion: smoothness, ending balance, worst-case affordability", () => {
+  const scenarios = [
+    { id: "low", probability: 0.2 },
+    { id: "base", probability: 0.6 },
+    { id: "high", probability: 0.2 }
+  ];
+
+  /**
+   * Helper: build a single-scenario simulation row with custom volatility.
+   * @param {string} strategyId
+   * @param {string} scenarioId
+   * @param {number} totalInterest
+   * @param {number} endingBalance
+   * @param {number} maximumPayment
+   * @param {number} paymentVolatility
+   * @param {number} affordabilityBreaches
+   * @returns {any}
+   */
+  const mkVolatilityRow = (strategyId, scenarioId, totalInterest, endingBalance, maximumPayment, paymentVolatility, affordabilityBreaches = 0) => ({
+    strategyId,
+    scenarioId,
+    allocationCount: 2,
+    totalInterest,
+    totalRepayments: 0,
+    endingBalance,
+    maximumPayment,
+    minimumPayment: 0,
+    averagePayment: maximumPayment,
+    maximumPaymentIncrease: 0,
+    paymentVolatility,
+    refixEventCount: 0,
+    maximumConcurrentRefixPercentage: 0,
+    floatingExposure: 0.5,
+    affordabilityBreaches,
+    timeline: []
+  });
+
+  it("paymentVolatility distinguishes strategies when other objectives are equal", () => {
+    // Two strategies: s1 has higher interest but lower volatility than s2.
+    // Both have identical expectedEndingBalance, worstCasePayment,
+    // expectedMaxConcurrentRefixPercentage, floatingExposure. With
+    // paymentVolatility as a new Pareto objective, neither dominates the
+    // other (s1 wins on cost, s2 wins on volatility). Without paymentVolatility
+    // (old 6-dim Pareto), s1 strictly dominates s2.
+    const results = [
+      // s1: lower interest, higher volatility
+      mkVolatilityRow("s1", "low", 10000, 300000, 3000, 200),
+      mkVolatilityRow("s1", "base", 10000, 300000, 3000, 200),
+      mkVolatilityRow("s1", "high", 10000, 300000, 3000, 200),
+      // s2: higher interest, lower volatility
+      mkVolatilityRow("s2", "low", 12000, 300000, 3000, 50),
+      mkVolatilityRow("s2", "base", 12000, 300000, 3000, 50),
+      mkVolatilityRow("s2", "high", 12000, 300000, 3000, 50)
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: results,
+      scenarios,
+      mode: "term"
+    });
+    // Both are Pareto-optimal: s1 wins on cost, s2 wins on volatility.
+    const s1 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s1");
+    const s2 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s2");
+    expect(s1.isParetoOptimal).toBe(true);
+    expect(s2.isParetoOptimal).toBe(true);
+  });
+
+  it("expectedEndingBalance is a term-mode Pareto key, not a payment-mode key", () => {
+    // Two strategies: same expectedInterest, different expectedEndingBalance.
+    // s1 has lower ending balance (faster paydown).
+    const mkRow = (strategyId, totalInterest, endingBalance, payoffTime) => ({
+      ...mkVolatilityRow(strategyId, "base", totalInterest, endingBalance, 3000, 100),
+      payoffTime
+    });
+    const termResults = [
+      mkRow("s1", 10000, 100000, 0),
+      mkRow("s2", 10000, 200000, 0)
+    ];
+    const optTerm = optimizeStrategies({
+      simulationResults: termResults,
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "term"
+    });
+    expect(getTermObjectives().objectives).toContain("expectedEndingBalance");
+    // Both Pareto-optimal: same cost, s1 wins on ending balance, s2 ties/wins on nothing else.
+    const s1Term = optTerm.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s1");
+    const s2Term = optTerm.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s2");
+    expect(s1Term.isParetoOptimal).toBe(true);
+    // s2 may be dominated by s1 (lower ending balance is better; same on
+    // all other objectives → s1 dominates s2 strictly). Confirm dominated.
+    expect(s2Term.isParetoOptimal).toBe(false);
+
+    // Payment mode: expectedEndingBalance is NOT in the objective set, so
+    // the same fixture collapses both into dominance only if some other
+    // objective strictly differs. Here payoffTime differs (0 vs 0 — both
+    // 0) — actually identical, so behaviour depends on the exact fixture.
+    // Assert the simpler invariant: payment-mode objective set lacks
+    // expectedEndingBalance.
+    expect(getPaymentObjectives().objectives).not.toContain("expectedEndingBalance");
+  });
+
+  it("worstCaseAffordabilityBreaches is aggregated as max across scenarios", () => {
+    // s1: breaches=[0, 0, 0] -> worstCase = 0
+    // s2: breaches=[0, 1, 3] -> worstCase = 3
+    const mk = (strategyId, breachesByScenario) => ([
+      mkVolatilityRow(strategyId, "low", 10000, 300000, 3000, 100, breachesByScenario[0]),
+      mkVolatilityRow(strategyId, "base", 10000, 300000, 3000, 100, breachesByScenario[1]),
+      mkVolatilityRow(strategyId, "high", 10000, 300000, 3000, 100, breachesByScenario[2])
+    ]);
+    const results = [...mk("s1", [0, 0, 0]), ...mk("s2", [0, 1, 3])];
+    const opt = optimizeStrategies({
+      simulationResults: results,
+      scenarios,
+      mode: "term"
+    });
+    const s1 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s1");
+    const s2 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "s2");
+    expect(s1.worstCaseAffordabilityBreaches).toBe(0);
+    expect(s2.worstCaseAffordabilityBreaches).toBe(3);
+  });
+
+  it("smoothness weight has zero effect when not provided (backward compatibility)", () => {
+    // Same fixture as the first test. Without the smoothness weight,
+    // both strategies are still ranked (s2 is cheaper... wait no, s1 is
+    // cheaper). Just confirm no exception and wSmoothness=0 means
+    // paymentVolatility contributes zero to overallScore.
+    const results = [
+      mkVolatilityRow("s1", "low", 10000, 300000, 3000, 200),
+      mkVolatilityRow("s1", "base", 10000, 300000, 3000, 200),
+      mkVolatilityRow("s1", "high", 10000, 300000, 3000, 200),
+      mkVolatilityRow("s2", "low", 12000, 300000, 3000, 50),
+      mkVolatilityRow("s2", "base", 12000, 300000, 3000, 50),
+      mkVolatilityRow("s2", "high", 12000, 300000, 3000, 50)
+    ];
+    // Cost-only weights → s1 ranked first (lower interest).
+    const optNoSmoothness = optimizeStrategies({
+      simulationResults: results,
+      scenarios,
+      mode: "term",
+      weights: { cost: 100, principal: 0, refix: 0, resilience: 0, flex: 0, budget: 0 }
+    });
+    expect(optNoSmoothness.rankedStrategies[0].strategyId).toBe("s1");
+
+    // With smoothness weight, the order may flip because s2's volatility is lower.
+    const optSmoothness = optimizeStrategies({
+      simulationResults: results,
+      scenarios,
+      mode: "term",
+      weights: { cost: 0, principal: 0, refix: 0, resilience: 0, flex: 0, budget: 0, smoothness: 100 }
+    });
+    // s2 has lower paymentVolatility → ranked first under smoothness-only weight.
+    expect(optSmoothness.rankedStrategies[0].strategyId).toBe("s2");
+  });
+});

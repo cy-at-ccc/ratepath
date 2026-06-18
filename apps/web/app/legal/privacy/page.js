@@ -110,15 +110,6 @@ export default function PrivacyPolicy() {
           color: var(--color-primary, #6366f1);
         }
 
-        .title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #fff;
-          margin: 0;
-          letter-spacing: -0.02em;
-          line-height: 1.2;
-        }
-
         .meta-row {
           display: flex;
           flex-wrap: wrap;

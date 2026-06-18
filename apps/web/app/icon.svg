@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="RatePath">
+  <defs>
+    <linearGradient id="rp-bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#312e81"/>
+      <stop offset="0.55" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="rp-line" x1="6" y1="22" x2="22" y2="9" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a5b4fc"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="rp-glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square with brand indigo gradient -->
+  <rect width="32" height="32" rx="7" fill="url(#rp-bg)"/>
+
+  <!-- Top sheen for premium fintech feel -->
+  <rect width="32" height="16" rx="7" fill="url(#rp-glow)"/>
+
+  <!-- Inner ring (subtle) -->
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#ffffff" stroke-opacity="0.14"/>
+
+  <!-- Rate path: low → peak → dip → higher (two-scenario fork) -->
+  <path d="M6 22 L12 15.5 L16 18.5 L22.5 9.5"
+        stroke="url(#rp-line)" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- Downward fork (alternative scenario, dashed, lower opacity) -->
+  <path d="M12 15.5 L15 24"
+        stroke="#a5b4fc" stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-dasharray="1.6 1.8" opacity="0.7"
+        fill="none"/>
+
+  <!-- Arrow tip pointing up-right -->
+  <path d="M18 9 L22.5 9 L22.5 13.5"
+        stroke="#ffffff" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- Data point markers -->
+  <circle cx="6" cy="22" r="1.5" fill="#c7d2fe"/>
+  <circle cx="12" cy="15.5" r="1.4" fill="#ffffff"/>
+  <circle cx="22.5" cy="9.5" r="1.7" fill="#ffffff"/>
+</svg>

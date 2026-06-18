@@ -67,6 +67,49 @@
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 18px;
+  --radius-xs: 4px;
+  --radius-pill: 9999px;
+
+  /* Typography scale */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fs-2xl: 20px;
+  --fs-3xl: 28px;
+
+  /* Spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* Shadow tiers */
+  --shadow-1: 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  /* Touch target floor (mobile) */
+  --touch-target: 44px;
+
+  /* Soft accent backgrounds (charts / callouts) */
+  --accent-soft-indigo: rgba(99, 102, 241, 0.18);
+  --accent-soft-emerald: rgba(16, 185, 129, 0.15);
+  --accent-soft-rose: rgba(244, 63, 94, 0.15);
+  --accent-soft-amber: rgba(245, 158, 11, 0.15);
+  --accent-soft-cyan: rgba(6, 182, 212, 0.15);
+
+  /* Chart palette extensions */
+  --chart-optimistic: #22d3ee;
+  --chart-median: #fde68a;
+  --chart-info: #60a5fa;
+  --chart-soft: #a5b4fc;
+  --chart-amber: #fbbf24;
 }
 
 /* Global Reset & Base Styles */
@@ -599,4 +642,56 @@ a:focus-visible {
     padding: 20px;
     padding-bottom: 90px; /* space for bottom navigation bar */
   }
+}
+
+/* Button size modifiers — single source of truth for inline padding overrides */
+.btn-sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+}
+.btn-md {
+  height: 40px;
+  padding: 0 20px;
+  font-size: var(--fs-md);
+}
+.btn-lg {
+  height: 52px;
+  padding: 0 28px;
+  font-size: var(--fs-lg);
+}
+.btn-icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+/* Mobile touch-target floor — applies to interactive controls that may shrink
+   below 44px on small screens. */
+@media (max-width: 768px) {
+  .segmented-btn,
+  .chip-btn,
+  .weights-reset-btn,
+  .compact-btn,
+  .btn-sm {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+}
+
+/* Standard page title — unifies the 28/32/26/20 hero sizes into one token */
+.page-title {
+  font-size: var(--fs-3xl);
+  font-weight: 800;
+  line-height: 1.2;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+.page-title-lg {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #fff;
+  letter-spacing: -0.02em;
 }

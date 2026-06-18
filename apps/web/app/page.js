@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { dbGetAll } from "../features/storage.js";
 import { nzProfile } from "@mortgage/country-adapters";
+import { NumberInput } from "../components/index.js";
 
 export default function Dashboard() {
   const [mortgage, setMortgage] = useState(/** @type {any} */ (null));
@@ -157,7 +158,7 @@ export default function Dashboard() {
     <div className="dashboard-container">
       <header className="dashboard-header">
         <div>
-          <h1 className="welcome-title gradient-text-primary">房贷控制面板</h1>
+          <h1 className="page-title gradient-text-primary">房贷控制面板</h1>
           <p className="welcome-desc">分析您的贷款配置并进行未来情景演练。</p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
@@ -246,14 +247,13 @@ export default function Dashboard() {
               <h2 className="card-header" style={{ margin: 0 }}><span className="card-header-accent" />新西兰当前市场数据</h2>
               <button
                 type="button"
-                className="btn btn-secondary"
-                style={{ padding: "6px 12px", fontSize: "12px" }}
+                className="btn btn-secondary btn-sm"
                 onClick={() => {
                   setEditedRates({ ...marketRates });
                   setIsEditingRates(true);
                 }}
               >
-                🖊️ 自定义利率
+                <span aria-hidden="true">🖊️</span> 自定义利率
               </button>
             </div>
 
@@ -338,7 +338,7 @@ export default function Dashboard() {
               <div style={{ textAlign: "right", marginTop: "16px" }}>
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-secondary compact-btn"
                   style={{ padding: "4px 8px", fontSize: "11px", borderColor: "rgba(244, 63, 94, 0.4)", color: "var(--color-rose)" }}
                   onClick={handleResetRates}
                 >
@@ -370,18 +370,18 @@ export default function Dashboard() {
                   {marketPolicyRateName} (新西兰央行官方现金利率)
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="20"
-                    value={Math.round(editedRates.ocr * 10000) / 100}
-                    onChange={(e) => handleOcrChange(parseFloat(e.target.value) / 100)}
-                    className="form-input"
-                    style={{ padding: "8px 12px", background: "rgba(0,0,0,0.2)", width: "110px", textAlign: "right" }}
-                    required
-                  />
-                  <span style={{ color: "var(--text-secondary)", fontSize: "14px" }}>%</span>
+                  <div style={{ width: "130px" }}>
+                    <NumberInput
+                      ariaLabel={`${marketPolicyRateName} 百分比`}
+                      min={0}
+                      max={20}
+                      step={0.01}
+                      suffix="%"
+                      size="md"
+                      value={Math.round(editedRates.ocr * 10000) / 100}
+                      onChange={(/** @type {any} */e) => handleOcrChange(parseFloat(e.target.value) / 100)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -405,37 +405,37 @@ export default function Dashboard() {
                       
                       <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
                         {/* Rate Input */}
-                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px" }}>利率:</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max="20"
-                            value={Math.round(rateVal * 10000) / 100}
-                            onChange={(e) => handleRateChange(item.key, parseFloat(e.target.value) / 100)}
-                            className="form-input"
-                            style={{ padding: "6px 8px", width: "100%", textAlign: "right", background: "rgba(0,0,0,0.2)" }}
-                            required
-                          />
-                          <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>%</span>
+                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>利率:</span>
+                          <div style={{ flex: 1 }}>
+                            <NumberInput
+                              ariaLabel={`${item.label} 利率`}
+                              min={0}
+                              max={20}
+                              step={0.01}
+                              suffix="%"
+                              size="sm"
+                              value={Math.round(rateVal * 10000) / 100}
+                              onChange={(/** @type {any} */e) => handleRateChange(item.key, parseFloat(e.target.value) / 100)}
+                            />
+                          </div>
                         </div>
 
                         {/* Margin Input */}
-                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px" }}>加点:</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="-10"
-                            max="10"
-                            value={Math.round(marginVal * 10000) / 100}
-                            onChange={(e) => handleMarginChange(item.key, parseFloat(e.target.value) / 100)}
-                            className="form-input"
-                            style={{ padding: "6px 8px", width: "100%", textAlign: "right", background: "rgba(0,0,0,0.2)", color: marginVal >= 0 ? "#10b981" : "#f43f5e" }}
-                            required
-                          />
-                          <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>%</span>
+                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>加点:</span>
+                          <div style={{ flex: 1 }}>
+                            <NumberInput
+                              ariaLabel={`${item.label} 加点`}
+                              min={-10}
+                              max={10}
+                              step={0.01}
+                              suffix="%"
+                              size="sm"
+                              value={Math.round(marginVal * 10000) / 100}
+                              onChange={(/** @type {any} */e) => handleMarginChange(item.key, parseFloat(e.target.value) / 100)}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -446,16 +446,14 @@ export default function Dashboard() {
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  style={{ padding: "6px 12px", fontSize: "12px" }}
+                  className="btn btn-secondary btn-sm"
                   onClick={() => setIsEditingRates(false)}
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="btn btn-primary"
-                  style={{ padding: "6px 16px", fontSize: "12px" }}
+                  className="btn btn-primary btn-sm"
                 >
                   保存自定义利率
                 </button>
@@ -479,13 +477,6 @@ export default function Dashboard() {
           align-items: flex-start;
           flex-wrap: wrap;
           gap: 16px;
-        }
-
-        .welcome-title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #fff;
-          letter-spacing: -0.02em;
         }
 
         .welcome-desc {

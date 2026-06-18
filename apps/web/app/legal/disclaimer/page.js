@@ -7,7 +7,7 @@ export default function Disclaimer() {
     <div className="legal-container">
       <header className="legal-header">
         <Link href="/about" className="back-link">← 返回关于</Link>
-        <h1 className="title gradient-text-primary">RatePath 金融模型免责声明与使用条款</h1>
+        <h1 className="page-title gradient-text-primary">RatePath 金融模型免责声明与使用条款</h1>
         <p className="meta-row">
           <span><strong>生效日期：</strong>2026-06-17</span>
         </p>
@@ -195,15 +195,6 @@ export default function Disclaimer() {
 
         .back-link:hover {
           color: var(--color-primary, #6366f1);
-        }
-
-        .title {
-          font-size: 26px;
-          font-weight: 800;
-          color: #fff;
-          margin: 0;
-          letter-spacing: -0.02em;
-          line-height: 1.2;
         }
 
         .meta-row {

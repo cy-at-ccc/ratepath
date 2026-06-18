@@ -6,7 +6,7 @@ export default function About() {
   return (
     <div className="about-container">
       <header className="about-header">
-        <h1 className="title gradient-text-primary">关于 RatePath</h1>
+        <h1 className="page-title gradient-text-primary">关于 RatePath</h1>
         <p className="subtitle">了解 RatePath 的本地优先设计理念、市场配置及安全与合规声明。</p>
       </header>
 
@@ -89,13 +89,6 @@ export default function About() {
           display: flex;
           flex-direction: column;
           gap: 24px;
-        }
-
-        .title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #fff;
-          letter-spacing: -0.02em;
         }
 
         .subtitle {

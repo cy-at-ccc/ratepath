@@ -735,6 +735,12 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
           }
         }
 
+        @media (prefers-reduced-motion: reduce) {
+          .chart-tooltip {
+            animation: none;
+          }
+        }
+
         .tooltip-header {
           font-weight: 700;
           margin-bottom: 8px;
