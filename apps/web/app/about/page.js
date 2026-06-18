@@ -70,7 +70,7 @@ export default function About() {
           <h2 className="section-title"><span className="step-num">4</span>版本与构建信息</h2>
           <div className="detail-row">
             <span className="detail-lbl">应用版本</span>
-            <span className="detail-val">0.1.0</span>
+            <span className="detail-val">0.2.0</span>
           </div>
           <div className="detail-row">
             <span className="detail-lbl">构建编号</span>

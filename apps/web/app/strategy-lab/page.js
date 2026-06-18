@@ -74,7 +74,10 @@ export default function StrategyLab() {
   const [mediumTermDirection, setMediumTermDirection] = useState(0.0); // -1 to +1
   const [changeSpeed, setChangeSpeed] = useState(0.5); // 0 to 1
   const [uncertainty, setUncertainty] = useState(0.01); // 0 to 2%
-  const [simDurationYears, setSimDurationYears] = useState(3); // default 3 years (36 months)
+  const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 10, base: 80, high: 10 });
+  const [longTermCycleYears, setLongTermCycleYears] = useState(2);
+  const [longTermReversalBias, setLongTermReversalBias] = useState(0.7);
+  const [simDurationYears, setSimDurationYears] = useState(5); // default 5 years (60 months)
 
   // Sim-horizon upper bound:
   //   - hard cap at 10 years (UI requirement)
@@ -117,7 +120,14 @@ export default function StrategyLab() {
     budget: 5
   };
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [openControlGroups, setOpenControlGroups] = useState({
+    trend: false,
+    risk: false,
+    longTerm: false,
+    horizon: false,
+    constraints: false,
+    preferences: false
+  });
   const [showOnlyBestPerMix, setShowOnlyBestPerMix] = useState(true);
 
   const handleWeightChange = (/** @type {string} */ key, /** @type {number} */ newValue) => {
@@ -179,19 +189,74 @@ export default function StrategyLab() {
     setWeights({ ...DEFAULT_WEIGHTS });
   };
 
-  const defaultSimDurationYears = useMemo(() => Math.min(3, simMaxYears), [simMaxYears]);
+  const defaultSimDurationYears = useMemo(() => Math.min(5, simMaxYears), [simMaxYears]);
 
-  const isScenarioModified = shortTermChange !== 0.0 ||
+  const toggleControlGroup = (/** @type {"trend"|"risk"|"longTerm"|"horizon"|"constraints"|"preferences"} */ groupKey) => {
+    setOpenControlGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
+
+  const handleScenarioProbabilityChange = (/** @type {"low"|"base"|"high"} */ changedKey, /** @type {number} */ nextValue) => {
+    const clampedValue = Math.max(0, Math.min(100, Math.round(nextValue)));
+    const otherKeys = /** @type {("low"|"base"|"high")[]} */ (["low", "base", "high"].filter((k) => k !== changedKey));
+
+    setScenarioProbabilities((prev) => {
+      const next = { ...prev, [changedKey]: clampedValue };
+      const targetOtherSum = Math.max(0, 100 - clampedValue);
+      const currentOtherSum = otherKeys.reduce((sum, key) => sum + prev[key], 0);
+
+      if (currentOtherSum <= 0) {
+        const firstShare = Math.round(targetOtherSum / otherKeys.length);
+        next[otherKeys[0]] = firstShare;
+        next[otherKeys[1]] = targetOtherSum - firstShare;
+        return next;
+      }
+
+      let allocated = 0;
+      otherKeys.forEach((key, idx) => {
+        if (idx === otherKeys.length - 1) {
+          next[key] = Math.max(0, targetOtherSum - allocated);
+          return;
+        }
+
+        next[key] = Math.max(0, Math.round((prev[key] / currentOtherSum) * targetOtherSum));
+        allocated += next[key];
+      });
+
+      return next;
+    });
+  };
+
+  const isTrendModified = shortTermChange !== 0.0 ||
     mediumTermDirection !== 0.0 ||
-    changeSpeed !== 0.5 ||
-    uncertainty !== 0.01 ||
-    simDurationYears !== defaultSimDurationYears;
+    changeSpeed !== 0.5;
 
-  const handleResetScenario = () => {
+  const handleResetTrend = () => {
     setShortTermChange(0.0);
     setMediumTermDirection(0.0);
     setChangeSpeed(0.5);
+  };
+
+  const isRiskModified = uncertainty !== 0.01 ||
+    scenarioProbabilities.low !== 10 ||
+    scenarioProbabilities.base !== 80 ||
+    scenarioProbabilities.high !== 10;
+
+  const handleResetRisk = () => {
     setUncertainty(0.01);
+    setScenarioProbabilities({ low: 10, base: 80, high: 10 });
+  };
+
+  const isLongTermModified = longTermCycleYears !== 2 ||
+    longTermReversalBias !== 0.7;
+
+  const handleResetLongTerm = () => {
+    setLongTermCycleYears(2);
+    setLongTermReversalBias(0.7);
+  };
+
+  const isHorizonModified = simDurationYears !== defaultSimDurationYears;
+
+  const handleResetHorizon = () => {
     setSimDurationYears(defaultSimDurationYears);
   };
 
@@ -212,6 +277,8 @@ export default function StrategyLab() {
   // Generated Scenarios
   const [scenarios, setScenarios] = useState(/** @type {any[]} */([]));
   const [chartScenarioPaths, setChartScenarioPaths] = useState(/** @type {any[]} */([]));
+  const [detailScenarioOptions, setDetailScenarioOptions] = useState(/** @type {any[]} */([]));
+  const [selectedDetailScenario, setSelectedDetailScenario] = useState("expected");
 
   // Simulation Status
   const [simulationRunning, setSimulationRunning] = useState(false);
@@ -329,6 +396,9 @@ export default function StrategyLab() {
           if (p.mediumTermDirection !== undefined) setMediumTermDirection(p.mediumTermDirection);
           if (p.changeSpeed !== undefined) setChangeSpeed(p.changeSpeed);
           if (p.uncertainty !== undefined) setUncertainty(p.uncertainty);
+          if (p.scenarioProbabilities !== undefined) setScenarioProbabilities(p.scenarioProbabilities);
+          if (p.longTermCycleYears !== undefined) setLongTermCycleYears(p.longTermCycleYears);
+          if (p.longTermReversalBias !== undefined) setLongTermReversalBias(p.longTermReversalBias);
           if (p.simDurationYears !== undefined) setSimDurationYears(p.simDurationYears);
           if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
           if (p.maxFloatingPercentage !== undefined) setMaxFloatingPercentage(p.maxFloatingPercentage);
@@ -349,6 +419,32 @@ export default function StrategyLab() {
     };
   }, []);
 
+  const buildExpectedPolicyPath = (/** @type {any[]} */ activeScenarios) => {
+    if (activeScenarios.length === 0) return [];
+    const template = activeScenarios[0].policyRatePath || [];
+    return template.map((/** @type {any} */ point, /** @type {number} */ idx) => ({
+      month: point.month,
+      value: activeScenarios.reduce((sum, scenario) => sum + (scenario.probability || 0) * (scenario.policyRatePath[idx]?.rate || 0), 0)
+    }));
+  };
+
+  const getRepresentativeScenarioByQuantile = (/** @type {any[]} */ activeScenarios, /** @type {number} */ quantile) => {
+    const monteCarloScenarios = activeScenarios
+      .filter((/** @type {any} */ s) => s.assumptions?.isMonteCarloTail)
+      .sort((a, b) => (a.assumptions?.post36AverageRate || 0) - (b.assumptions?.post36AverageRate || 0));
+
+    if (monteCarloScenarios.length === 0) {
+      return activeScenarios.find((/** @type {any} */ s) => s.id === "base") || activeScenarios[0] || null;
+    }
+
+    let cumulative = 0;
+    for (const scenario of monteCarloScenarios) {
+      cumulative += scenario.probability || 0;
+      if (cumulative >= quantile) return scenario;
+    }
+    return monteCarloScenarios[monteCarloScenarios.length - 1];
+  };
+
   // Recalculate Scenario rate paths when sliders change (instant preview, debounced scenarios)
   useEffect(() => {
     const activeScenarios = generateScenarios({
@@ -361,24 +457,85 @@ export default function StrategyLab() {
         shortTermChange,
         mediumTermDirection,
         changeSpeed,
-        uncertainty
+        uncertainty,
+        scenarioProbabilities: {
+          low: scenarioProbabilities.low / 100,
+          base: scenarioProbabilities.base / 100,
+          high: scenarioProbabilities.high / 100
+        },
+        longTermCycleYears,
+        longTermReversalBias
       }
     });
 
     setScenarios(activeScenarios);
 
-    // Prepare scenario paths for SVG chart
-    const lowPath = activeScenarios.find((/** @type {any} */ s) => s.id === "low")?.policyRatePath || [];
-    const basePath = activeScenarios.find((/** @type {any} */ s) => s.id === "base")?.policyRatePath || [];
-    const highPath = activeScenarios.find((/** @type {any} */ s) => s.id === "high")?.policyRatePath || [];
+    const deterministicHorizonMonths = Math.min(simDurationYears * 12, 36);
+    const scenarioFamilyPaths = ["low", "base", "high"].map((familyId) => {
+      const familyScenario = activeScenarios.find((/** @type {any} */ s) => (s.assumptions?.scenarioFamily || s.id) === familyId);
+      return {
+        id: familyId,
+        name: familyId === "low"
+          ? `低利率情景 (${scenarioProbabilities.low}%)`
+          : familyId === "base"
+            ? `基准情景 (${scenarioProbabilities.base}%)`
+            : `高利率情景 (${scenarioProbabilities.high}%)`,
+        color: familyId === "low" ? "var(--color-emerald)" : familyId === "base" ? "var(--color-primary)" : "var(--color-rose)",
+        points: (familyScenario?.policyRatePath || [])
+          .filter((/** @type {any} */ p) => p.month <= deterministicHorizonMonths)
+          .map((/** @type {any} */ p) => ({ month: p.month, value: p.rate }))
+      };
+    });
+
+    const expectedPath = buildExpectedPolicyPath(activeScenarios);
+    const optimisticScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.1);
+    const medianScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.5);
+    const stressScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.9);
+    const longTermOptions = simDurationYears * 12 > 36
+      ? [
+          { id: "expected", label: "概率加权期望路径", type: "expected", color: "#f8fafc", strokeDasharray: "6 6" },
+          { id: "optimistic", label: "长期乐观样本 (P10)", type: "scenario", scenarioId: optimisticScenario?.id, color: "var(--color-emerald)", strokeDasharray: "2 6" },
+          { id: "median", label: "长期中位样本 (P50)", type: "scenario", scenarioId: medianScenario?.id, color: "#fde68a", strokeDasharray: "6 4" },
+          { id: "stress", label: "长期压力样本 (P90)", type: "scenario", scenarioId: stressScenario?.id, color: "var(--color-rose)", strokeDasharray: "10 6" }
+        ]
+      : [
+          { id: "base", label: "基准情景", type: "scenario", scenarioId: "base", color: "var(--color-primary)", strokeDasharray: undefined }
+        ];
+
+    setDetailScenarioOptions(longTermOptions);
+    setSelectedDetailScenario((prev) => longTermOptions.some((opt) => opt.id === prev) ? prev : (simDurationYears * 12 > 36 ? "expected" : "base"));
+
+    const longTermChartPaths = longTermOptions.map((option) => {
+      if (option.type === "expected") {
+        return {
+          id: option.id,
+          name: option.label,
+          color: option.color,
+          points: expectedPath,
+          fillArea: false,
+          strokeDasharray: option.strokeDasharray
+        };
+      }
+
+      const scenario = activeScenarios.find((/** @type {any} */ s) => s.id === option.scenarioId);
+      return {
+        id: option.id,
+        name: option.label,
+        color: option.color,
+        points: (scenario?.policyRatePath || [])
+          .filter((/** @type {any} */ p) => p.month >= Math.min(36, simDurationYears * 12))
+          .map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })),
+        fillArea: false,
+        strokeDasharray: option.strokeDasharray
+      };
+    });
 
     setChartScenarioPaths([
-      { id: "low", name: "低利率情景 (20%)", color: "var(--color-emerald)", points: lowPath.map(p => ({ month: p.month, value: p.rate })) },
-      { id: "base", name: "基准情景 (60%)", color: "var(--color-primary)", points: basePath.map(p => ({ month: p.month, value: p.rate })) },
-      { id: "high", name: "高利率情景 (20%)", color: "var(--color-rose)", points: highPath.map(p => ({ month: p.month, value: p.rate })) }
+      ...scenarioFamilyPaths,
+      ...longTermChartPaths
     ]);
 
-  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, simDurationYears, marketRates]);
+  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates]);
 
   // Recalculate optimization recommendations when preference weights sliders change (instant recalculation)
   useEffect(() => {
@@ -513,7 +670,7 @@ export default function StrategyLab() {
         }
         (async () => {
           let results = msg.results;
-          if (msg.savedToDB) {
+          if (msg.savedToDB || msg.type === "cached") {
             const saved = await dbGet("savedResults", "last_simulation");
             if (saved && saved.results) {
               results = saved.results;
@@ -532,6 +689,9 @@ export default function StrategyLab() {
             mediumTermDirection,
             changeSpeed,
             uncertainty,
+            scenarioProbabilities,
+            longTermCycleYears,
+            longTermReversalBias,
             simDurationYears,
             maxSplits,
             maxFloatingPercentage,
@@ -601,42 +761,109 @@ export default function StrategyLab() {
     return "月供";
   };
 
+  const getActiveDetailScenarioOption = () =>
+    detailScenarioOptions.find((/** @type {any} */ opt) => opt.id === selectedDetailScenario)
+    || detailScenarioOptions[0]
+    || null;
+
+  const getDetailResultForStrategy = (/** @type {string} */ strategyId) => {
+    if (!simResults) return null;
+    const activeOption = getActiveDetailScenarioOption();
+    if (!activeOption) return null;
+
+    if (activeOption.type === "scenario") {
+      const scenarioResult = simResults.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === activeOption.scenarioId);
+      return scenarioResult ? { ...scenarioResult, detailLabel: activeOption.label, isExpectedAggregate: false } : null;
+    }
+
+    const strategySummary = optimisedData?.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === strategyId);
+    const probabilityMap = new Map(scenarios.map((/** @type {any} */ s) => [s.id, s.probability || 0]));
+    const relevantResults = simResults
+      .filter((/** @type {any} */ r) => r.strategyId === strategyId && Array.isArray(r.timeline) && r.timeline.length > 0)
+      .map((/** @type {any} */ r) => ({ result: r, probability: probabilityMap.get(r.scenarioId) || 0 }))
+      .filter((/** @type {any} */ entry) => entry.probability > 0);
+
+    if (relevantResults.length === 0) return null;
+
+    const aggregatedTimeline = Array.from({ length: relevantResults[0].result.timeline.length }, (_, idx) => {
+      const templateMonth = relevantResults[0].result.timeline[idx];
+      const templateTranches = templateMonth?.tranches || [];
+      return {
+        monthIndex: templateMonth?.monthIndex ?? idx,
+        closingBalance: relevantResults.reduce((sum, entry) => sum + entry.probability * (entry.result.timeline[idx]?.closingBalance || 0), 0),
+        scheduledPayment: relevantResults.reduce((sum, entry) => sum + entry.probability * (entry.result.timeline[idx]?.scheduledPayment || 0), 0),
+        tranches: templateTranches.map((/** @type {any} */ tranche) => ({
+          id: tranche.id,
+          rate: relevantResults.reduce((sum, entry) => sum + entry.probability * (entry.result.timeline[idx]?.tranches?.find((/** @type {any} */ t) => t.id === tranche.id)?.rate || 0), 0),
+          interest: relevantResults.reduce((sum, entry) => sum + entry.probability * (entry.result.timeline[idx]?.tranches?.find((/** @type {any} */ t) => t.id === tranche.id)?.interest || 0), 0),
+          closingBalance: relevantResults.reduce((sum, entry) => sum + entry.probability * (entry.result.timeline[idx]?.tranches?.find((/** @type {any} */ t) => t.id === tranche.id)?.closingBalance || 0), 0)
+        }))
+      };
+    });
+
+    return {
+      scenarioId: "expected",
+      totalInterest: strategySummary?.expectedInterest ?? relevantResults.reduce((sum, entry) => sum + entry.probability * entry.result.totalInterest, 0),
+      maximumPayment: strategySummary?.expectedMaxPayment ?? relevantResults.reduce((sum, entry) => sum + entry.probability * entry.result.maximumPayment, 0),
+      endingBalance: strategySummary?.expectedEndingBalance ?? relevantResults.reduce((sum, entry) => sum + entry.probability * entry.result.endingBalance, 0),
+      timeline: aggregatedTimeline,
+      refixEvents: [],
+      detailLabel: activeOption.label,
+      isExpectedAggregate: true
+    };
+  };
+
+  const getStrategyDisplayMetrics = (/** @type {string} */ strategyId) => {
+    const strategySummary = optimisedData?.rankedStrategies.find((/** @type {any} */ x) => x.strategyId === strategyId);
+    if (!strategySummary) return null;
+
+    const baseResult = simResults?.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === "base");
+    const endingBalance = baseResult ? baseResult.endingBalance : strategySummary.expectedEndingBalance;
+
+    return {
+      interest: baseResult ? baseResult.totalInterest : strategySummary.expectedInterest,
+      maxPayment: baseResult ? baseResult.maximumPayment : strategySummary.expectedMaxPayment,
+      endingBalance,
+      principalRepaid: getTotalBalance() - endingBalance,
+      usesBaseScenario: Boolean(baseResult)
+    };
+  };
+
   const renderCardMetrics = (/** @type {string} */ strategyId) => {
-    const s = optimisedData?.rankedStrategies.find((/** @type {any} */ x) => x.strategyId === strategyId);
-    if (!s) return null;
+    const metrics = getStrategyDisplayMetrics(strategyId);
+    if (!metrics) return null;
     const freqLabel = getRepaymentFrequencyLabel();
-    const totalBal = getTotalBalance();
-    const principalRepaid = totalBal - s.expectedEndingBalance;
+    const metricLabelPrefix = metrics.usesBaseScenario ? "基准" : "期望";
 
     return (
       <div className="rec-metrics">
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            期望总利息
+            {metricLabelPrefix}总利息
           </span>
-          <span className="stat-tile-val">${Math.round(s.expectedInterest).toLocaleString()}</span>
+          <span className="stat-tile-val">${Math.round(metrics.interest).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            期望最高{freqLabel}
+            {metricLabelPrefix}最高{freqLabel}
           </span>
-          <span className="stat-tile-val text-rose">${Math.round(s.expectedMaxPayment).toLocaleString()}</span>
+          <span className="stat-tile-val text-rose">${Math.round(metrics.maxPayment).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" /></svg>
-            期望已还本金
+            {metricLabelPrefix}已还本金
           </span>
-          <span className="stat-tile-val text-emerald">${Math.round(principalRepaid).toLocaleString()}</span>
+          <span className="stat-tile-val text-emerald">${Math.round(metrics.principalRepaid).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
-            期望剩余本金
+            {metricLabelPrefix}剩余本金
           </span>
-          <span className="stat-tile-val">${Math.round(s.expectedEndingBalance).toLocaleString()}</span>
+          <span className="stat-tile-val">${Math.round(metrics.endingBalance).toLocaleString()}</span>
         </div>
       </div>
     );
@@ -671,8 +898,8 @@ export default function StrategyLab() {
   const buildDetailTimelineData = () => {
     if (!selectedStrategy || !simResults) return null;
 
-    const baseResult = simResults.find((/** @type {any} */ r) => r.strategyId === selectedStrategy.strategyId && r.scenarioId === "base");
-    if (!baseResult || !baseResult.timeline) return null;
+    const detailResult = getDetailResultForStrategy(selectedStrategy.strategyId);
+    if (!detailResult || !detailResult.timeline) return null;
 
     const strategy = allStrategies.find((/** @type {any} */ s) => s.id === selectedStrategy.strategyId);
     if (!strategy) return null;
@@ -693,7 +920,7 @@ export default function StrategyLab() {
       return Math.floor(periodIndex * 12 / 52);
     };
 
-    const refixEvents = baseResult.refixEvents || [];
+    const refixEvents = detailResult.refixEvents || [];
 
     const tranches = strategy.allocations.map((/** @type {any} */ alloc, /** @type {number} */ idx) => {
       const trancheId = `tranche-${idx}-${alloc.productCode}`;
@@ -706,12 +933,12 @@ export default function StrategyLab() {
       const snapshots = snapshotMonths.map((snapshotMonth) => {
         const prevSnapshot = snapshotMonths[snapshotMonths.indexOf(snapshotMonth) - 1] || 0;
 
-        const windowMonths = baseResult.timeline.filter(
+        const windowMonths = detailResult.timeline.filter(
           (/** @type {any} */ t) => t.monthIndex >= prevSnapshot && t.monthIndex < snapshotMonth
         );
 
-        const snapshotMonthData = baseResult.timeline.find((/** @type {any} */ t) => t.monthIndex === snapshotMonth - 1)
-          || baseResult.timeline[baseResult.timeline.length - 1];
+        const snapshotMonthData = detailResult.timeline.find((/** @type {any} */ t) => t.monthIndex === snapshotMonth - 1)
+          || detailResult.timeline[detailResult.timeline.length - 1];
         const trancheAtSnapshot = snapshotMonthData?.tranches?.find((/** @type {any} */ t) => t.id === trancheId);
 
         const rate = trancheAtSnapshot?.rate ?? 0;
@@ -810,277 +1037,636 @@ export default function StrategyLab() {
         <div className="left-controls-col">
           <section className="glass-panel control-section">
             <h2 className="section-title">
-              <span>1. 未来情景预测参数</span>
-              {isScenarioModified && (
-                <button
-                  type="button"
-                  onClick={handleResetScenario}
-                  className="weights-reset-btn"
-                  style={{ marginLeft: "auto" }}
-                  title="将预测参数恢复为默认值"
-                  aria-label="重置预测参数为默认值"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                    <path d="M3 3v5h5" />
-                  </svg>
-                  <span>重置默认</span>
-                </button>
-              )}
+              <span>1. 参数分组</span>
             </h2>
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">未来 12 个月利率变化 (Short Term)</span>
-                <span className="slider-value">{(shortTermChange * 100).toFixed(2)}%</span>
-              </div>
-              <Slider
-                min={-0.02}
-                max={0.02}
-                step={0.0025}
-                value={shortTermChange}
-                onChange={(e) => setShortTermChange(parseFloat(e.target.value))}
-              />
-              <div className="slider-range-desc">
-                <span>快速降息 (-2.00%)</span>
-                <span>不调整</span>
-                <span>重新加息 (+2.00%)</span>
-              </div>
-              <div className="param-explanation">
-                新西兰央行（RBNZ）在未来 12 个月内对 OCR 官方贴现率的预测累计变化幅度。第 1 至 12 个月将平滑递变（如考虑了第 6 个月的过渡变化）。
-                <div className="param-example">👉 例子：若当前 OCR 为 2.25%，设置为 -2.00%，代表第 12 个月时 OCR 将跌至 0.25%；在第 6 个月时则约跌至 1.25%。</div>
-                <div className="param-example">说明：1 年固定、2 年固定等固定期限产品不会在锁定期内逐月跟随此滑杆变化，而是在到期续约（refix）时，按续约当月 OCR 相对当前 OCR 的变化重新定价。</div>
-              </div>
-            </div>
 
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">中期利率走向趋势 (Medium Term)</span>
-                <span className="slider-value">
-                  {mediumTermDirection < -0.1 ? "继续大幅降息" : mediumTermDirection > 0.1 ? "重定价趋升" : "走势平稳"}
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("trend")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("trend");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">1</span>
+                  <span>
+                    <span className="control-group-title">短中期 OCR 走势</span>
+                    <span className="control-group-subtitle">影响未来 1-36 个月的确定性路径骨架</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isTrendModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetTrend();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetTrend();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.trend ? "收起 ▴" : "展开 ▾"}</span>
                 </span>
               </div>
-              <Slider
-                min={-1.0}
-                max={1.0}
-                step={0.1}
-                value={mediumTermDirection}
-                onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))}
-              />
-              <div className="slider-range-desc">
-                <span>继续降息 (-1.0)</span>
-                <span>走平</span>
-                <span>明显回升 (+1.0)</span>
-              </div>
-              <div className="param-explanation">
-                第 13 至第 {Math.min(simDurationYears * 12, 36)} 个月之间，政策利率按该滑杆设定的中期趋势变化。1.0 个单位的变动代表利率每年变化 0.50%；超过第 36 个月后，OCR 路径将保持在第 36 个月的水平，不再继续上升或下降。
-                <div className="param-example">👉 例子：若设置为 -1.0，代表从第 13 个月起到第 36 个月止，利率每年以 -0.50% 的速度下降；第 36 个月之后保持平稳。设置为 0.0 则从第 13 个月起保持平稳。</div>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">政策调整速度 (Speed)</span>
-                <span className="slider-value">{(changeSpeed * 100).toFixed(0)}%</span>
-              </div>
-              <Slider
-                min={0.0}
-                max={1.0}
-                step={0.05}
-                value={changeSpeed}
-                onChange={(e) => setChangeSpeed(parseFloat(e.target.value))}
-              />
-              <div className="slider-range-desc">
-                <span>缓慢延迟 (0.0)</span>
-                <span>均衡</span>
-                <span>瞬时调整 (1.0)</span>
-              </div>
-              <div className="param-explanation">
-                利率变动在未来 12 个月内发生的时间分布曲线（即变动的发生速度分布）。
-                <div className="param-example">👉 例子：100% 代表变动瞬间集中在第 1 个月发生（极快发生）；50% 代表 12 个月内线性均匀递变；0% 代表前期变动缓慢、在临近第 12 个月时才加速发生。</div>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">预测路径不确定性 (Uncertainty)</span>
-                <span className="slider-value">+/- {(uncertainty * 100).toFixed(2)}%</span>
-              </div>
-              <Slider
-                min={0.0}
-                max={0.02}
-                step={0.001}
-                value={uncertainty}
-                onChange={(e) => setUncertainty(parseFloat(e.target.value))}
-              />
-              <div className="slider-range-desc">
-                <span>较低 (0.0%)</span>
-                <span>标准</span>
-                <span>较高 (+/- 2.0%)</span>
-              </div>
-              <div className="param-explanation">
-                未来利率预测路径的发散发散广度。不确定性随时间推移逐渐发散增加（第 3 个月生效 25%，第 6 个月生效 50%，第 12 个月后生效 100%）。
-                <div className="param-example">👉 例子：若设置为 +/- 1.00%，代表在第 12 个月及以后，“高利率情景”会在基准路径基础上上浮 1.00%，“低利率情景”则下浮 1.00%，用于概率加权承压测试。</div>
-              </div>
-            </div>
-
-            <div className="form-group" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "16px", marginTop: "16px" }}>
-              <div className="slider-label-row">
-                <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>模拟期限选择 (Simulation Horizon)</span>
-                <span className="slider-value" style={{ color: "#60a5fa" }}>{simDurationYears} 年 ({simDurationYears * 12} 个月)</span>
-              </div>
-              <Slider
-                min={1}
-                max={simMaxYears}
-                step={1}
-                value={simDurationYears}
-                onChange={(/** @type {any} */ e) => setSimDurationYears(parseInt(e.target.value, 10))}
-                className="slider-input"
-                aria-label="模拟期限（年）"
-                aria-valuemin={1}
-                aria-valuemax={simMaxYears}
-                aria-valuenow={simDurationYears}
-              />
-              <div className="slider-range-desc">
-                <span>1 年</span>
-                <span>{Math.max(1, Math.round(simMaxYears / 2))} 年</span>
-                <span>最长 {simMaxYears} 年</span>
-              </div>
-              <div className="param-explanation" style={{ marginTop: "10px" }}>
-                设定房贷策略情景模拟覆盖的未来期数范围。利率变化和还款折算将完全适配此周期。
-                {simCappedByMortgage ? (
-                  <div className="param-example">
-                    👉 您在房贷配置中设定的期望还清期限为约 {simTargetYears.toFixed(1)} 年（{mortgage?.originalTermMonths} 个月），系统已自动将拖拽上限锁定到 {simMaxYears} 年（覆盖到目标年年末）。如需调整，可返回【房贷配置】修改。
+              {openControlGroups.trend && (
+                <div className="control-group-body">
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">未来 12 个月利率变化 (Short Term)</span>
+                      <span className="slider-value">{(shortTermChange * 100).toFixed(2)}%</span>
+                    </div>
+                    <Slider min={-0.02} max={0.02} step={0.0025} value={shortTermChange} onChange={(e) => setShortTermChange(parseFloat(e.target.value))} />
+                    <div className="slider-range-desc">
+                      <span>快速降息 (-2.00%)</span>
+                      <span>不调整</span>
+                      <span>重新加息 (+2.00%)</span>
+                    </div>
+                    <div className="param-explanation">
+                      新西兰央行（RBNZ）在未来 12 个月内对 OCR 官方贴现率的预测累计变化幅度。第 1 至 12 个月将平滑递变（如考虑了第 6 个月的过渡变化）。
+                      <div className="param-example">👉 例子：若当前 OCR 为 2.25%，设置为 -2.00%，代表第 12 个月时 OCR 将跌至 0.25%；在第 6 个月时则约跌至 1.25%。</div>
+                      <div className="param-example">说明：1 年固定、2 年固定等固定期限产品不会在锁定期内逐月跟随此滑杆变化，而是在到期续约（refix）时，按续约当月 OCR 相对当前 OCR 的变化重新定价。</div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="param-example">👉 例子：若拖到 3 年，则只分析未来 36 个月内的还款表现，并计算第 36 个月末的期望剩余本金。</div>
-                )}
-              </div>
-            </div>
-          </section>
 
-          {/* Split Constraints */}
-          <section className="glass-panel control-section">
-            <h2 className="section-title">
-              <span>2. 拆分约束参数</span>
-              {isConstraintsModified && (
-                <button
-                  type="button"
-                  onClick={handleResetConstraints}
-                  className="weights-reset-btn"
-                  style={{ marginLeft: "auto" }}
-                  title="将拆分约束恢复为默认值"
-                  aria-label="重置拆分约束为默认值"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                    <path d="M3 3v5h5" />
-                  </svg>
-                  <span>重置默认</span>
-                </button>
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">中期利率走向趋势 (Medium Term)</span>
+                      <span className="slider-value">
+                        {mediumTermDirection < -0.1 ? "继续大幅降息" : mediumTermDirection > 0.1 ? "重定价趋升" : "走势平稳"}
+                      </span>
+                    </div>
+                    <Slider min={-1.0} max={1.0} step={0.1} value={mediumTermDirection} onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))} />
+                    <div className="slider-range-desc">
+                      <span>继续降息 (-1.0)</span>
+                      <span>走平</span>
+                      <span>明显回升 (+1.0)</span>
+                    </div>
+                    <div className="param-explanation">
+                      第 13 至第 {Math.min(simDurationYears * 12, 36)} 个月之间，政策利率按该滑杆设定的中期趋势变化。1.0 个单位的变动代表利率每年变化 0.50%。
+                      <div className="param-example">👉 例子：若设置为 -1.0，代表从第 13 个月起到第 36 个月止，利率每年以 -0.50% 的速度下降；设置为 0.0 则从第 13 个月起保持平稳。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">政策调整速度 (Speed)</span>
+                      <span className="slider-value">{(changeSpeed * 100).toFixed(0)}%</span>
+                    </div>
+                    <Slider min={0.0} max={1.0} step={0.05} value={changeSpeed} onChange={(e) => setChangeSpeed(parseFloat(e.target.value))} />
+                    <div className="slider-range-desc">
+                      <span>缓慢延迟 (0.0)</span>
+                      <span>均衡</span>
+                      <span>瞬时调整 (1.0)</span>
+                    </div>
+                    <div className="param-explanation">
+                      利率变动在未来 12 个月内发生的时间分布曲线（即变动的发生速度分布）。
+                      <div className="param-example">👉 例子：100% 代表变动瞬间集中在第 1 个月发生；50% 代表 12 个月内线性递变；0% 代表前期缓慢、在临近第 12 个月时才加速。</div>
+                    </div>
+                  </div>
+                </div>
               )}
-            </h2>
-
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">最大 Split / Tranche 数</span>
-                <span className="slider-value">{maxSplits} 个</span>
-              </div>
-              <div className="segmented-control">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={`segmented-btn ${maxSplits === n ? "active" : ""}`}
-                    onClick={() => setMaxSplits(n)}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-              <div className="param-explanation">
-                限制您的贷款最多可以被拆分成几笔不同期限和额度的子贷款分包。设置为 1 时等同于不进行任何拆分，仅比较单一期限锁定方案。
-                <div className="param-example">👉 例子：设置为 3，表示系统将在“不拆分（1笔）”、“拆分为2笔”和“拆分为3笔”的所有合法方案中寻找最优策略。</div>
-              </div>
             </div>
 
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">组合网格步长</span>
-                <span className="slider-value">{(percentageStep * 100).toFixed(0)}%</span>
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("risk")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("risk");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">2</span>
+                  <span>
+                    <span className="control-group-title">情景分布与风险幅度</span>
+                    <span className="control-group-subtitle">影响低 / 基准 / 高三条中期情景及其权重</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isRiskModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetRisk();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetRisk();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.risk ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
               </div>
-              <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-                {[
-                  { value: 0.15, label: "15% (粗)", tip: "最少组合,模拟最快" },
-                  { value: 0.10, label: "10% (适中)", tip: "组合适中,推荐日常使用" },
-                  { value: 0.05, label: "5% (细)", tip: "组合丰富,模拟较慢" }
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    title={opt.tip}
-                    className={`segmented-btn ${percentageStep === opt.value ? "active" : ""}`}
-                    onClick={() => setPercentageStep(opt.value)}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div className="param-explanation">
-              贷款额度在不同期限之间的分配步长。步长越粗,组合数越少,模拟越快。
-                 默认 10% 在组合丰富度和性能之间取得平衡;粗的 15% 跑得最快;细的 5% 组合最全但模拟较慢。
-                 <div className="param-example">👉 例子：步长 10% 时,1 笔分配可选 10%/20%/30%/.../100%(共 10 档)。</div>
-              </div>
+              {openControlGroups.risk && (
+                <div className="control-group-body">
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">预测路径不确定性 (Uncertainty)</span>
+                      <span className="slider-value">+/- {(uncertainty * 100).toFixed(2)}%</span>
+                    </div>
+                    <Slider min={0.0} max={0.02} step={0.001} value={uncertainty} onChange={(e) => setUncertainty(parseFloat(e.target.value))} />
+                    <div className="slider-range-desc">
+                      <span>较低 (0.0%)</span>
+                      <span>标准</span>
+                      <span>较高 (+/- 2.0%)</span>
+                    </div>
+                    <div className="param-explanation">
+                      未来利率预测路径的发散广度。不确定性随时间推移逐渐扩大（第 3 个月生效 25%，第 6 个月生效 50%，第 12 个月后生效 100%）。
+                      <div className="param-example">👉 例子：若设置为 +/- 1.00%，代表在第 12 个月及以后，“高利率情景”会在基准路径基础上上浮 1.00%，“低利率情景”则下浮 1.00%。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">情景概率权重 (Scenario Weights)</span>
+                      <span className="slider-value">{scenarioProbabilities.low}% / {scenarioProbabilities.base}% / {scenarioProbabilities.high}%</span>
+                    </div>
+                    {[
+                      { key: "low", label: "低利率情景权重" },
+                      { key: "base", label: "基准情景权重" },
+                      { key: "high", label: "高利率情景权重" }
+                    ].map((item) => (
+                      <div key={item.key} style={{ marginTop: item.key === "low" ? "8px" : "14px" }}>
+                        <div className="slider-label-row">
+                          <span className="form-label" style={{ fontSize: "13px" }}>{item.label}</span>
+                          <span className="slider-value">{scenarioProbabilities[item.key]}%</span>
+                        </div>
+                        <Slider
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={scenarioProbabilities[item.key]}
+                          onChange={(e) => handleScenarioProbabilityChange(/** @type {"low"|"base"|"high"} */ (item.key), parseInt(e.target.value, 10))}
+                        />
+                      </div>
+                    ))}
+                    <div className="slider-range-desc">
+                      <span>总和自动保持 100%</span>
+                      <span>默认 10 / 80 / 10</span>
+                    </div>
+                    <div className="param-explanation">
+                      这三项决定“期望总利息”等概率加权指标如何看待低利率、基准和高利率情景。该组只影响 36 个月内的中期权重，不直接改写 36 个月后的蒙特卡洛规则。
+                      <div className="param-example">👉 例子：若将基准情景调到 70%，则其余两个情景会自动分摊剩余 30%。默认设置为低 10% / 基准 80% / 高 10%。</div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">浮动/Offset 最高占比</span>
-                <span className="slider-value">{maxFloatingPercentage}%</span>
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("longTerm")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("longTerm");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">3</span>
+                  <span>
+                    <span className="control-group-title">长期 Monte Carlo</span>
+                    <span className="control-group-subtitle">影响 36 个月之后的长期波动方向与周期</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isLongTermModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetLongTerm();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetLongTerm();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.longTerm ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
               </div>
-              <Slider
-                min={0}
-                max={80}
-                step={10}
-                value={maxFloatingPercentage}
-                onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value))}
-              />
-              <div className="slider-range-desc">
-                <span>全固定</span>
-                <span>保守浮动</span>
-                <span>高灵活性</span>
-              </div>
-              <div className="param-explanation">
-                限制贷款中浮动利率（Floating/Offset/Revolving）部分的最高额度占比。该参数会同时约束最低固定比例为 {100 - maxFloatingPercentage}%。
-                <div className="param-example">👉 例子：若拉到 10%（系统默认），代表贷款中最多只能有 10% 采用浮动利率，其余 90% 必须锁死在固定期限上。设为 0% 则代表 100% 全固定。</div>
-              </div>
+              {openControlGroups.longTerm && (
+                <div className="control-group-body">
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">长期波动周期 (Long-Term Cycle)</span>
+                      <span className="slider-value">{longTermCycleYears} 年</span>
+                    </div>
+                    <Slider min={1} max={3} step={1} value={longTermCycleYears} onChange={(e) => setLongTermCycleYears(parseInt(e.target.value, 10))} />
+                    <div className="slider-range-desc">
+                      <span>1 年</span>
+                      <span>2 年</span>
+                      <span>3 年</span>
+                    </div>
+                    <div className="param-explanation">
+                      该参数决定第 36 个月之后长期蒙特卡洛路径的主导波动周期。以 2 年周期为例，若 13-36 个月总体向上，则 37-60 个月大概率先转为下行，61-84 个月再大概率切回上行。
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">长期反转概率 (Reversal Bias)</span>
+                      <span className="slider-value">{Math.round(longTermReversalBias * 100)}%</span>
+                    </div>
+                    <Slider min={0.6} max={0.8} step={0.1} value={longTermReversalBias} onChange={(e) => setLongTermReversalBias(parseFloat(e.target.value))} />
+                    <div className="slider-range-desc">
+                      <span>60%</span>
+                      <span>70%</span>
+                      <span>80%</span>
+                    </div>
+                    <div className="param-explanation">
+                      若 13-36 个月的中期趋势向上，则长期第一个周期会以该概率优先转为下行；若中期趋势向下，则长期第一个周期会以同样概率优先转为上行。其余概率下，模型保留同向波动的可能性。
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="form-group">
-              <div className="slider-label-row">
-                <span className="form-label">每期供款预算上限</span>
-                <span className="slider-value">${maxAffordablePayment.toLocaleString()}</span>
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("horizon")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("horizon");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">4</span>
+                  <span>
+                    <span className="control-group-title">模拟范围</span>
+                    <span className="control-group-subtitle">控制本次分析覆盖的未来时长</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isHorizonModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetHorizon();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetHorizon();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.horizon ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
               </div>
-              <input
-                type="number"
-                min="0"
-                step="100"
-                value={maxAffordablePayment}
-                onChange={(e) => setMaxAffordablePayment(Math.max(0, parseInt(e.target.value || "0", 10)))}
-                className="number-input"
-              />
-              <div className="param-explanation">
-                您每期可承受的最大还款金额上限。用于统计极端高利息情景下的“预算超限次数”，并参与帕累托防风险筛选。
-                <div className="param-example">👉 例子：若设定为 5000 且还款频率为双周，在某高息周期下若双周供款达到 5200，系统会记录 1 次超限，并在“综合评分”中予以扣分惩罚。</div>
+              {openControlGroups.horizon && (
+                <div className="control-group-body">
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>模拟期限选择 (Simulation Horizon)</span>
+                      <span className="slider-value" style={{ color: "#60a5fa" }}>{simDurationYears} 年 ({simDurationYears * 12} 个月)</span>
+                    </div>
+                    <Slider
+                      min={1}
+                      max={simMaxYears}
+                      step={1}
+                      value={simDurationYears}
+                      onChange={(/** @type {any} */ e) => setSimDurationYears(parseInt(e.target.value, 10))}
+                      className="slider-input"
+                      aria-label="模拟期限（年）"
+                      aria-valuemin={1}
+                      aria-valuemax={simMaxYears}
+                      aria-valuenow={simDurationYears}
+                    />
+                    <div className="slider-range-desc">
+                      <span>1 年</span>
+                      <span>{Math.max(1, Math.round(simMaxYears / 2))} 年</span>
+                      <span>最长 {simMaxYears} 年</span>
+                    </div>
+                    <div className="param-explanation" style={{ marginTop: "10px" }}>
+                      设定房贷策略情景模拟覆盖的未来期数范围。利率变化和还款折算将完全适配此周期。
+                      {simCappedByMortgage ? (
+                        <div className="param-example">
+                          👉 您在房贷配置中设定的期望还清期限为约 {simTargetYears.toFixed(1)} 年（{mortgage?.originalTermMonths} 个月），系统已自动将拖拽上限锁定到 {simMaxYears} 年（覆盖到目标年年末）。如需调整，可返回【房贷配置】修改。
+                        </div>
+                      ) : (
+                        <div className="param-example">👉 例子：若拖到 3 年，则只分析未来 36 个月内的还款表现，并计算第 36 个月末的期望剩余本金。</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("constraints")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("constraints");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">5</span>
+                  <span>
+                    <span className="control-group-title">拆分与预算约束</span>
+                    <span className="control-group-subtitle">控制候选策略空间与风险边界</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isConstraintsModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetConstraints();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetConstraints();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.constraints ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
               </div>
+              {openControlGroups.constraints && (
+                <div className="control-group-body">
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">最大 Split / Tranche 数</span>
+                      <span className="slider-value">{maxSplits} 个</span>
+                    </div>
+                    <div className="segmented-control">
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button key={n} type="button" className={`segmented-btn ${maxSplits === n ? "active" : ""}`} onClick={() => setMaxSplits(n)}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="param-explanation">
+                      限制您的贷款最多可以被拆分成几笔不同期限和额度的子贷款分包。设置为 1 时等同于不进行任何拆分，仅比较单一期限锁定方案。
+                      <div className="param-example">👉 例子：设置为 3，表示系统将在“不拆分（1笔）”、“拆分为2笔”和“拆分为3笔”的所有合法方案中寻找最优策略。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">组合网格步长</span>
+                      <span className="slider-value">{(percentageStep * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+                      {[
+                        { value: 0.15, label: "15% (粗)", tip: "最少组合,模拟最快" },
+                        { value: 0.10, label: "10% (适中)", tip: "组合适中,推荐日常使用" },
+                        { value: 0.05, label: "5% (细)", tip: "组合丰富,模拟较慢" }
+                      ].map((opt) => (
+                        <button key={opt.value} type="button" title={opt.tip} className={`segmented-btn ${percentageStep === opt.value ? "active" : ""}`} onClick={() => setPercentageStep(opt.value)}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="param-explanation">
+                      贷款额度在不同期限之间的分配步长。步长越粗，组合数越少，模拟越快。默认 10% 在组合丰富度和性能之间取得平衡。
+                      <div className="param-example">👉 例子：步长 10% 时，1 笔分配可选 10%/20%/30%/.../100%（共 10 档）。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">浮动/Offset 最高占比</span>
+                      <span className="slider-value">{maxFloatingPercentage}%</span>
+                    </div>
+                    <Slider min={0} max={80} step={10} value={maxFloatingPercentage} onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value, 10))} />
+                    <div className="slider-range-desc">
+                      <span>全固定</span>
+                      <span>保守浮动</span>
+                      <span>高灵活性</span>
+                    </div>
+                    <div className="param-explanation">
+                      限制贷款中浮动利率（Floating/Offset/Revolving）部分的最高额度占比。该参数会同时约束最低固定比例为 {100 - maxFloatingPercentage}%。
+                      <div className="param-example">👉 例子：若拉到 10%，代表贷款中最多只能有 10% 采用浮动利率，其余 90% 必须锁定在固定期限上。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">每期供款预算上限</span>
+                      <span className="slider-value">${maxAffordablePayment.toLocaleString()}</span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={maxAffordablePayment}
+                      onChange={(e) => setMaxAffordablePayment(Math.max(0, parseInt(e.target.value || "0", 10)))}
+                      className="number-input"
+                    />
+                    <div className="param-explanation">
+                      您每期可承受的最大还款金额上限。用于统计极端高利息情景下的“预算超限次数”，并参与综合评分。
+                      <div className="param-example">👉 例子：若设定为 5000 且还款频率为双周，在某高息周期下若双周供款达到 5200，系统会记录 1 次超限。</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("preferences")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("preferences");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">6</span>
+                  <span>
+                    <span className="control-group-title">个人还款偏好</span>
+                    <span className="control-group-subtitle">只影响推荐打分，不改变利率路径本身</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isWeightsModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetWeights();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetWeights();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.preferences ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
+              </div>
+              {openControlGroups.preferences && (
+                <div className="control-group-body">
+                  <p className="text-muted" style={{ fontSize: "11px", lineHeight: "1.5", margin: "0 0 14px" }}>
+                    自定义以下 6 项指标的权重比。<strong>所有权重之和锁定为 100%</strong>。当您拖动任意滑块增加其比例时，其他滑块将按比例自动减少，反之亦然。
+                  </p>
+                  {[
+                    {
+                      key: "cost",
+                      label: "利息成本 (Interest Cost)",
+                      value: weights.cost,
+                      minText: "成本低优先",
+                      maxText: "忽略成本",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“期望总利息支出”更低的拆分方案。`,
+                      example: `👉 例子：拉到 70% 时，系统会优先压低期望总利息，即使这意味着还款波动或到期集中度有所上升。`
+                    },
+                    {
+                      key: "principal",
+                      label: "本金还款速度 (Principal Paydown)",
+                      value: weights.principal,
+                      minText: "慢速还本",
+                      maxText: "快速还本优先",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“模拟期末剩余本金”更低的方案。`,
+                      example: `👉 例子：拉到 60% 时，会更倾向于在 ${simDurationYears} 年窗口内更快压低本金余额。`
+                    },
+                    {
+                      key: "refix",
+                      label: "利率重定价风险 (Refix Risk)",
+                      value: weights.refix,
+                      minText: "忽略风险",
+                      maxText: "分散到期优先",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“单月最大同时到期余额比例”更低的方案。`,
+                      example: `👉 例子：拉到 50% 时，会更倾向于分散不同 tranche 的到期月份。`
+                    },
+                    {
+                      key: "flex",
+                      label: "资金流灵活性 (Floating Flex)",
+                      value: weights.flex,
+                      minText: "不重要",
+                      maxText: "高比例浮动优先",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“浮动/Offset 占比”更高的方案。`,
+                      example: `👉 例子：拉到 40% 时，会把上方“拆分与预算约束”中设定的浮动占比上限尽量用满。`
+                    },
+                    {
+                      key: "resilience",
+                      label: "极端高息抗压性 (Stress Resistance)",
+                      value: weights.resilience,
+                      minText: "不考虑极端",
+                      maxText: "低最高供款优先",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“高利率情景下的峰值供款”更低的方案。`,
+                      example: `👉 例子：拉到 50% 时，会更偏向锁更长的固定期限来压制最坏情景下的供款峰值。`
+                    },
+                    {
+                      key: "budget",
+                      label: "预算超限控制 (Budget Safety)",
+                      value: weights.budget,
+                      minText: "不考虑预算",
+                      maxText: "少超预算优先",
+                      explanation: `在综合评分中，提高此项权重会让系统优先选择“模拟期内每期供款超过您设定预算”的次数更少的方案。`,
+                      example: `👉 例子：若预算设为 $5000，拉到 30% 时，会尽量减少各情景下超限次数。`
+                    }
+                  ].map((w) => (
+                    <div key={w.key} className="form-group" style={{ marginBottom: "14px" }}>
+                      <div className="slider-label-row">
+                        <span className="form-label" style={{ fontSize: "12px", fontWeight: "600" }}>{w.label}</span>
+                        <span className="slider-value" style={{ color: "#60a5fa", fontSize: "13px" }}>权重: {w.value}%</span>
+                      </div>
+                      <Slider min={0} max={100} step={1} value={w.value} onChange={(e) => handleWeightChange(w.key, parseInt(e.target.value, 10))} />
+                      <div className="slider-range-desc" style={{ marginTop: "2px" }}>
+                        <span>{w.minText}</span>
+                        <span>{w.maxText}</span>
+                      </div>
+                      <div className="param-explanation">
+                        {w.explanation}
+                        <div className="param-example">{w.example}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
           {/* Scenario Rates Chart */}
           <section className="glass-panel chart-section accent-cyan">
-            <h2 className="section-title"><span className="step-num">3</span>OCR 预测情景曲线</h2>
+            <h2 className="section-title"><span className="step-num">7</span>OCR 预测情景曲线</h2>
             <div style={{ marginTop: "16px" }}>
               <SvgChart data={chartScenarioPaths} yAxisType="rate" height={220} />
             </div>
+            <p className="text-muted" style={{ fontSize: "12px", lineHeight: "1.6", marginTop: "12px", marginBottom: 0 }}>
+              前 36 个月仍显示低 / 基准 / 高三条确定性 OCR 情景线；第 37 个月开始，系统会按您设置的长期周期与反转概率生成长期蒙特卡洛样本。白色虚线表示概率加权期望路径，彩色虚线表示从蒙特卡洛样本中抽取的代表性长期乐观 / 中位 / 压力路径；下方细节表可以切换到同名路径逐一对应查看。
+            </p>
           </section>
         </div>
 
@@ -1089,7 +1675,7 @@ export default function StrategyLab() {
 
           {/* Run Button & Progress panel */}
           <section className="glass-panel run-section accent-emerald">
-            <h2 className="section-title"><span className="step-num">4</span>策略仿真模拟</h2>
+            <h2 className="section-title"><span className="step-num">8</span>策略仿真模拟</h2>
             <p className="text-muted" style={{ fontSize: "12px", margin: "8px 0 16px" }}>
               系统将按最多 {maxSplits} 个 split、最高 {maxFloatingPercentage}% 浮动/Offset 占比生成合法方案，并在三个未来预测利率路径情景下进行 {simDurationYears * 12} 个月的还款流分析。
             </p>
@@ -1115,165 +1701,23 @@ export default function StrategyLab() {
                 </button>
               </div>
             ) : (
-              <>
-                {!simulationRunning && (
-                  <button
-                    type="button"
-                    onClick={handleStartSimulation}
-                    className="btn-cta-run"
-                    style={{ width: "100%", marginTop: "12px" }}
-                    disabled={!mortgage}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5" /><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-                    {simResults ? "重新仿真" : "开始仿真模拟"}
-                  </button>
-                )}
-
-                {/* Advanced Settings (Weight Preferences Sliders) */}
-                <section className="glass-panel advanced-settings-section" style={{ padding: "0", overflow: "hidden", marginTop: "24px" }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                    className="advanced-toggle-header"
-                    style={{
-                      width: "100%",
-                      background: "none",
-                      border: "none",
-                      padding: "16px 20px",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      color: "#fff",
-                      cursor: "pointer",
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "14px",
-                      fontWeight: "700",
-                      textAlign: "left"
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      ⚙️ 高级设置 (个人还款偏好微调)
-                    </span>
-                    <span style={{ color: "var(--text-secondary)", fontSize: "12px" }}>
-                      {showAdvancedSettings ? "收起 ▴" : "展开 ▾"}
-                    </span>
-                  </button>
-
-                  {showAdvancedSettings && (
-                    <div className="advanced-content" style={{ padding: "0 20px 20px", borderTop: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", margin: "12px 0 16px" }}>
-                        <p className="text-muted" style={{ fontSize: "11px", lineHeight: "1.5", flex: 1, margin: 0 }}>
-                          自定义以下 6 项指标的权重比。<strong>所有权重之和锁定为 100%</strong>。当您拖动任意滑块增加其比例时，其他滑块将等比例自动减少，反之亦然。
-                        </p>
-                        {isWeightsModified && (
-                          <button
-                            type="button"
-                            onClick={handleResetWeights}
-                            className="weights-reset-btn"
-                            title="将 6 项权重恢复为默认配比"
-                            aria-label="重置权重为默认值"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                              <path d="M3 3v5h5" />
-                            </svg>
-                            <span>重置默认</span>
-                          </button>
-                        )}
-                      </div>
-
-                      {[
-                        {
-                          key: "cost",
-                          label: "利息成本 (Interest Cost)",
-                          value: weights.cost,
-                          minText: "成本低优先",
-                          maxText: "忽略成本",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“期望总利息支出”更低的拆分方案（短期锁定或浮动占比更高的方案在降息通道下通常利息更低）。`,
-                          example: `👉 例子：拉到 70% 时，系统会在三个情景的期望利息加权后，极力压制总利息偏离最优值，即使这意味着还款波动或到期集中度有所上升。`
-                        },
-                        {
-                          key: "principal",
-                          label: "本金还款速度 (Principal Paydown)",
-                          value: weights.principal,
-                          minText: "慢速还本",
-                          maxText: "快速还本优先",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“模拟期末剩余本金”更低的方案，即在 ${simDurationYears} 年（${simDurationYears * 12} 个月）模拟窗口内消减最多本金。`,
-                          example: `👉 例子：拉到 60% 时，会倾向于将资金分配给本息比更高的较短期固定或浮动部分（每月摊还本金更多），以加速本金回收。`
-                        },
-                        {
-                          key: "refix",
-                          label: "利率重定价风险 (Refix Risk)",
-                          value: weights.refix,
-                          minText: "忽略风险",
-                          maxText: "分散到期优先",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“单月最大同时到期余额比例”更低的方案，即错开各 Tranche 的到期月份，避免多笔贷款集中在同一个月重定价而被同一波高利率冲击。`,
-                          example: `👉 例子：拉到 50% 时，会更倾向于分散成 1 年 / 2 年 / 3 年混合锁定，而非把 90% 贷款压在同一固定期限上。`
-                        },
-                        {
-                          key: "flex",
-                          label: "资金流灵活性 (Floating Flex)",
-                          value: weights.flex,
-                          minText: "不重要",
-                          maxText: "高比例浮动优先",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“浮动/Offset 占比”更高的方案，便于您随时进行大额提前还款或利用 Offset 账户抵消利息。`,
-                          example: `👉 例子：拉到 40% 时，会把上方“拆分约束参数”中设定的浮动占比上限尽量用满，在该范围内寻找其它指标仍较优的方案。`
-                        },
-                        {
-                          key: "resilience",
-                          label: "极端高息抗压性 (Stress Resistance)",
-                          value: weights.resilience,
-                          minText: "不考虑极端",
-                          maxText: "低最高供款优先",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“高利率情景下的峰值供款”更低的方案，即在最坏情况下也保持${getRepaymentFrequencyLabel()}可控。`,
-                          example: `👉 例子：拉到 50% 时，会优先把大部分贷款锁在长期固定（3-5 年）上，即使期望利息可能略高，但能压制极端情景下的供款峰值。`
-                        },
-                        {
-                          key: "budget",
-                          label: "预算超限控制 (Budget Safety)",
-                          value: weights.budget,
-                          minText: "不考虑预算",
-                          maxText: "少超预算优先",
-                          explanation: `在综合评分中，提高此项权重会让系统优先选择“模拟期内每期供款超过您设定预算”的次数更少的方案（每期预算上限在“2. 拆分约束参数”中设置）。`,
-                          example: `👉 例子：若预算设为 $5000，拉到 30% 时，会尽量让所有情景下的每期还款都贴近该上限，宁可牺牲一些其它指标也要减少超限次数。`
-                        }
-                      ].map((w) => {
-                        return (
-                          <div key={w.key} className="form-group" style={{ marginBottom: "14px" }}>
-                            <div className="slider-label-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <span className="form-label" style={{ fontSize: "12px", fontWeight: "600" }}>{w.label}</span>
-                              <span className="slider-value font-semibold" style={{ color: "#60a5fa", fontSize: "13px" }}>权重: {w.value}%</span>
-                            </div>
-                            <Slider
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={w.value}
-                              onChange={(e) => handleWeightChange(w.key, parseInt(e.target.value, 10))}
-                              style={{ width: "100%", marginTop: "4px" }}
-                            />
-                            <div className="slider-range-desc" style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
-                              <span>{w.minText}</span>
-                              <span>{w.maxText}</span>
-                            </div>
-                            <div className="param-explanation">
-                              {w.explanation}
-                              <div className="param-example">{w.example}</div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              </>
+              <button
+                type="button"
+                onClick={handleStartSimulation}
+                className="btn-cta-run"
+                style={{ width: "100%", marginTop: "12px" }}
+                disabled={!mortgage}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5" /><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
+                {simResults ? "重新仿真" : "开始仿真模拟"}
+              </button>
             )}
           </section>
 
           {/* Recommendations Cards */}
           {optimisedData && (
             <section className="recommendations-section accent-amber">
-              <h2 className="section-title"><span className="step-num">5</span>三大推荐拆分方案对比</h2>
+              <h2 className="section-title"><span className="step-num">9</span>三大推荐拆分方案对比</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
                 系统基于您设置的最大 split 数、浮动占比、预算上限、未来情景预测和还款偏好，筛选出当前最优贷款 split。{maxSplits > 1 ? "推荐会优先展示真正拆分为多笔 tranche 的方案。" : "当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击下方推荐卡片可快速将其设为当前对比策略。</strong>
               </p>
@@ -1419,31 +1863,47 @@ export default function StrategyLab() {
             <section className="glass-panel detail-timeline-section" style={{ marginTop: "24px" }}>
               <h2 className="section-title" style={{ marginBottom: "16px" }}>选定策略 {simulatedMonths} 个月细节汇总: {renderStrategySplit(selectedStrategy.strategyId)}</h2>
 
+              {detailScenarioOptions.length > 1 && (
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
+                  {detailScenarioOptions.map((/** @type {any} */ option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`chip-btn ${selectedDetailScenario === option.id ? "selected-chip" : ""}`}
+                      onClick={() => setSelectedDetailScenario(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {(() => {
-                const baseResult = simResults?.find((r) => r.strategyId === selectedStrategy.strategyId && r.scenarioId === "base");
-                const baseInterest = baseResult ? baseResult.totalInterest : selectedStrategy.expectedInterest;
-                const baseMaxPayment = baseResult ? baseResult.maximumPayment : selectedStrategy.expectedMaxPayment;
-                const baseEndingBalance = baseResult ? baseResult.endingBalance : selectedStrategy.expectedEndingBalance;
-                const basePrincipalRepaid = getTotalBalance() - baseEndingBalance;
+                const detailResult = getDetailResultForStrategy(selectedStrategy.strategyId);
+                const detailInterest = detailResult ? detailResult.totalInterest : selectedStrategy.expectedInterest;
+                const detailMaxPayment = detailResult ? detailResult.maximumPayment : selectedStrategy.expectedMaxPayment;
+                const detailEndingBalance = detailResult ? detailResult.endingBalance : selectedStrategy.expectedEndingBalance;
+                const detailPrincipalRepaid = getTotalBalance() - detailEndingBalance;
                 const freqLabel = getRepaymentFrequencyLabel();
+                const detailLabel = detailResult?.detailLabel || "期望路径";
 
                 return (
                   <div className="glass-panel" style={{ background: "rgba(255,255,255,0.01)", padding: "16px", borderRadius: "8px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "16px", marginBottom: "20px" }}>
                     <div>
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>基准总利息</div>
-                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-primary-light, #60a5fa)" }}>${Math.round(baseInterest).toLocaleString()}</div>
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>{detailLabel}总利息</div>
+                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-primary-light, #60a5fa)" }}>${Math.round(detailInterest).toLocaleString()}</div>
                     </div>
                     <div>
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>基准最高{freqLabel}</div>
-                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-rose)" }}>${Math.round(baseMaxPayment).toLocaleString()}</div>
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>{detailLabel}最高{freqLabel}</div>
+                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-rose)" }}>${Math.round(detailMaxPayment).toLocaleString()}</div>
                     </div>
                     <div>
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>基准已还本金</div>
-                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-emerald)" }}>${Math.round(basePrincipalRepaid).toLocaleString()}</div>
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>{detailLabel}已还本金</div>
+                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--color-emerald)" }}>${Math.round(detailPrincipalRepaid).toLocaleString()}</div>
                     </div>
                     <div>
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>基准剩余本金</div>
-                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--text-primary)" }}>${Math.round(baseEndingBalance).toLocaleString()}</div>
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>{detailLabel}剩余本金</div>
+                      <div style={{ fontSize: "18px", fontWeight: "600", color: "var(--text-primary)" }}>${Math.round(detailEndingBalance).toLocaleString()}</div>
                     </div>
                   </div>
                 );
@@ -1451,16 +1911,17 @@ export default function StrategyLab() {
 
               <div style={{ marginTop: "12px" }}>
                 <SvgChart
-                  data={[
-                    {
+                  data={(() => {
+                    const detailResult = getDetailResultForStrategy(selectedStrategy.strategyId);
+                    if (!detailResult?.timeline) return [];
+                    return [{
                       id: "balance-path",
-                      name: "基准本金总余额",
+                      name: `${detailResult.detailLabel}本金总余额`,
                       color: "var(--color-primary)",
-                      points: simResults
-                        .filter((/** @type {any} */ r) => r.strategyId === selectedStrategy.strategyId && r.scenarioId === "base")
-                        .flatMap((/** @type {any} */ r) => r.timeline.map((/** @type {any} */ t) => ({ month: t.monthIndex, value: t.closingBalance })))
-                    }
-                  ]}
+                      points: detailResult.timeline.map((/** @type {any} */ t) => ({ month: t.monthIndex, value: t.closingBalance })),
+                      fillArea: false
+                    }];
+                  })()}
                   yAxisType="currency"
                   height={200}
                 />
@@ -1881,6 +2342,97 @@ export default function StrategyLab() {
           gap: 16px;
         }
 
+        .control-group {
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 14px;
+          background: rgba(255,255,255,0.02);
+          overflow: hidden;
+        }
+
+        .control-group-header {
+          width: 100%;
+          border: none;
+          background: transparent;
+          color: inherit;
+          padding: 14px 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          cursor: pointer;
+          text-align: left;
+        }
+
+        .control-group-header:hover {
+          background: rgba(255,255,255,0.025);
+        }
+
+        .control-group-header:focus-visible {
+          outline: none;
+          box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.55);
+        }
+
+        .control-group-title-wrap {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 0;
+        }
+
+        .control-group-title-wrap :global(.step-num) {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: rgba(99, 102, 241, 0.18);
+          color: var(--color-primary);
+          font-size: 11px;
+          font-weight: 800;
+          border: 1px solid rgba(99, 102, 241, 0.35);
+          box-shadow: inset 0 0 8px rgba(99, 102, 241, 0.2);
+          flex-shrink: 0;
+        }
+
+        .control-group-title {
+          display: block;
+          color: #fff;
+          font-family: var(--font-heading);
+          font-size: 14px;
+          font-weight: 700;
+        }
+
+        .control-group-subtitle {
+          display: block;
+          color: var(--text-muted);
+          font-size: 11px;
+          line-height: 1.5;
+          margin-top: 3px;
+        }
+
+        .control-group-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
+        }
+
+        .control-group-toggle {
+          color: var(--text-secondary);
+          font-size: 12px;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+
+        .control-group-body {
+          border-top: 1px solid rgba(255,255,255,0.06);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
         .section-title {
           font-size: 16px;
           font-weight: 700;
@@ -2045,6 +2597,10 @@ export default function StrategyLab() {
           transition: var(--transition-smooth);
           white-space: nowrap;
           flex-shrink: 0;
+        }
+
+        .control-group-actions .weights-reset-btn {
+          padding: 5px 10px;
         }
 
         .weights-reset-btn:hover {
@@ -2410,6 +2966,30 @@ export default function StrategyLab() {
         .comp-term-bar-fill.cost {
           background: linear-gradient(90deg, #f43f5e, #ec4899);
           box-shadow: 0 0 6px rgba(244,63,94,0.4);
+        }
+
+        .chip-btn {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: var(--text-secondary);
+          border-radius: 9999px;
+          padding: 7px 12px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: var(--transition-smooth);
+        }
+
+        .chip-btn:hover {
+          border-color: rgba(96, 165, 250, 0.45);
+          color: #fff;
+        }
+
+        .selected-chip {
+          background: rgba(96, 165, 250, 0.14);
+          border-color: rgba(96, 165, 250, 0.55);
+          color: #fff;
+          box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.18) inset;
         }
 
         /* Detail timeline table */

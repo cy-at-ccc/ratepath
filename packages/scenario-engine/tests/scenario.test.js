@@ -36,6 +36,9 @@ describe("Scenario Engine Tests", () => {
     expect(high.id).toBe("high");
 
     // Check probabilities
+    expect(low.probability).toBe(0.1);
+    expect(base.probability).toBe(0.8);
+    expect(high.probability).toBe(0.1);
     expect(low.probability + base.probability + high.probability).toBe(1.0);
 
     // At Month 0, there is 0% uncertainty multiplier, so all policy rates match
@@ -50,6 +53,59 @@ describe("Scenario Engine Tests", () => {
     expect(base.policyRatePath[12].rate).toBe(0.04);
     expect(low.policyRatePath[12].rate).toBe(0.03);
     expect(high.policyRatePath[12].rate).toBe(0.05);
+  });
+
+  it("should apply custom scenario probabilities", () => {
+    const scenarios = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 24,
+      controls: {
+        shortTermChange: -0.01,
+        mediumTermDirection: 0,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        spreadShock: 0,
+        scenarioProbabilities: {
+          low: 0.2,
+          base: 0.5,
+          high: 0.3
+        }
+      }
+    });
+
+    const [low, base, high] = scenarios;
+    expect(low.probability).toBe(0.2);
+    expect(base.probability).toBe(0.5);
+    expect(high.probability).toBe(0.3);
+  });
+
+  it("should expand to Monte Carlo samples after month 36", () => {
+    const scenarios = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 84,
+      controls: {
+        shortTermChange: 0.01,
+        mediumTermDirection: 1,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        spreadShock: 0,
+        longTermCycleYears: 2,
+        longTermReversalBias: 0.7
+      }
+    });
+
+    expect(scenarios.length).toBe(36);
+    const lowSamples = scenarios.filter((/** @type {any} */ s) => s.assumptions?.scenarioFamily === "low");
+    expect(lowSamples).toHaveLength(12);
+    expect(scenarios.reduce((sum, s) => sum + s.probability, 0)).toBeCloseTo(1, 8);
+    expect(lowSamples[0].policyRatePath[24].rate).toBe(lowSamples[1].policyRatePath[24].rate);
+    expect(lowSamples[0].policyRatePath[48].rate).not.toBe(lowSamples[1].policyRatePath[48].rate);
   });
 
   it("should validate and throw errors on malformed scenarios", () => {
