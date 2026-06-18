@@ -23,8 +23,11 @@
  * @param {number} [input.constraints.maxSplits=3] - Maximum number of active tranches
  * @param {number} [input.constraints.minPercentage=0.1] - Minimum split allocation percentage (0 to 1)
  * @param {number} [input.constraints.percentageStep=0.1] - Grid percentage allocation step (0 to 1)
- * @param {number} [input.constraints.maxFloatingPercentage=0.3] - Maximum overall floating percentage (0 to 1)
- * @param {number} [input.constraints.minFixedPercentage=0.7] - Minimum overall fixed percentage (0 to 1)
+ * @param {number} [input.constraints.maxFloatingPercentage=0.3] - Maximum overall floating percentage (0 to 1).
+ *   When set and `minFixedPercentage` is not provided, the generator derives
+ *   `minFixedPercentage = 1 - maxFloatingPercentage` automatically.
+ * @param {number} [input.constraints.minFixedPercentage] - Minimum overall fixed percentage (0 to 1).
+ *   Defaults to `1 - maxFloatingPercentage` when not supplied.
  * @param {number} [input.constraints.minTrancheAmount=10000] - Minimum tranche amount in dollars
  * @param {boolean} [input.constraints.mustKeepFloating=false] - If true, floating percentage must be > 0
  * @param {import("@mortgage/schemas").RefixRule} [input.refixRule] - Refix rule configuration to append
@@ -44,7 +47,13 @@ export function generateSplitStrategies({
   const minPercentage = constraints.minPercentage ?? 0.1;
   const percentageStep = constraints.percentageStep ?? 0.1;
   const maxFloatingPercentage = constraints.maxFloatingPercentage ?? 0.3;
-  const minFixedPercentage = constraints.minFixedPercentage ?? 0.7;
+  // Derive `minFixedPercentage` from `maxFloatingPercentage` when the caller
+  // did not supply it explicitly. This removes the page-side "magic"
+  // derivation (1 - maxFloatingPercentage) that previously duplicated this
+  // logic in apps/web/app/strategy-lab/page.js and was easy to drift out of
+  // sync. Callers that need to decouple the two (e.g. advanced backtests)
+  // can still pass `minFixedPercentage` directly.
+  const minFixedPercentage = constraints.minFixedPercentage ?? Math.max(0, 1 - maxFloatingPercentage);
   const minTrancheAmount = constraints.minTrancheAmount ?? 10000;
   const mustKeepFloating = constraints.mustKeepFloating ?? false;
 

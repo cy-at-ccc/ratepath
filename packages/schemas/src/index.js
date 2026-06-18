@@ -48,12 +48,18 @@ export const MortgageProductDefinitionSchema = z.object({
  * @property {number} maxSplits
  * @property {number} minPercentage
  * @property {number} percentageStep
+ * @property {number} [maxFloatingPercentage] - Optional upper bound on the share of floating product (0..1).
+ *   When set, the strategy-generator derives `minFixedPercentage = 1 - maxFloatingPercentage` internally,
+ *   so callers do not need to compute it themselves.
+ * @property {boolean} [mustKeepFloating] - When true, every generated strategy must contain at least one floating tranche.
  */
 export const MarketRulesSchema = z.object({
   minTrancheAmount: z.number().nonnegative(),
   maxSplits: z.number().int().positive(),
   minPercentage: z.number().min(0).max(1),
   percentageStep: z.number().min(0).max(1),
+  maxFloatingPercentage: z.number().min(0).max(1).optional(),
+  mustKeepFloating: z.boolean().optional(),
 });
 
 /**

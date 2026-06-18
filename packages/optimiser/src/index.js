@@ -6,7 +6,12 @@
  * @type {Record<string, number>}
  */
 export const DEFAULT_TOLERANCES_TERM = {
-  expectedInterest: 50,
+  // Tightened from $50 -> $20: on a $500k loan over 5 years, $50 is ~0.001% of
+  // principal — looser than the typical $500-$5,000 cost gap between strategies.
+  // The tighter tolerance widens the Pareto set so 3+ split strategies that
+  // tie the 90/10 reference on cost (within $20) but beat it on
+  // `expectedMaxConcurrentRefixPercentage` are no longer hidden.
+  expectedInterest: 20,
   worstCaseInterest: 50,
   worstCasePayment: 10,
   expectedMaxConcurrentRefixPercentage: 0.01,
@@ -16,7 +21,8 @@ export const DEFAULT_TOLERANCES_TERM = {
 
 /** @type {Record<string, number>} */
 export const DEFAULT_TOLERANCES_PAYMENT = {
-  expectedInterest: 50,
+  // Same tightening as term mode — see DEFAULT_TOLERANCES_TERM comment.
+  expectedInterest: 20,
   worstCaseEndingBalance: 50,
   payoffTime: 1,
   expectedMaxConcurrentRefixPercentage: 0.01,
@@ -125,9 +131,16 @@ export function getPaymentObjectives(tolerances = {}) {
  *   - Map of metric name → {min, max, diff}. Keys include: cost, stability,
  *     endingBalance, refix, flexibility, flex, budget, principal, payoff.
  * @param {"term"|"payment"} mode
+ * @param {Object} [opts]
+ * @param {boolean} [opts.diversification=false] - When true, the user has
+ *   opted into a richer candidate set via the Diversification preset. The
+ *   pros/cons emit diversification-flavoured copy: refix-spread and flexible
+ *   overpayment are emphasised as pros; multi-tranche management overhead
+ *   and slightly higher expected cost are flagged as cons.
  * @returns {{pros: string[], cons: string[]}}
  */
-export function generateExplanations(s, bounds, mode = "term") {
+export function generateExplanations(s, bounds, mode = "term", opts = {}) {
+  const { diversification = false } = opts;
   /** @type {string[]} */
   const pros = [];
   /** @type {string[]} */
@@ -138,6 +151,13 @@ export function generateExplanations(s, bounds, mode = "term") {
     pros.push("预期利息成本极低，利息支出控制最佳。");
   } else if (bounds.cost && s.expectedInterest >= bounds.cost.max - bounds.cost.diff * 0.20) {
     cons.push("预期整体利息成本支出较高。");
+  }
+
+  // Diversification preset: a small expected-interest premium is acceptable
+  // because the user explicitly opted into richer candidate sets. Frame it as
+  // a known trade-off rather than a pure negative.
+  if (diversification && bounds.cost && s.expectedInterest > bounds.cost.min + bounds.cost.diff * 0.15) {
+    cons.push("分散化预设下：总成本略高于最优方案，但换来更低的再融资集中度和更高的灵活度。");
   }
 
   // Worst-case payment (term mode) or worst-case ending balance (payment mode)
@@ -160,6 +180,17 @@ export function generateExplanations(s, bounds, mode = "term") {
     pros.push("贷款到期日期分散，避免集中重定价利率飙升的风险。");
   } else if (bounds.refix && s.expectedMaxConcurrentRefixPercentage >= bounds.refix.max - bounds.refix.diff * 0.20) {
     cons.push("多笔贷款面临同时到期，重定价利率集中暴露风险高。");
+  }
+
+  // Diversification preset: when the user opted into richer candidate sets,
+  // refix-spread is the headline benefit. Surface it explicitly even when it
+  // is only "above average" rather than top-of-the-front.
+  if (diversification && bounds.refix &&
+      s.expectedMaxConcurrentRefixPercentage <= bounds.refix.min + bounds.refix.diff * 0.50) {
+    if (!pros.some((p) => p.includes("贷款到期日期分散"))) {
+      pros.push("分散化预设下：再融资风险分散到不同月份，单次冲击的影响更可控。");
+    }
+    cons.push("分散化预设下：管理多个固定到期日稍复杂，需要关注每个子贷款的再融资时点。");
   }
 
   // Term-mode only: affordability breaches + principal paydown
@@ -188,6 +219,15 @@ export function generateExplanations(s, bounds, mode = "term") {
     pros.push("保留较高浮动或Offset额度，资金注入与提前还款极具灵活性。");
   } else if (bounds.flex && s.expectedFloatingExposure <= bounds.flex.min + bounds.flex.diff * 0.20) {
     cons.push("高比例固定锁死了贷款，限制了随时对冲或大额提前还款。");
+  }
+
+  // Diversification preset: when the user opted into richer candidate sets
+  // and the strategy preserves meaningful floating exposure, surface the
+  // flexibility benefit explicitly.
+  if (diversification && bounds.flex &&
+      s.expectedFloatingExposure >= bounds.flex.max - bounds.flex.diff * 0.50 &&
+      !pros.some((p) => p.includes("保留较高浮动"))) {
+    pros.push("分散化预设下：保留充足的浮动或Offset额度，便于在机会出现时灵活还款或对冲。");
   }
 
   if (pros.length === 0) {
@@ -249,6 +289,14 @@ export function generateExplanations(s, bounds, mode = "term") {
  *     remain weights-agnostic (see function description).
  * @param {"term"|"payment"} [input.mode] - Mode selector for the objective set (defaults to "term")
  * @param {Record<string, number>} [input.tolerances] - Per-objective tolerance override
+ * @param {number} [input.recommendationMinAllocationCount] - Minimum number of
+ *   allocations required for the three headline recommendations. This does not
+ *   filter `rankedStrategies`, so single-product benchmarks can still appear in
+ *   the detailed table.
+ * @param {boolean} [input.diversification=false] - When true, the user has
+ *   opted into the Diversification preset (richer candidate sets + refix-heavy
+ *   weights). Pros/cons emission adapts accordingly; ranking and Pareto
+ *   classification are unaffected.
  * @returns {any} Ranks, recommendations, and Pareto frontier details
  */
 export function optimizeStrategies({
@@ -258,7 +306,9 @@ export function optimizeStrategies({
   sliderFlexibility = 0.0,
   weights = undefined,
   mode = "term",
-  tolerances = undefined
+  tolerances = undefined,
+  recommendationMinAllocationCount = 1,
+  diversification = false
 }) {
   // 1. Group simulation results by strategyId
   /** @type {Record<string, any[]>} */
@@ -280,6 +330,7 @@ export function optimizeStrategies({
     if (runs.some((/** @type {any} */ r) => r.isInfeasible)) {
       continue;
     }
+    const allocationCount = runs[0]?.allocationCount || 1;
     let expectedInterest = 0;
     let expectedRepayments = 0;
     let expectedEndingBalance = 0;
@@ -336,6 +387,7 @@ export function optimizeStrategies({
 
     aggregatedStrategies.push({
       strategyId,
+      allocationCount,
       expectedInterest,
       expectedRepayments,
       expectedEndingBalance,
@@ -486,15 +538,19 @@ export function optimizeStrategies({
   // than `expectedMaxPayment` (probability-weighted expectation) so the
   // recommendation aligns with the `resilience` weight's intent of
   // suppressing worst-case peaks. See spec 10.4.
-  const preference = scoredStrategies[0];
-  const lowestCost = [...scoredStrategies].sort((a, b) => a.expectedInterest - b.expectedInterest)[0];
+  const recommendationPool = scoredStrategies.filter(
+    (/** @type {any} */ s) => (s.allocationCount || 1) >= recommendationMinAllocationCount
+  );
+  const recommendationCandidates = recommendationPool.length > 0 ? recommendationPool : scoredStrategies;
+  const preference = recommendationCandidates[0];
+  const lowestCost = [...recommendationCandidates].sort((a, b) => a.expectedInterest - b.expectedInterest)[0];
   const mostStable = mode === "payment"
-    ? [...scoredStrategies].sort((a, b) => a.worstCaseEndingBalance - b.worstCaseEndingBalance)[0]
-    : [...scoredStrategies].sort((a, b) => a.worstCasePayment - b.worstCasePayment)[0];
+    ? [...recommendationCandidates].sort((a, b) => a.worstCaseEndingBalance - b.worstCaseEndingBalance)[0]
+    : [...recommendationCandidates].sort((a, b) => a.worstCasePayment - b.worstCasePayment)[0];
 
   const buildRecObject = (/** @type {any} */ s) => {
     if (!s) return null;
-    const { pros, cons } = generateExplanations(s, bounds, mode);
+    const { pros, cons } = generateExplanations(s, bounds, mode, { diversification });
     return {
       strategyId: s.strategyId,
       score: s.score,

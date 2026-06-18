@@ -146,4 +146,35 @@ describe("Strategy Generator Tests", () => {
       expect(Math.round(total * 100) / 100).toBe(1.0);
     }
   });
+
+  /**
+   * When the caller supplies `maxFloatingPercentage` but omits
+   * `minFixedPercentage`, the generator must derive `minFixedPercentage`
+   * internally as `1 - maxFloatingPercentage`. This pins the contract added
+   * with Deliverable 2 of the split-concentration fix: page-side derivations
+   * are no longer needed.
+   */
+  it("derives minFixedPercentage from maxFloatingPercentage when not supplied", () => {
+    const strategies = generateSplitStrategies({
+      totalAmount: 500000,
+      allowedProducts,
+      // Only maxFloatingPercentage is given; no minFixedPercentage.
+      constraints: {
+        maxSplits: 3,
+        minPercentage: 0.1,
+        percentageStep: 0.1,
+        maxFloatingPercentage: 0.3,
+        minTrancheAmount: 10000
+      }
+    });
+
+    expect(strategies.length).toBeGreaterThan(0);
+    strategies.forEach((strategy) => {
+      const fixedPct = strategy.allocations
+        .filter((a) => a.productCode !== "floating")
+        .reduce((sum, a) => sum + a.percentage, 0);
+      // Derived floor: 1 - 0.3 = 0.7 fixed minimum.
+      expect(Math.round(fixedPct * 1e4) / 1e4).toBeGreaterThanOrEqual(0.7 - 1e-9);
+    });
+  });
 });

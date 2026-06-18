@@ -337,8 +337,9 @@ describe("Pareto tolerance & mode-specific objectives", () => {
   });
 
   it("Tolerance-aware dominance: small differences within tolerance do not dominate", () => {
-    // The default tolerance for `expectedInterest` is $50. A beats B by $10,
-    // which is within tolerance, so A does NOT dominate B.
+    // The default tolerance for `expectedInterest` is $20 (tightened from $50
+    // in Deliverable 1). A beats B by $10, which is within the new tolerance,
+    // so A does NOT dominate B.
     const a = { expectedInterest: 1000, worstCaseInterest: 0, worstCasePayment: 0, expectedMaxConcurrentRefixPercentage: 0, expectedAffordabilityBreaches: 0, flexibilityPenalty: 0 };
     const b = { expectedInterest: 1010, worstCaseInterest: 0, worstCasePayment: 0, expectedMaxConcurrentRefixPercentage: 0, expectedAffordabilityBreaches: 0, flexibilityPenalty: 0 };
     const { objectives, tolerances } = getTermObjectives();
@@ -346,6 +347,17 @@ describe("Pareto tolerance & mode-specific objectives", () => {
     // With a $0 tolerance override, A dominates B.
     const tight = { ...tolerances, expectedInterest: 0 };
     expect(dominates(a, b, objectives, tight)).toBe(true);
+  });
+
+  it("Tolerance tightening (D1): $25 difference no longer ties; A wins on interest strictly", () => {
+    // With the new $20 tolerance, two strategies that differ by $25 on
+    // expectedInterest are now discriminating — A's strictly-better interest
+    // (by $25 > $20 tolerance) plus tie-or-better on the other objectives
+    // is enough for A to dominate B. The legacy $50 tolerance made them tie.
+    const a = { expectedInterest: 1000, worstCaseInterest: 0, worstCasePayment: 0, expectedMaxConcurrentRefixPercentage: 0, expectedAffordabilityBreaches: 0, flexibilityPenalty: 0 };
+    const b = { expectedInterest: 1025, worstCaseInterest: 0, worstCasePayment: 0, expectedMaxConcurrentRefixPercentage: 0, expectedAffordabilityBreaches: 0, flexibilityPenalty: 0 };
+    const { objectives, tolerances } = getTermObjectives();
+    expect(dominates(a, b, objectives, tolerances)).toBe(true);
   });
 
   it("generateExplanations is the single source of truth and adapts to mode", () => {
@@ -380,6 +392,51 @@ describe("Pareto tolerance & mode-specific objectives", () => {
     }, bounds, "payment");
     expect(paymentExp.pros.length).toBeGreaterThan(0);
   });
+
+  it("generateExplanations diversification flag emits refix-spread / flex copy", () => {
+    // Pins Deliverable 3b: when the user has opted into the Diversification
+    // preset, the pros/cons must surface the refix-spread and floating-
+    // exposure benefits explicitly. Without the flag those strings are absent.
+    const bounds = {
+      cost: { min: 1000, max: 2000, diff: 1000 },
+      principal: { min: 0, max: 0, diff: 1 },
+      refix: { min: 0.0, max: 0.6, diff: 0.6 },
+      resilience: { min: 3000, max: 5000, diff: 2000 },
+      flex: { min: 0.0, max: 0.6, diff: 0.6 },
+      stability: { min: 0, max: 0, diff: 1 },
+      budget: { min: 0, max: 0, diff: 1 },
+      endingBalance: { min: 0, max: 0, diff: 1 },
+      payoff: { min: 0, max: 0, diff: 1 }
+    };
+    // Mid-pack refix concentration (0.15) and floating exposure (0.45) trigger
+    // the diversification-only branches in generateExplanations.
+    const strategy = {
+      expectedInterest: 1500, // above the cost floor, triggers the cost-premium con
+      expectedMaxConcurrentRefixPercentage: 0.15,
+      expectedAffordabilityBreaches: 0,
+      expectedFloatingExposure: 0.45,
+      worstCasePayment: 3500,
+      expectedEndingBalance: 0
+    };
+
+    const withoutFlag = generateExplanations(strategy, bounds, "term");
+    const withFlag = generateExplanations(strategy, bounds, "term", { diversification: true });
+
+    // The cost-premium con is present under both modes (it's a legitimate
+    // observation). The diversification-only branches add the refix-spread /
+    // flex pros and the multi-tranche-management con.
+    const hasRefixSpreadPro = (e) => e.pros.some((p) => p.includes("再融资风险分散"));
+    const hasFlexPro = (e) => e.pros.some((p) => p.includes("保留充足的浮动或Offset额度"));
+    const hasManageCon = (e) => e.cons.some((p) => p.includes("管理多个固定到期日稍复杂"));
+
+    expect(hasRefixSpreadPro(withoutFlag)).toBe(false);
+    expect(hasFlexPro(withoutFlag)).toBe(false);
+    expect(hasManageCon(withoutFlag)).toBe(false);
+
+    expect(hasRefixSpreadPro(withFlag)).toBe(true);
+    expect(hasFlexPro(withFlag)).toBe(true);
+    expect(hasManageCon(withFlag)).toBe(true);
+  });
 });
 
 describe("Weights path and recommendation source semantics", () => {
@@ -405,11 +462,13 @@ describe("Weights path and recommendation source semantics", () => {
    * @param {number} maximumPayment
    * @param {number} [floatingExposure]
    * @param {number} [refixPct]
+   * @param {number} [allocationCount]
    * @returns {any}
    */
-  const mkRow = (strategyId, scenarioId, totalInterest, endingBalance, maximumPayment, floatingExposure = 0.5, refixPct = 0.1) => ({
+  const mkRow = (strategyId, scenarioId, totalInterest, endingBalance, maximumPayment, floatingExposure = 0.5, refixPct = 0.1, allocationCount = 1) => ({
     strategyId,
     scenarioId,
+    allocationCount,
     totalInterest,
     totalRepayments: 0,
     endingBalance,
@@ -571,6 +630,39 @@ describe("Weights path and recommendation source semantics", () => {
     // And the preference slot must have moved away from lowestCost,
     // proving the weights actually had an effect elsewhere.
     expect(opt.recommendations.preference.strategyId).not.toBe(opt.recommendations.lowestCost.strategyId);
+  });
+
+  it("optimiseStrategies can keep 100% benchmarks out of headline split recommendations", () => {
+    const results = [
+      mkRow("single-100", "base", 10000, 400000, 2800, 0, 0, 1),
+      mkRow("split-90-10", "base", 11000, 390000, 2900, 0.1, 0.1, 2),
+      mkRow("split-50-50", "base", 12000, 380000, 3000, 0.2, 0.2, 2)
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: results,
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "term",
+      weights: { cost: 100, principal: 0, refix: 0, resilience: 0, flex: 0, budget: 0 },
+      recommendationMinAllocationCount: 2
+    });
+
+    expect(opt.rankedStrategies[0].strategyId).toBe("single-100");
+    expect(opt.recommendations.preference.strategyId).toBe("split-90-10");
+    expect(opt.recommendations.lowestCost.strategyId).toBe("split-90-10");
+    expect(opt.recommendations.mostStable.strategyId).toBe("split-90-10");
+  });
+
+  it("optimiseStrategies falls back to single-product recommendations when no split exists", () => {
+    const opt = optimizeStrategies({
+      simulationResults: [mkRow("single-only", "base", 10000, 400000, 2800, 0, 0, 1)],
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "term",
+      recommendationMinAllocationCount: 2
+    });
+
+    expect(opt.recommendations.preference.strategyId).toBe("single-only");
+    expect(opt.recommendations.lowestCost.strategyId).toBe("single-only");
+    expect(opt.recommendations.mostStable.strategyId).toBe("single-only");
   });
 
   it("optimiseStrategies payment-mode weights ignore stability/endingBalance/payoff keys", () => {
