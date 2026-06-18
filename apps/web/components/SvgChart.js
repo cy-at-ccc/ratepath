@@ -55,7 +55,7 @@ function withAlpha(hex, alpha) {
  * @returns {any}
  */
 export default function SvgChart({ data, yAxisType = "rate", title, height = 300 }) {
-  const [hoverIndex, setHoverIndex] = useState(/** @type {number|null} */ (null));
+  const [hoverMonth, setHoverMonth] = useState(/** @type {number|null} */ (null));
   const [hoverX, setHoverX] = useState(0);
   const [hoverY, setHoverY] = useState(0);
   const containerRef = useRef(/** @type {any} */ (null));
@@ -69,13 +69,34 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
   // Resize listener
   useEffect(() => {
     if (!containerRef.current) return;
+    const measure = () => {
+      const nextWidth = containerRef.current?.clientWidth || containerRef.current?.getBoundingClientRect?.().width || 0;
+      if (nextWidth > 0) {
+        setWidth(nextWidth);
+      }
+    };
+
+    // Measure immediately on mount so the first render uses the full available
+    // width even if ResizeObserver does not flush before paint.
+    measure();
+
     const observer = new ResizeObserver((entries) => {
       for (let entry of entries) {
-        setWidth(entry.contentRect.width);
+        if (entry.contentRect.width > 0) {
+          setWidth(entry.contentRect.width);
+        }
       }
     });
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", measure);
+    }
+    return () => {
+      observer.disconnect();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("resize", measure);
+      }
+    };
   }, []);
 
   // Respect prefers-reduced-motion and record mount time for line-draw animation
@@ -99,6 +120,13 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
   // Filter out datasets that have no points, then apply hidden-state from legend toggles.
   const activeData = data.filter((d) => d.points && d.points.length > 0 && !hiddenSeries.has(d.id));
   const allSeries = data.filter((d) => d.points && d.points.length > 0);
+  // Build a unified month axis from all currently visible series. Each series
+  // may carry a different month range (e.g. short-term scenarios 0-36 plus
+  // long-term Monte Carlo samples 37+), so a single "first series" reference
+  // is wrong. We snap the cursor to the nearest month in the union instead.
+  const unionMonths = Array.from(
+    new Set(activeData.flatMap((d) => d.points.map((p) => p.month)))
+  ).sort((a, b) => a - b);
   if (allSeries.length === 0) {
     return (
       <div className="chart-empty" style={{ height }}>
@@ -222,37 +250,76 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
     return `${top} L ${getX(last.month)} ${baselineY} L ${getX(first.month)} ${baselineY} Z`;
   };
 
-  // Hover detection logic
-  const handleMouseMove = (/** @type {any} */ e) => {
-    if (!containerRef.current || activeData.length === 0) return;
+  // Hover detection logic — snaps to the nearest month in the union axis
+  // (across all visible series), then each series does its own per-series
+  // nearest-point lookup so a tooltip row never reports a value from the
+  // wrong month when series have different ranges.
+  const nearestPoint = (/** @type {any} */ series, /** @type {number} */ targetMonth) => {
+    if (!series || !series.points || series.points.length === 0) return null;
+    let bestIdx = 0;
+    let bestDelta = Math.abs(series.points[0].month - targetMonth);
+    for (let i = 1; i < series.points.length; i++) {
+      const delta = Math.abs(series.points[i].month - targetMonth);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIdx = i;
+      }
+    }
+    const p = series.points[bestIdx];
+    return { index: bestIdx, month: p.month, value: p.value, deltaMonths: bestDelta };
+  };
+
+  // Snap an estimated month to the nearest month in the union axis. Returns
+  // null when the axis is empty (caller should early-return).
+  const snapToUnion = (/** @type {number} */ estimated) => {
+    if (unionMonths.length === 0) return null;
+    let lo = 0;
+    let hi = unionMonths.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (unionMonths[mid] < estimated) lo = mid + 1;
+      else hi = mid;
+    }
+    const right = unionMonths[lo];
+    const left = lo > 0 ? unionMonths[lo - 1] : right;
+    return Math.abs(right - estimated) < Math.abs(left - estimated) ? right : left;
+  };
+
+  const handleHover = (/** @type {any} */ clientX, /** @type {any} */ clientY) => {
+    if (!containerRef.current || activeData.length === 0 || unionMonths.length === 0) return;
     const svg = containerRef.current.querySelector("svg");
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
 
     const relativeX = mouseX - margin.left;
     const pct = Math.min(Math.max(0, relativeX / graphWidth), 1);
     const estimatedMonth = minMonth + pct * xRange;
 
-    const refPoints = activeData[0].points;
-    let closestIdx = 0;
-    let minDiff = Infinity;
-    refPoints.forEach((/** @type {any} */ p, /** @type {number} */ idx) => {
-      const diff = Math.abs(p.month - estimatedMonth);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestIdx = idx;
-      }
-    });
+    const snapped = snapToUnion(estimatedMonth);
+    if (snapped === null) return;
 
-    setHoverIndex(closestIdx);
-    setHoverX(getX(refPoints[closestIdx].month));
+    setHoverMonth(snapped);
+    setHoverX(getX(snapped));
     setHoverY(mouseY);
   };
 
+  const handleMouseMove = (/** @type {any} */ e) => {
+    handleHover(e.clientX, e.clientY);
+  };
+
+  // Touch support — synthesise a mouse-equivalent position from the first
+  // touch. The chart is desktop-first but mobile users were previously unable
+  // to read the OCR scenario chart at all because touch fires `touchstart`
+  // but no `mousemove` until after a tap.
+  const handleTouch = (/** @type {any} */ e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    handleHover(e.touches[0].clientX, e.touches[0].clientY);
+  };
+
   const handleMouseLeave = () => {
-    setHoverIndex(null);
+    setHoverMonth(null);
   };
 
   // Generate grid values
@@ -293,12 +360,18 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
     <div className="svg-chart-container" ref={containerRef}>
       {title && <h3 className="chart-title">{title}</h3>}
 
+      <div className="chart-stage">
       <svg
-        width={width}
+        width="100%"
         height={height}
+        viewBox={`0 0 ${Math.max(width, 1)} ${height}`}
+        preserveAspectRatio="xMinYMin meet"
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
-        style={{ cursor: hoverIndex !== null ? "crosshair" : "default", display: "block" }}
+        onTouchStart={handleTouch}
+        onTouchMove={handleTouch}
+        onTouchEnd={handleMouseLeave}
+        style={{ cursor: hoverMonth !== null ? "crosshair" : "default", display: "block", touchAction: "pan-y" }}
       >
         <defs>
           {activeData.map((d) => {
@@ -425,7 +498,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
         })}
 
         {/* Hover indicators: crosshair lines + glowing dots */}
-        {hoverIndex !== null && (
+        {hoverMonth !== null && (
           <>
             {/* Vertical crosshair */}
             <line
@@ -437,11 +510,11 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
               strokeWidth="1"
               strokeDasharray="3 3"
             />
-            {/* Horizontal crosshair */}
+            {/* Horizontal crosshair — one per visible series, anchored at the per-series nearest point */}
             {activeData.map((d) => {
-              const pt = d.points[hoverIndex];
-              if (!pt) return null;
-              const y = getY(pt.value);
+              const np = nearestPoint(d, hoverMonth);
+              if (!np) return null;
+              const y = getY(np.value);
               return (
                 <line
                   key={`hcross-${d.id}`}
@@ -457,23 +530,24 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
               );
             })}
 
-            {/* Glowing hover dots */}
+            {/* Glowing hover dots — only render when the per-series nearest point is within 0.5 month of the snapped month.
+                This prevents dots from appearing on a short-term line at month 36 when the cursor has snapped to month 37. */}
             {activeData.map((d) => {
-              const pt = d.points[hoverIndex];
-              if (!pt) return null;
+              const np = nearestPoint(d, hoverMonth);
+              if (!np || np.deltaMonths > 0.5) return null;
               const c = resolveColor(d.color);
               return (
                 <g key={`dot-${d.id}`}>
                   <circle
                     cx={hoverX}
-                    cy={getY(pt.value)}
+                    cy={getY(np.value)}
                     r="9"
                     fill={c}
                     fillOpacity="0.18"
                   />
                   <circle
                     cx={hoverX}
-                    cy={getY(pt.value)}
+                    cy={getY(np.value)}
                     r="5"
                     fill={c}
                     stroke="#fff"
@@ -486,8 +560,33 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
           </>
         )}
       </svg>
+      {hoverMonth !== null && (
+        <div className="chart-tooltip chart-tooltip-overlay glass-panel">
+          <div className="tooltip-header">{formatTooltipMonth(hoverMonth)}</div>
+          <div className="tooltip-grid">
+            {allSeries.map((d) => {
+              const np = nearestPoint(d, hoverMonth);
+              const inRange = np && np.deltaMonths <= 0.5;
+              const c = resolveColor(d.color);
+              const isHidden = hiddenSeries.has(d.id);
+              return (
+                <div key={d.id} className={`tooltip-row ${isHidden ? "muted" : ""}`}>
+                  <span className="tooltip-label" style={{ color: isHidden ? "var(--text-muted)" : c }}>
+                    <span className="tooltip-dot" style={{ backgroundColor: c, opacity: isHidden ? 0.35 : 1 }} />
+                    {d.name}
+                  </span>
+                  <span className="tooltip-value">
+                    {inRange ? formatYLabel(np.value) : <span style={{ opacity: 0.4 }}>—</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      </div>
 
-      {/* Legend (interactive) + Tooltip */}
+      {/* Legend (interactive) */}
       <div className="chart-footer">
         <div className="chart-legend">
           {allSeries.map((d) => {
@@ -514,35 +613,21 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
             );
           })}
         </div>
-
-        {hoverIndex !== null && (
-          <div className="chart-tooltip glass-panel">
-            <div className="tooltip-header">{formatTooltipMonth(allSeries[0].points[hoverIndex].month)}</div>
-            <div className="tooltip-grid">
-              {allSeries.map((d) => {
-                const pt = d.points[hoverIndex];
-                if (!pt) return null;
-                const c = resolveColor(d.color);
-                const isHidden = hiddenSeries.has(d.id);
-                return (
-                  <div key={d.id} className={`tooltip-row ${isHidden ? "muted" : ""}`}>
-                    <span className="tooltip-label" style={{ color: isHidden ? "var(--text-muted)" : c }}>
-                      <span className="tooltip-dot" style={{ backgroundColor: c, opacity: isHidden ? 0.35 : 1 }} />
-                      {d.name}
-                    </span>
-                    <span className="tooltip-value">{formatYLabel(pt.value)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
       <style jsx>{`
         .svg-chart-container {
           width: 100%;
           position: relative;
+        }
+
+        .svg-chart-container > svg {
+          width: 100%;
+        }
+
+        .chart-stage {
+          position: relative;
+          width: 100%;
         }
 
         .chart-title {
@@ -568,7 +653,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
         .chart-footer {
           display: flex;
           align-items: flex-start;
-          justify-content: space-between;
+          justify-content: flex-start;
           margin-top: 14px;
           flex-wrap: wrap;
           gap: 16px;
@@ -629,6 +714,14 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
           backdrop-filter: blur(8px);
           -webkit-backdrop-filter: blur(8px);
           animation: chart-tooltip-in 120ms ease-out;
+        }
+
+        .chart-tooltip-overlay {
+          position: absolute;
+          right: 12px;
+          bottom: 12px;
+          max-width: min(320px, calc(100% - 24px));
+          pointer-events: none;
         }
 
         @keyframes chart-tooltip-in {

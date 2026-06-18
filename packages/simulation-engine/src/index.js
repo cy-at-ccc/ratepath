@@ -11,6 +11,8 @@ import { simulateMortgageTimeline, addMonths } from "@mortgage/mortgage-engine";
  * @param {string} [input.startDate] - Start date of the simulation
  * @param {number} [input.forecastMonths=36] - Horizon length in months
  * @param {number} [input.maxAffordablePayment] - User budget threshold (optional)
+ * @param {boolean} [input.includeTimeline=true] - Include per-month detail rows in the result
+ * @param {boolean} [input.includeRefixEvents=true] - Include refix event detail in the result
  * @returns {any} Detailed result for this simulation
  */
 export function simulateStrategyScenario({
@@ -21,7 +23,9 @@ export function simulateStrategyScenario({
   currentProductRates,
   startDate,
   forecastMonths = 36,
-  maxAffordablePayment
+  maxAffordablePayment,
+  includeTimeline = true,
+  includeRefixEvents = true
 }) {
   const start = startDate || new Date().toISOString().split("T")[0];
   const frequency = mortgage.repaymentFrequency;
@@ -149,6 +153,7 @@ export function simulateStrategyScenario({
   return {
     strategyId: strategy.id,
     scenarioId: scenario.id,
+    allocationCount: strategy.allocations.length,
     totalInterest: rawResult.totalInterest,
     totalRepayments: rawResult.totalRepayments,
     endingBalance: rawResult.endingBalance,
@@ -165,8 +170,8 @@ export function simulateStrategyScenario({
     offsetUtilisation: rawResult.offsetUtilisation,
     isInfeasible: rawResult.isInfeasible,
     infeasibilityReason: rawResult.infeasibilityReason,
-    refixEvents: rawResult.refixEvents,
-    timeline
+    refixEvents: includeRefixEvents ? rawResult.refixEvents : [],
+    timeline: includeTimeline ? timeline : undefined
   };
 }
 
@@ -181,7 +186,9 @@ export function simulateStrategyScenario({
  * @param {string} [input.startDate]
  * @param {number} [input.forecastMonths=36]
  * @param {number} [input.maxAffordablePayment]
- * @param {function(number, number): void} [input.onProgress]
+ * @param {boolean} [input.includeTimeline=true]
+ * @param {boolean} [input.includeRefixEvents=true]
+ * @param {function(number, number, {strategy: import("@mortgage/schemas").SplitStrategy, scenario: import("@mortgage/schemas").RateScenario}): void} [input.onProgress]
  * @param {AbortSignal} [input.signal]
  * @returns {Promise<any[]>} Flat list of all strategy x scenario simulation results
  */
@@ -194,6 +201,8 @@ export async function simulateStrategyScenarioMatrix({
   startDate,
   forecastMonths = 36,
   maxAffordablePayment,
+  includeTimeline = true,
+  includeRefixEvents = true,
   onProgress,
   signal
 }) {
@@ -215,14 +224,16 @@ export async function simulateStrategyScenarioMatrix({
         currentProductRates,
         startDate,
         forecastMonths,
-        maxAffordablePayment
+        maxAffordablePayment,
+        includeTimeline,
+        includeRefixEvents
       });
 
       results.push(res);
       completed++;
 
       if (onProgress) {
-        onProgress(completed, totalSimulations);
+        onProgress(completed, totalSimulations, { strategy, scenario });
       }
 
       // Allow event loop to breathe

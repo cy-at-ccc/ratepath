@@ -64,6 +64,40 @@ async function shortHash(text) {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
+function getProductLabel(products, productCode) {
+  const product = products.find((p) => p.code === productCode);
+  return product?.displayName || productCode;
+}
+
+function getFixTermLabel(products, productCode) {
+  const product = products.find((p) => p.code === productCode);
+  if (!product || product.type === "floating") return "浮动";
+  if (!product.fixedMonths) return product.displayName || productCode;
+  if (product.fixedMonths < 12) return `${product.fixedMonths}个月固定`;
+  const years = product.fixedMonths / 12;
+  return Number.isInteger(years) ? `${years}年固定` : `${product.fixedMonths}个月固定`;
+}
+
+function describeStrategy(strategy, products) {
+  return strategy.allocations
+    .map((allocation) => `${getProductLabel(products, allocation.productCode)} ${(allocation.percentage * 100).toFixed(0)}%`)
+    .join(" + ");
+}
+
+function describeFixTerms(strategy, products) {
+  return strategy.allocations
+    .map((allocation) => `${getFixTermLabel(products, allocation.productCode)} ${(allocation.percentage * 100).toFixed(0)}%`)
+    .join(" + ");
+}
+
+function describeScenario(scenario) {
+  const family = scenario.assumptions?.scenarioFamily || scenario.id;
+  if (family === "low") return "低利率路径";
+  if (family === "base") return "基准路径";
+  if (family === "high") return "高利率路径";
+  return scenario.name || scenario.id;
+}
+
 self.onmessage = async (e) => {
   const {
     mortgage,
@@ -92,11 +126,11 @@ self.onmessage = async (e) => {
     const key = await shortHash(serialised);
 
     if (!forceRecompute && cache.key === key && cache.results) {
-      self.postMessage({ type: "cached", key });
+      self.postMessage({ type: "cached", key, results: cache.results });
       return;
     }
 
-    const results = await simulateStrategyScenarioMatrix({
+    const summaries = await simulateStrategyScenarioMatrix({
       mortgage,
       strategies,
       scenarios,
@@ -105,37 +139,30 @@ self.onmessage = async (e) => {
       startDate,
       forecastMonths,
       maxAffordablePayment,
-      onProgress: (completed, total) => {
-        self.postMessage({ type: "progress", completed, total });
+      includeTimeline: false,
+      includeRefixEvents: false,
+      onProgress: (completed, total, current) => {
+        self.postMessage({
+          type: "progress",
+          completed,
+          total,
+          current: current ? {
+            strategyId: current.strategy.id,
+            scenarioId: current.scenario.id,
+            combination: describeStrategy(current.strategy, products),
+            fixTerms: describeFixTerms(current.strategy, products),
+            scenarioPath: describeScenario(current.scenario)
+          } : null
+        });
       }
     });
 
     cache.key = key;
-    cache.results = results;
+    cache.results = summaries;
 
-    // Save full results to IndexedDB, then notify main thread
-    await dbPut("savedResults", { id: "last_simulation", results, key });
-
-    const summaries = results.map(r => ({
-      strategyId: r.strategyId,
-      scenarioId: r.scenarioId,
-      totalInterest: r.totalInterest,
-      totalRepayments: r.totalRepayments,
-      endingBalance: r.endingBalance,
-      maximumPayment: r.maximumPayment,
-      minimumPayment: r.minimumPayment,
-      averagePayment: r.averagePayment,
-      maximumPaymentIncrease: r.maximumPaymentIncrease,
-      paymentVolatility: r.paymentVolatility,
-      refixEventCount: r.refixEventCount,
-      maximumConcurrentRefixPercentage: r.maximumConcurrentRefixPercentage,
-      floatingExposure: r.floatingExposure,
-      affordabilityBreaches: r.affordabilityBreaches,
-      payoffTime: r.payoffTime,
-      offsetUtilisation: r.offsetUtilisation,
-      isInfeasible: r.isInfeasible,
-      infeasibilityReason: r.infeasibilityReason
-    }));
+    // Persist summary-only results to IndexedDB to avoid cloning very large
+    // timeline payloads across the structured-clone boundary.
+    await dbPut("savedResults", { id: "last_simulation", results: summaries, key });
 
     self.postMessage({ type: "success", results: summaries, key, savedToDB: true });
   } catch (error) {

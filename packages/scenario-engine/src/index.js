@@ -4,7 +4,7 @@ import { buildPolicyRatePath, deriveProductRatePaths } from "@mortgage/rate-engi
 /** @typedef {import("@mortgage/schemas").MortgageProductDefinition} MortgageProductDefinition */
 
 const DETERMINISTIC_HORIZON_MONTHS = 36;
-const DEFAULT_MONTE_CARLO_SAMPLE_COUNT = 12;
+const DEFAULT_MONTE_CARLO_SAMPLE_COUNT = 1;
 
 /**
  * Continuous uncertainty shock curve multiplier:
@@ -37,7 +37,7 @@ function getUncertaintyFactor(month) {
  * @returns {{ low: number, base: number, high: number }}
  */
 function normaliseScenarioProbabilities(rawProbabilities) {
-  const defaults = { low: 0.1, base: 0.8, high: 0.1 };
+  const defaults = { low: 0.15, base: 0.7, high: 0.15 };
   const low = rawProbabilities?.low ?? defaults.low;
   const base = rawProbabilities?.base ?? defaults.base;
   const high = rawProbabilities?.high ?? defaults.high;
@@ -231,7 +231,7 @@ export function generateScenarios({
   const scenarioProbabilities = normaliseScenarioProbabilities(controls?.scenarioProbabilities);
   const longTermCycleMonths = Math.max(12, (controls?.longTermCycleYears ?? 2) * 12);
   const longTermReversalBias = Math.min(0.95, Math.max(0.5, controls?.longTermReversalBias ?? 0.7));
-  const monteCarloSampleCount = Math.max(3, Math.round(controls?.monteCarloSampleCount ?? DEFAULT_MONTE_CARLO_SAMPLE_COUNT));
+  const monteCarloSampleCount = Math.max(1, Math.round(controls?.monteCarloSampleCount ?? DEFAULT_MONTE_CARLO_SAMPLE_COUNT));
 
   // 1. Generate Base Policy path (all months)
   const basePolicyPath = buildPolicyRatePath({

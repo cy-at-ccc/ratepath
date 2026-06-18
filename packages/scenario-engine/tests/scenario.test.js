@@ -36,9 +36,9 @@ describe("Scenario Engine Tests", () => {
     expect(high.id).toBe("high");
 
     // Check probabilities
-    expect(low.probability).toBe(0.1);
-    expect(base.probability).toBe(0.8);
-    expect(high.probability).toBe(0.1);
+    expect(low.probability).toBe(0.15);
+    expect(base.probability).toBe(0.7);
+    expect(high.probability).toBe(0.15);
     expect(low.probability + base.probability + high.probability).toBe(1.0);
 
     // At Month 0, there is 0% uncertainty multiplier, so all policy rates match
@@ -82,7 +82,7 @@ describe("Scenario Engine Tests", () => {
     expect(high.probability).toBe(0.3);
   });
 
-  it("should expand to Monte Carlo samples after month 36", () => {
+  it("should default to one representative Monte Carlo tail per scenario family after month 36", () => {
     const scenarios = generateScenarios({
       initialRate: 0.05,
       currentProductRates,
@@ -97,6 +97,37 @@ describe("Scenario Engine Tests", () => {
         spreadShock: 0,
         longTermCycleYears: 2,
         longTermReversalBias: 0.7
+      }
+    });
+
+    expect(scenarios.length).toBe(3);
+    const lowSamples = scenarios.filter((/** @type {any} */ s) => s.assumptions?.scenarioFamily === "low");
+    const baseSamples = scenarios.filter((/** @type {any} */ s) => s.assumptions?.scenarioFamily === "base");
+    const highSamples = scenarios.filter((/** @type {any} */ s) => s.assumptions?.scenarioFamily === "high");
+    expect(lowSamples).toHaveLength(1);
+    expect(baseSamples).toHaveLength(1);
+    expect(highSamples).toHaveLength(1);
+    expect(scenarios.reduce((sum, s) => sum + s.probability, 0)).toBeCloseTo(1, 8);
+    expect(lowSamples[0].policyRatePath[36].rate).toBe(lowSamples[0].policyRatePath[36].rate);
+    expect(lowSamples[0].policyRatePath[48].rate).not.toBeUndefined();
+  });
+
+  it("should support explicit multi-sample Monte Carlo expansion", () => {
+    const scenarios = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 84,
+      controls: {
+        shortTermChange: 0.01,
+        mediumTermDirection: 1,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        spreadShock: 0,
+        longTermCycleYears: 2,
+        longTermReversalBias: 0.7,
+        monteCarloSampleCount: 12
       }
     });
 
