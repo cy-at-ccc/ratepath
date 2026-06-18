@@ -4,7 +4,9 @@ import { buildPolicyRatePath, deriveProductRatePaths } from "@mortgage/rate-engi
 /** @typedef {import("@mortgage/schemas").MortgageProductDefinition} MortgageProductDefinition */
 
 const DETERMINISTIC_HORIZON_MONTHS = 36;
+const SHORT_TERM_HORIZON_MONTHS = 12;
 const DEFAULT_MONTE_CARLO_SAMPLE_COUNT = 1;
+const DEFAULT_POLICY_RATE_CAP = 0.15;
 
 /**
  * Continuous uncertainty shock curve multiplier:
@@ -62,8 +64,8 @@ function normaliseScenarioProbabilities(rawProbabilities) {
  * @param {number} rate
  * @returns {number}
  */
-function roundRate(rate) {
-  return Math.max(0, Math.round(rate * 1e8) / 1e8);
+function roundRate(rate, cap = DEFAULT_POLICY_RATE_CAP) {
+  return Math.min(cap, Math.max(0, Math.round(rate * 1e8) / 1e8));
 }
 
 /**
@@ -95,6 +97,33 @@ function createRng(seedText) {
 }
 
 /**
+ * Deterministic stable serialisation for seed inputs.
+ * @param {any} value
+ * @returns {string}
+ */
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
+}
+
+/**
+ * Box-Muller normal draw using the deterministic RNG.
+ * @param {() => number} rng
+ * @returns {number}
+ */
+function normalSample(rng) {
+  const u1 = Math.max(Number.EPSILON, rng());
+  const u2 = Math.max(Number.EPSILON, rng());
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/**
  * @param {Array<{month: number, rate: number}>} path
  * @param {number} fromMonth
  * @returns {number}
@@ -106,12 +135,58 @@ function averageRate(path, fromMonth) {
 }
 
 /**
+ * Adds stochastic but anchored variation around the 13-36 month path. Months
+ * 0-12 remain deterministic so short-term user assumptions stay readable.
+ * @param {Object} input
+ * @param {Array<{month: number, rate: number}>} input.anchorPath
+ * @param {number} input.forecastMonths
+ * @param {number} input.uncertainty
+ * @param {number} input.rateCap
+ * @param {string} input.seedText
+ * @returns {Array<{month: number, rate: number}>}
+ */
+function buildMediumTermMonteCarloPolicyPath({
+  anchorPath,
+  forecastMonths,
+  uncertainty,
+  rateCap,
+  seedText
+}) {
+  const path = anchorPath.map((p) => ({ ...p }));
+  if (forecastMonths <= SHORT_TERM_HORIZON_MONTHS) {
+    return path;
+  }
+
+  const rng = createRng(seedText);
+  const mediumEndMonth = Math.min(DETERMINISTIC_HORIZON_MONTHS, forecastMonths);
+  let currentRate = path[SHORT_TERM_HORIZON_MONTHS]?.rate ?? path[0]?.rate ?? 0;
+  let previousShock = 0;
+
+  for (let month = SHORT_TERM_HORIZON_MONTHS + 1; month <= mediumEndMonth; month++) {
+    const anchor = anchorPath[month]?.rate ?? currentRate;
+    const previousAnchor = anchorPath[month - 1]?.rate ?? anchor;
+    const anchorDrift = anchor - previousAnchor;
+    const progress = (month - SHORT_TERM_HORIZON_MONTHS) / Math.max(1, DETERMINISTIC_HORIZON_MONTHS - SHORT_TERM_HORIZON_MONTHS);
+    const sigma = Math.max(0.00008, uncertainty * (0.018 + 0.032 * progress));
+    const shock = previousShock * 0.45 + normalSample(rng) * sigma;
+    const meanReversion = (anchor - currentRate) * 0.18;
+
+    currentRate = roundRate(currentRate + anchorDrift + meanReversion + shock, rateCap);
+    path[month] = { month, rate: currentRate };
+    previousShock = shock;
+  }
+
+  return path;
+}
+
+/**
  * @param {Object} input
  * @param {Array<{month: number, rate: number}>} input.prefixPath
  * @param {number} input.forecastMonths
  * @param {number} input.cycleMonths
  * @param {number} input.reversalBias
  * @param {number} input.uncertainty
+ * @param {number} input.rateCap
  * @param {string} input.seedText
  * @returns {Array<{month: number, rate: number}>}
  */
@@ -121,6 +196,7 @@ function buildLongTermMonteCarloPolicyPath({
   cycleMonths,
   reversalBias,
   uncertainty,
+  rateCap,
   seedText
 }) {
   if (forecastMonths <= DETERMINISTIC_HORIZON_MONTHS) {
@@ -160,7 +236,7 @@ function buildLongTermMonteCarloPolicyPath({
     const meanReversion = (month36Rate - currentRate) * 0.018;
     const noise = (rng() - 0.5) * 2 * cycleNoiseScale;
 
-    currentRate = roundRate(currentRate + directionalDrift + oscillation + meanReversion + noise);
+    currentRate = roundRate(currentRate + directionalDrift + oscillation + meanReversion + noise, rateCap);
     path[month] = { month, rate: currentRate };
   }
 
@@ -216,6 +292,7 @@ export function validateScenario(scenario) {
  * @param {number} [input.controls.longTermCycleYears] - Post-36-month dominant swing cycle length in years
  * @param {number} [input.controls.longTermReversalBias] - Probability that the next long-term cycle reverses the 13-36m trend
  * @param {number} [input.controls.monteCarloSampleCount] - Number of Monte Carlo samples per scenario family
+ * @param {number} [input.controls.policyRateCap] - Maximum generated policy rate
  * @returns {RateScenario[]} Array of three validated RateScenario objects (low, base, high)
  */
 export function generateScenarios({
@@ -232,6 +309,7 @@ export function generateScenarios({
   const longTermCycleMonths = Math.max(12, (controls?.longTermCycleYears ?? 2) * 12);
   const longTermReversalBias = Math.min(0.95, Math.max(0.5, controls?.longTermReversalBias ?? 0.7));
   const monteCarloSampleCount = Math.max(1, Math.round(controls?.monteCarloSampleCount ?? DEFAULT_MONTE_CARLO_SAMPLE_COUNT));
+  const policyRateCap = Math.max(0.01, controls?.policyRateCap ?? DEFAULT_POLICY_RATE_CAP);
 
   // 1. Generate Base Policy path (all months)
   const basePolicyPath = buildPolicyRatePath({
@@ -257,12 +335,12 @@ export function generateScenarios({
 
     lowPolicyPath.push({
       month: m,
-      rate: Math.max(0, Math.round((point.rate - shock) * 1e8) / 1e8)
+      rate: roundRate(point.rate - shock, policyRateCap)
     });
 
     highPolicyPath.push({
       month: m,
-      rate: Math.max(0, Math.round((point.rate + shock) * 1e8) / 1e8)
+      rate: roundRate(point.rate + shock, policyRateCap)
     });
   });
 
@@ -275,7 +353,7 @@ export function generateScenarios({
   /** @type {RateScenario[]} */
   const scenarios = [];
 
-  if (forecastMonths <= DETERMINISTIC_HORIZON_MONTHS) {
+  if (forecastMonths <= SHORT_TERM_HORIZON_MONTHS) {
     baseSpecs.forEach((spec) => {
       const productRatePaths = deriveProductRatePaths({
         policyRatePath: spec.policyRatePath,
@@ -300,6 +378,7 @@ export function generateScenarios({
           spreadShock: spec.spreadShock,
           scenarioFamily: spec.id,
           deterministicHorizonMonths: DETERMINISTIC_HORIZON_MONTHS,
+          stochasticStartMonth: null,
           isMonteCarloTail: false
         })
       });
@@ -307,14 +386,37 @@ export function generateScenarios({
   } else {
     baseSpecs.forEach((spec) => {
       for (let sampleIndex = 0; sampleIndex < monteCarloSampleCount; sampleIndex++) {
-        const scenarioId = `${spec.id}-mc-${String(sampleIndex + 1).padStart(2, "0")}`;
+        const isExpandedSample = monteCarloSampleCount > 1;
+        const scenarioId = isExpandedSample ? `${spec.id}-mc-${String(sampleIndex + 1).padStart(2, "0")}` : spec.id;
+        const seedInput = {
+          scenarioId,
+          sampleIndex,
+          forecastMonths,
+          shortTermChange: controls?.shortTermChange,
+          mediumTermDirection: controls?.mediumTermDirection,
+          changeSpeed: controls?.changeSpeed,
+          uncertainty,
+          longTermCycleMonths,
+          longTermReversalBias,
+          policyRateCap,
+          scenarioFamily: spec.id,
+          scenarioProbability: spec.probability
+        };
+        const mediumTermPath = buildMediumTermMonteCarloPolicyPath({
+          anchorPath: spec.policyRatePath,
+          forecastMonths,
+          uncertainty,
+          rateCap: policyRateCap,
+          seedText: `medium-${stableStringify(seedInput)}`
+        });
         const policyRatePath = buildLongTermMonteCarloPolicyPath({
-          prefixPath: spec.policyRatePath,
+          prefixPath: mediumTermPath,
           forecastMonths,
           cycleMonths: longTermCycleMonths,
           reversalBias: longTermReversalBias,
           uncertainty,
-          seedText: `${scenarioId}-${forecastMonths}-${longTermCycleMonths}-${longTermReversalBias}`
+          rateCap: policyRateCap,
+          seedText: `long-${stableStringify(seedInput)}`
         });
         const productRatePaths = deriveProductRatePaths({
           policyRatePath,
@@ -339,8 +441,11 @@ export function generateScenarios({
             spreadShock: spec.spreadShock,
             scenarioFamily: spec.id,
             deterministicHorizonMonths: DETERMINISTIC_HORIZON_MONTHS,
-            isMonteCarloTail: true,
+            stochasticStartMonth: SHORT_TERM_HORIZON_MONTHS + 1,
+            isMonteCarloTail: forecastMonths > DETERMINISTIC_HORIZON_MONTHS,
             monteCarloSampleIndex: sampleIndex,
+            monteCarloSampleCount,
+            policyRateCap,
             longTermCycleMonths,
             longTermReversalBias,
             post36AverageRate: averageRate(policyRatePath, DETERMINISTIC_HORIZON_MONTHS + 1),

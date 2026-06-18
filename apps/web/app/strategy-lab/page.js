@@ -13,8 +13,8 @@ import { generateScenarios } from "@mortgage/scenario-engine";
 import { generateSplitStrategies } from "@mortgage/strategy-generator";
 import { optimizeStrategies } from "@mortgage/optimiser";
 import { simulateStrategyScenario } from "@mortgage/simulation-engine";
+import { calculateScheduledPayment } from "@mortgage/mortgage-engine";
 import SvgChart from "../../components/SvgChart.js";
-import PreferenceWeightsModal from "../../components/PreferenceWeightsModal.js";
 import StrategyDetailModal from "../../components/StrategyDetailModal.js";
 import { NumberInput } from "../../components/index.js";
 
@@ -80,12 +80,15 @@ function Slider(/** @type {any} */ props) {
 }
 
 // Friendly Chinese label for each recommendation key. Used by the strategy
-// detail modal so users see a meaningful subtitle (e.g. "本金压缩最快")
-// instead of the internal key (e.g. "lowestEndingBalance").
+// detail modal so users see a meaningful subtitle (e.g. "偏好匹配推荐")
+// instead of the internal key (e.g. "preference"). v9 collapsed 10 v6
+// benchmarks into 4 cards; the legacy keys are kept as fallbacks but are
+// never populated by the optimiser any more.
 const RECOMMENDATION_LABEL_MAP = {
   preference: "偏好匹配推荐",
   lowestCost: "最低期望成本",
   mostStable: "最稳供款数",
+  worstCaseDefense: "最坏情景抗压",
   lowestWorstCaseCost: "最坏利息最优",
   lowestWorstCasePayment: "峰值供款最优",
   lowestRefixConcentration: "到期分散最优",
@@ -136,11 +139,13 @@ export default function StrategyLab() {
   // patterns. 50% lets floating + fixed 50-50 enter the candidate set.
   // The UI slider still goes 0-80, so users can drop back to 10% for a
   // conservative profile.
-  const [maxFloatingPercentage, setMaxFloatingPercentage] = useState(50);
+  const [maxFloatingPercentage, setMaxFloatingPercentage] = useState(10);
   const [maxAffordablePayment, setMaxAffordablePayment] = useState(5000);
   // Allocation-grid step. Default 0.05 (5%) per country-adapter rule.
-  // UI in Section 2 lets the user coarsen to 10% or refine to 1%.
-  const [percentageStep, setPercentageStep] = useState(0.10);
+  // v9: default changed from 0.10 (10%) to 0.05 (5%) so the candidate set
+  // includes balanced splits like 33-33-33 / 40-30-30 / 25-25-50. UI in
+  // Section 2 still lets the user coarsen to 10% or refine to 1%.
+  const [percentageStep, setPercentageStep] = useState(0.05);
 
   // Diversification preset ("default" | "diversification" | "max"). When set
   // to a non-default value, the preset overwrites maxSplits, percentageStep,
@@ -153,18 +158,20 @@ export default function StrategyLab() {
   // Default mix: cost-aware, principal-led, modest refix/flex headroom,
   // low resilience/budget weight. Tweak here is the single source of truth
   // for the "重置默认" button below.
-  // V6 schema: nearly uniform across the 7 preference sliders. The previous
-  // defaults (cost 40 + principal 25 = 65% on monotone-extreme axes) biased
-  // the recommendation toward 10-90 splits. Default of 15% per slider keeps
-  // the math balanced so no Pareto dimension is silenced.
+  // V9 schema (plan v9 §2.1): 8 preference sliders, totals 100. The new
+  // `worstCaseDefense` slider (19%) is the headline composite that drives
+  // the 4th recommendation card and steers preference toward the worst-case
+  // optimum. flex bumped from 11→14 to keep balanced-split candidates
+  // competitive; budget + smoothness trimmed by 1pt each to make room.
   const DEFAULT_WEIGHTS = {
-    cost: 15,
-    principal: 15,
-    refix: 15,
-    flex: 15,
-    resilience: 15,
-    budget: 10,
-    smoothness: 15
+    cost: 13,
+    principal: 12,
+    refix: 12,
+    flex: 14,
+    resilience: 12,
+    budget: 9,
+    smoothness: 9,
+    worstCaseDefense: 19
   };
   const PREFERENCE_WEIGHT_KEYS = /** @type {(keyof typeof DEFAULT_WEIGHTS)[]} */ (Object.keys(DEFAULT_WEIGHTS));
 
@@ -201,7 +208,6 @@ export default function StrategyLab() {
   };
 
   const [weights, setWeights] = useState(() => normalizePreferenceWeights(DEFAULT_WEIGHTS));
-  const [preferenceModalOpen, setPreferenceModalOpen] = useState(false);
   const [openControlGroups, setOpenControlGroups] = useState({
     trend: false,
     risk: false,
@@ -220,7 +226,10 @@ export default function StrategyLab() {
   const handleWeightChange = (/** @type {string} */ key, /** @type {number} */ newValue) => {
     // Keep the displayed sliders as a closed 100% allocation.
     // Moving one dimension proportionally rebalances the remaining dimensions.
-    newValue = Math.max(0, Math.min(100, Math.round(newValue)));
+    // v9: hard cap at 25 (was 100) so no single slider can dominate the
+    // preference score. With 8 sliders × 25% = 4 sliders can hit the cap,
+    // forcing at least 4 dimensions into the user's consideration.
+    newValue = Math.max(0, Math.min(25, Math.round(newValue)));
     setWeights((prev) => {
       const current = normalizePreferenceWeights(prev);
       const otherKeys = PREFERENCE_WEIGHT_KEYS.filter((k) => k !== key);
@@ -334,19 +343,46 @@ export default function StrategyLab() {
     setSimDurationYears(defaultSimDurationYears);
   };
 
-  const defaultMaxAffordablePayment = mortgage?.targetPeriodicPayment || 5000;
+  const defaultMaxAffordablePayment = useMemo(() => {
+    if (!mortgage || !mortgage.tranches || mortgage.tranches.length === 0) return 5000;
+    return mortgage.tranches.reduce((sum, t) => {
+      return sum + calculateScheduledPayment({
+        balance: t.balance,
+        annualRate: t.annualRate,
+        remainingTermMonths: t.remainingTermMonths,
+        repaymentType: t.repaymentType || mortgage.repaymentType || "principal-and-interest",
+        frequency: mortgage.repaymentFrequency || "monthly"
+      });
+    }, 0);
+  }, [mortgage]);
 
   const isConstraintsModified = maxSplits !== nzProfile.rules.maxSplits ||
-    percentageStep !== 0.10 ||
+    percentageStep !== 0.05 ||
     maxFloatingPercentage !== 10 ||
     maxAffordablePayment !== defaultMaxAffordablePayment;
 
   const handleResetConstraints = () => {
     setMaxSplits(nzProfile.rules.maxSplits);
-    setPercentageStep(0.10);
+    setPercentageStep(0.05);
     setMaxFloatingPercentage(10);
     setMaxAffordablePayment(defaultMaxAffordablePayment);
     setDiversificationPreset("default");
+  };
+
+  const isAnyParameterModified = isTrendModified ||
+    isRiskModified ||
+    isLongTermModified ||
+    isHorizonModified ||
+    isConstraintsModified ||
+    isWeightsModified;
+
+  const handleResetAllParameters = () => {
+    handleResetTrend();
+    handleResetRisk();
+    handleResetLongTerm();
+    handleResetHorizon();
+    handleResetConstraints();
+    handleResetWeights();
   };
 
   /**
@@ -367,20 +403,20 @@ export default function StrategyLab() {
     setDiversificationPreset(preset);
     if (preset === "default") {
       setMaxSplits(3);
-      setPercentageStep(0.10);
+      setPercentageStep(0.05);
       setMaxFloatingPercentage(10);
       setWeights(normalizePreferenceWeights(DEFAULT_WEIGHTS));
     } else if (preset === "diversification") {
       setMaxSplits(4);
       setPercentageStep(0.05);
       setMaxFloatingPercentage(30);
-      setWeights(normalizePreferenceWeights({ cost: 25, principal: 25, refix: 25, flex: 15, resilience: 5, budget: 5, smoothness: 0 }));
+      setWeights(normalizePreferenceWeights({ cost: 18, principal: 18, refix: 22, flex: 14, resilience: 6, budget: 6, smoothness: 4, worstCaseDefense: 12 }));
       setShowExhaustedReport(true);
     } else {
       setMaxSplits(5);
       setPercentageStep(0.05);
       setMaxFloatingPercentage(50);
-      setWeights(normalizePreferenceWeights({ cost: 15, principal: 15, refix: 35, flex: 25, resilience: 5, budget: 5, smoothness: 0 }));
+      setWeights(normalizePreferenceWeights({ cost: 12, principal: 12, refix: 22, flex: 18, resilience: 6, budget: 6, smoothness: 4, worstCaseDefense: 20 }));
       setShowExhaustedReport(true);
     }
   };
@@ -392,7 +428,7 @@ export default function StrategyLab() {
   // separate granular weight sliders and "重置默认" buttons, and we don't want
   // a manual weight tweak to clobber the preset label.
   const PRESET_PROFILES = {
-    default: { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 10 },
+    default: { maxSplits: 3, percentageStep: 0.05, maxFloatingPercentage: 10 },
     diversification: { maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 30 },
     max: { maxSplits: 5, percentageStep: 0.05, maxFloatingPercentage: 50 }
   };
@@ -429,6 +465,7 @@ export default function StrategyLab() {
   const [completedSims, setCompletedSims] = useState(0);
   const [totalSims, setTotalSims] = useState(0);
   const [currentSimulationInfo, setCurrentSimulationInfo] = useState(/** @type {any} */(null));
+  const [hideParameterPanel, setHideParameterPanel] = useState(false);
 
   // Estimate total simulation count from current constraints — runs the
   // strategy generator synchronously (no amortisation, just enumeration) to
@@ -469,6 +506,7 @@ export default function StrategyLab() {
   const SIM_COUNT_WARNING_THRESHOLD = 20000;
   const simCountIsHigh = estimatedTotalSims > SIM_COUNT_WARNING_THRESHOLD;
   const [simResults, setSimResults] = useState(/** @type {any} */(null));
+  const shouldHideParameterPanel = hideParameterPanel && !simulationRunning;
   const [detailResultsByStrategy, setDetailResultsByStrategy] = useState(/** @type {Record<string, any[] | undefined>} */ ({}));
   const [detailLoadingStrategyId, setDetailLoadingStrategyId] = useState(/** @type {string|null} */(null));
   const [optimisedData, setOptimisedData] = useState(/** @type {any} */(null));
@@ -516,9 +554,10 @@ export default function StrategyLab() {
   const [recPreference, setRecPreference] = useState(/** @type {any} */(null));
   const [recLowestCost, setRecLowestCost] = useState(/** @type {any} */(null));
   const [recMostStable, setRecMostStable] = useState(/** @type {any} */(null));
-  // V6: 7 objective benchmarks (one per Pareto dimension). Each card is the
-  // mathematical optimum along its axis, independent of user weights, so users
-  // see the full Pareto surface rather than a single weighted preference.
+  // V9: 4th recommendation card — worst-case defense composite optimum.
+  const [recWorstCaseDefense, setRecWorstCaseDefense] = useState(/** @type {any} */(null));
+  // V6 legacy state vars retained for cross-references inside the page
+  // (e.g. cleanup on simulation reset). No new cards read from them.
   const [recLowestWorstCaseCost, setRecLowestWorstCaseCost] = useState(/** @type {any} */(null));
   const [recLowestWorstCasePayment, setRecLowestWorstCasePayment] = useState(/** @type {any} */(null));
   const [recLowestRefixConcentration, setRecLowestRefixConcentration] = useState(/** @type {any} */(null));
@@ -526,6 +565,11 @@ export default function StrategyLab() {
   const [recLowestVolatility, setRecLowestVolatility] = useState(/** @type {any} */(null));
   const [recLowestEndingBalance, setRecLowestEndingBalance] = useState(/** @type {any} */(null));
   const [recMostFloating, setRecMostFloating] = useState(/** @type {any} */(null));
+
+  useEffect(() => {
+    if (!optimisedData) return;
+    setShowExhaustedReport(true);
+  }, [optimisedData]);
 
   const simulatedMonths = simDurationYears * 12;
 
@@ -578,6 +622,7 @@ export default function StrategyLab() {
     setDetailResultsByStrategy({});
     setDetailLoadingStrategyId(null);
     setOptimisedData(null);
+    setHideParameterPanel(false);
     setSelectedRecType("preference");
     setAllStrategies([]);
     setShowExhaustedReport(true);
@@ -585,6 +630,7 @@ export default function StrategyLab() {
     setRecPreference(null);
     setRecLowestCost(null);
     setRecMostStable(null);
+    setRecWorstCaseDefense(null);
     setProgress(0);
     setCompletedSims(0);
     setTotalSims(0);
@@ -683,7 +729,14 @@ export default function StrategyLab() {
           if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
           if (p.maxFloatingPercentage !== undefined) setMaxFloatingPercentage(p.maxFloatingPercentage);
           if (p.maxAffordablePayment !== undefined) setMaxAffordablePayment(p.maxAffordablePayment);
-          if (p.weights !== undefined) setWeights(normalizePreferenceWeights(p.weights));
+          if (p.weights !== undefined) {
+            // v9: legacy persisted weights (7 keys, no `worstCaseDefense`) must
+            // merge with DEFAULT_WEIGHTS before normalize, so the new 8th key
+            // gets the default 19% instead of 0 — otherwise the user opens
+            // IndexedDB and the v9 composite is silently zeroed.
+            const merged = { ...DEFAULT_WEIGHTS, ...p.weights };
+            setWeights(normalizePreferenceWeights(merged));
+          }
         }
       } catch (e) {
         console.error("Failed to load saved simulation in strategy lab", e);
@@ -880,10 +933,18 @@ export default function StrategyLab() {
 
   }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates]);
 
-  // Recalculate optimization recommendations when preference weights or the
-  // selected OCR basis changes. The default basis is probability-weighted; when
-  // the user selects a specific OCR path, recommendations are ranked on that
-  // path only so the cards and detail table describe the same scenario.
+  // Recalculate optimization recommendations ONLY when the underlying
+  // simulation results or the right-side scenario basis changes.
+  //
+  // Important: left-side parameters (OCR trend sliders, scenario probability
+  // weights, maxSplits, diversificationPreset, mortgage changes that don't
+  // re-run the simulation) MUST NOT trigger a re-rank here. If they did,
+  // the right-side report would silently re-rank against stale `simResults`
+  // — i.e. show recommendations based on a previous simulation while the
+  // sliders already point at a different scenario set. The user-visible
+  // trigger for refreshing the report is the "重新仿真" button (or any
+  // mortgage change that triggers a re-simulation), which updates
+  // `simResults` and therefore this key.
   useEffect(() => {
     if (!simResults) return;
     const activeOption = detailScenarioOptions.find((/** @type {any} */ opt) => opt.id === selectedDetailScenario)
@@ -902,13 +963,21 @@ export default function StrategyLab() {
     if (activeSimulationResults.length === 0 || activeScenarios.length === 0) return;
 
     const recommendationMinAllocationCount = maxSplits > 1 ? 2 : 1;
+    // v10: include a compact projection of `allStrategies` so the ranking
+    // cache invalidates when the allocation shape changes (a 90/10 vs
+    // 80/20 has different concentration and must re-rank). Projected form:
+    //   "id:pct-pct|..." — small enough to fold into stableStringify cheaply.
+    const strategiesProjection = (allStrategies || []).map((/** @type {any} */ s) =>
+      `${s.id}:${(s.allocations || []).map((/** @type {any} */ a) => a.percentage).join("-")}`
+    ).join("|");
+    // Key intentionally scoped to simResults + the right-side scenario
+    // selector. Left-side inputs (weights, maxSplits, scenarios array,
+    // diversificationPreset, recommendationMinAllocationCount) are frozen
+    // at the value they had when simResults was last computed.
     const newRankingKey = stableStringify({
       selectedDetailScenario,
       selectedScenarioId,
-      scenarios: activeScenarios,
-      weights,
-      maxSplits,
-      recommendationMinAllocationCount,
+      strategiesProjection,
       simResults: (activeSimulationResults || []).map((r) => [
         r.strategyId,
         r.scenarioId,
@@ -932,6 +1001,7 @@ export default function StrategyLab() {
       const opt = optimizeStrategies({
         simulationResults: activeSimulationResults,
         scenarios: activeScenarios,
+        strategies: allStrategies,
         weights,
         mode: mortgage?.targetMode === "payment" ? "payment" : "term",
         recommendationMinAllocationCount,
@@ -945,6 +1015,11 @@ export default function StrategyLab() {
         setRecPreference(opt.recommendations.preference || null);
         setRecLowestCost(opt.recommendations.lowestCost || null);
         setRecMostStable(opt.recommendations.mostStable || null);
+        setRecWorstCaseDefense(opt.recommendations.worstCaseDefense || null);
+        // Legacy V6 state slots kept around for the Pareto table's "what
+        // benchmark picked this row" tag map. They still read from the
+        // (now empty) V6 slots, so the tag map just shows nothing — which
+        // is the correct v9 behaviour (the 4 cards have their own tags).
         setRecLowestWorstCaseCost(opt.recommendations.lowestWorstCaseCost || null);
         setRecLowestWorstCasePayment(opt.recommendations.lowestWorstCasePayment || null);
         setRecLowestRefixConcentration(opt.recommendations.lowestRefixConcentration || null);
@@ -960,7 +1035,17 @@ export default function StrategyLab() {
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [weights, simResults, scenarios, detailScenarioOptions, selectedDetailScenario, mortgage?.targetMode, maxSplits]);
+    // Dep array trimmed to the inputs that actually influence `newRankingKey`:
+    // - simResults: changes only when the simulation re-runs (via the
+    //   "重新仿真" button or a mortgage change that triggers a re-simulation)
+    // - scenarios: changes when slider-derived state updates; the key check
+    //   below ensures the optimizer is NOT re-invoked in that case
+    // - detailScenarioOptions / selectedDetailScenario: right-side scenario
+    //   basis selector (changing it legitimately re-filters simResults)
+    // Removed: weights, mortgage?.targetMode, maxSplits — these are
+    // left-side inputs that should NOT cause a re-rank here. They take
+    // effect on the next "重新仿真" click.
+  }, [simResults, scenarios, detailScenarioOptions, selectedDetailScenario]);
 
   // Lazy-fetch the per-tranche 60-month detail timeline for any strategy.
 // Shared by the selected-strategy effect and the modal opener — clicking
@@ -1090,6 +1175,7 @@ export default function StrategyLab() {
           simulationKeyRef.current = msg.key;
         }
         setSimResults(msg.results || []);
+        setHideParameterPanel(true);
         simulationInFlightRef.current = false;
         setSimulationRunning(false);
         // Save strategies and params to IndexedDB
@@ -1258,6 +1344,13 @@ export default function StrategyLab() {
       minText: "容忍波动",
       maxText: "平稳供款优先",
       explanation: "调高后会更偏向减少每次 refix 带来的月供跳变。"
+    },
+    {
+      key: "worstCaseDefense",
+      label: "最坏情况抗压性 (Worst-Case Defense)",
+      minText: "不在乎最坏",
+      maxText: "抗压优先",
+      explanation: "综合最坏情景防御(最坏利息 + 违约 + 月供)。拖高此滑块会同时影响 ①preference 和 ④worstCaseDefense 两张卡。"
     }
   ];
 
@@ -1269,25 +1362,26 @@ export default function StrategyLab() {
     const activeOption = getActiveDetailScenarioOption();
     if (!activeOption) return null;
     const stats = activeOption.targetStats;
+    const pathLabel = activeOption.label || "当前 OCR 路径";
 
     return (
       <div className="recommendation-path-explain">
         <div className="path-explain-copy">
           <span className="path-dot" style={{ background: activeOption.color || "var(--text-secondary)" }} />
-          <span>{activeOption.description || "当前推荐和明细表会使用这条 OCR 路径作为计算依据。"}</span>
+          <span>当前推荐按 <strong>{pathLabel}</strong> 计算；下方数字是这条 OCR 路径在模拟末段的关键读数。</span>
         </div>
         {stats && (
           <div className="path-target-grid">
             <div>
-              <span>最后一年平均 OCR</span>
+              <span>末年均值</span>
               <strong>{formatRatePercent(stats.averageRate)}</strong>
             </div>
             <div>
-              <span>最后一年预测区间</span>
+              <span>末年区间</span>
               <strong>{formatRatePercent(stats.minRate)} - {formatRatePercent(stats.maxRate)}</strong>
             </div>
             <div>
-              <span>期末 OCR 目标</span>
+              <span>期末 OCR</span>
               <strong>{formatRatePercent(stats.finalRate)}</strong>
             </div>
           </div>
@@ -1562,6 +1656,141 @@ export default function StrategyLab() {
 
   const [error, setError] = useState(/** @type {string|null} */(null));
 
+  /**
+   * Build the 4-section `intro` payload that StrategyDetailModal renders
+   * above its metrics grid. v9: every detail popup now opens with a
+   * personalised "why this card picked this strategy" block, anchored to
+   * the card the user clicked (`originCard`). When called from a Pareto
+   * row (`originCard === "row"`), it falls back to `preference` semantics.
+   *
+   * Sections:
+   *   - whyThisOne: short Chinese narrative explaining the pick
+   *   - tradeOff: per-axis mark-up (Top 20% / Bottom 20%)
+   *   - suitableFor: trait tags ("高浮动", "短锁定", ...)
+   *   - comparison: 2 nearest strategies by score with delta metrics
+   *
+   * @param {any} strategy
+   * @param {Object} ctx
+   * @param {"preference"|"lowestCost"|"mostStable"|"worstCaseDefense"|"row"} ctx.originCard
+   * @param {any[]} ctx.allStrategies
+   * @param {Record<string, number>} ctx.weights
+   * @returns {{whyThisOne: string, tradeOff: Array<{label:string, status:string}>, suitableFor: string[], comparison: Array<{label:string, interestDelta:number, stabilityDelta:number}>}}
+   */
+  const buildStrategyIntro = (/** @type {any} */ strategy, /** @type {any} */ ctx) => {
+    const originCard = ctx?.originCard || "row";
+    const allStrategies = Array.isArray(ctx?.allStrategies) ? ctx.allStrategies : [];
+    if (!strategy) {
+      return { whyThisOne: "", tradeOff: [], suitableFor: [], comparison: [] };
+    }
+
+    // Per-axis trade-off marker. Scans 12 metrics against the bounds for the
+    // current Pareto set and marks each as "优异" (top 20%) or "较弱" (bottom
+    // 20%). The exact axis label is in `label` and rendered in the modal.
+    const tradeOffAxes = [
+      { key: "expectedInterest", label: "期望利息", direction: "min" },
+      { key: "worstCaseInterest", label: "最坏利息", direction: "min" },
+      { key: "worstCasePayment", label: "最坏月供", direction: "min" },
+      { key: "expectedMaxPayment", label: "期望最高供款", direction: "min" },
+      { key: "expectedMaxConcurrentRefixPercentage", label: "到期集中度", direction: "min" },
+      { key: "expectedAffordabilityBreaches", label: "预算超限", direction: "min" },
+      { key: "worstCaseAffordabilityBreaches", label: "最坏违约", direction: "min" },
+      { key: "expectedRefixEventCount", label: "refix 事件数", direction: "min" },
+      { key: "expectedPaymentVolatility", label: "供款波动", direction: "min" },
+      { key: "expectedEndingBalance", label: "期末本金", direction: "min" },
+      { key: "expectedFloatingExposure", label: "浮动比例", direction: "max" },
+      { key: "flexibilityPenalty", label: "灵活度惩罚", direction: "min" },
+      { key: "concentration", label: "分散度 (最大单笔占比)", direction: "min" }
+    ];
+    const boundsFor = (key) => {
+      const values = allStrategies.map((s) => s[key]).filter((v) => typeof v === "number");
+      if (values.length === 0) return { min: 0, max: 0, diff: 1 };
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      return { min, max, diff: (max - min) || 1 };
+    };
+    const tradeOff = tradeOffAxes.map((axis) => {
+      const b = boundsFor(axis.key);
+      const v = strategy[axis.key];
+      if (typeof v !== "number") {
+        return { label: axis.label, status: "中位" };
+      }
+      const normalized = (v - b.min) / b.diff;
+      if (axis.direction === "max") {
+        if (normalized >= 0.8) return { label: axis.label, status: "优异" };
+        if (normalized <= 0.2) return { label: axis.label, status: "较弱" };
+        return { label: axis.label, status: "中位" };
+      }
+      if (normalized <= 0.2) return { label: axis.label, status: "优异" };
+      if (normalized >= 0.8) return { label: axis.label, status: "较弱" };
+      return { label: axis.label, status: "中位" };
+    });
+
+    // whyThisOne: short narrative per card type. Falls back to a generic
+    // rank-based note for row clicks.
+    let whyThisOne = "";
+    const recIds = ctx?.recIds || {};
+    if (originCard === "preference") {
+      whyThisOne = `按照您当前的 8 维偏好权重综合评分，此方案在「期望成本 / 本金压缩 / 浮动灵活 / 抗压 / 预算 / 平稳 / refix」之间的综合表现排名第 1。`;
+    } else if (originCard === "lowestCost") {
+      whyThisOne = `在所有未来利率走势下，数学期望的总利息支出最低（与权重无关，仅作为客观基准）。`;
+      if (recIds.preference && recIds.preference !== strategy.strategyId) {
+        whyThisOne += `（本卡已避开偏好卡选中的方案，仅作为客观基准。）`;
+      }
+    } else if (originCard === "mostStable") {
+      whyThisOne = `最坏情景下的月供峰值最小，还款流最稳定（与权重无关，仅作为客观基准）。`;
+      if (recIds.preference && recIds.lowestCost && strategy.strategyId !== recIds.preference && strategy.strategyId !== recIds.lowestCost) {
+        whyThisOne += `（本卡已避开偏好卡与最低成本卡选中的方案，仅作为客观基准。）`;
+      }
+    } else if (originCard === "worstCaseDefense") {
+      whyThisOne = `综合最坏总利息 + 违约次数 + 月供峰值的客观最优（0.5/0.3/0.2 加权），是极端尾部防御的代表组合。`;
+      if (recIds.preference && recIds.lowestCost && recIds.mostStable &&
+          strategy.strategyId !== recIds.preference &&
+          strategy.strategyId !== recIds.lowestCost &&
+          strategy.strategyId !== recIds.mostStable) {
+        whyThisOne += `（本卡已避开前 3 张卡选中的方案，仅作为客观基准。）`;
+      }
+    } else {
+      whyThisOne = `该方案在 Pareto 表中按综合评分排名 #${(strategy.score ?? 0).toFixed(2)}。`;
+    }
+
+    // suitableFor: scan the strategy's allocation shape for trait tags.
+    /** @type {string[]} */
+    const suitableFor = [];
+    const floatingExposure = strategy.expectedFloatingExposure || 0;
+    const refixCount = strategy.expectedRefixEventCount || 0;
+    const breaches = strategy.expectedAffordabilityBreaches || 0;
+    if (floatingExposure >= 0.6) suitableFor.push("高浮动偏好");
+    if (floatingExposure <= 0.1) suitableFor.push("全固定锁死");
+    if (refixCount === 0) suitableFor.push("零 refix");
+    if (breaches === 0) suitableFor.push("预算安全");
+    if ((strategy.expectedEndingBalance || 0) <= boundsFor("expectedEndingBalance").min) suitableFor.push("本金压缩最快");
+    if ((strategy.worstCasePayment || 0) <= boundsFor("worstCasePayment").min) suitableFor.push("极端月供最低");
+    if (suitableFor.length === 0) suitableFor.push("均衡型组合");
+
+    // comparison: find 2 nearest strategies by score distance and show
+    // interest / stability deltas so the user sees what they gain/lose.
+    /** @type {Array<{label:string, interestDelta:number, stabilityDelta:number}>} */
+    const comparison = [];
+    const myScore = strategy.score ?? 0;
+    const myInterest = strategy.expectedInterest || 0;
+    const myWorstPay = strategy.worstCasePayment || 0;
+    const sortedByDist = allStrategies
+      .filter((s) => s.strategyId !== strategy.strategyId)
+      .map((s) => ({ s, dist: Math.abs((s.score ?? 0) - myScore) }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 2);
+    sortedByDist.forEach(({ s }, idx) => {
+      const label = idx === 0 ? "近邻 #1 (相似评分)" : "近邻 #2 (相似评分)";
+      comparison.push({
+        label,
+        interestDelta: Math.round(((s.expectedInterest || 0) - myInterest)),
+        stabilityDelta: Math.round(((s.worstCasePayment || 0) - myWorstPay))
+      });
+    });
+
+    return { whyThisOne, tradeOff, suitableFor, comparison };
+  };
+
   if (loading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "80vh" }}>
@@ -1580,6 +1809,15 @@ export default function StrategyLab() {
         <div className="header-actions">
           <button
             type="button"
+            onClick={() => setHideParameterPanel((prev) => !prev)}
+            className="btn btn-secondary top-reset-btn"
+            disabled={simulationRunning}
+            title={shouldHideParameterPanel ? "重新显示左侧 input 参数，调整后可再次仿真" : "隐藏左侧 input 参数，专注查看右侧 OCR 曲线和结果"}
+          >
+            {shouldHideParameterPanel ? "显示 input 参数" : "隐藏 input 参数"}
+          </button>
+          <button
+            type="button"
             onClick={handleClearSimulationOutput}
             className="btn btn-secondary top-reset-btn"
             disabled={simulationRunning || (!simResults && !optimisedData && allStrategies.length === 0)}
@@ -1589,11 +1827,21 @@ export default function StrategyLab() {
           </button>
         </div>
       </header>
-      <div className="lab-grid">
+      <div className={`lab-grid ${shouldHideParameterPanel ? "inputs-hidden" : ""}`}>
+        {!shouldHideParameterPanel && (
         <div className="left-controls-col">
           <section className="glass-panel control-section">
-            <h2 className="section-title">
+            <h2 className="section-title parameter-section-title">
               <span>1. 参数分组</span>
+              <button
+                type="button"
+                className="weights-reset-btn parameter-reset-all-btn"
+                onClick={handleResetAllParameters}
+                disabled={!isAnyParameterModified}
+                title="重置全部参数分组到默认值"
+              >
+                重置全部
+              </button>
             </h2>
 
             <div className="control-group">
@@ -2021,7 +2269,7 @@ export default function StrategyLab() {
                     </div>
                     <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                       {[
-                        { value: "default", label: "默认 (3 拆 / 10%)", tip: "保守推荐：3 拆 10% 步长 10% 浮动上限，候选方案 ~58 个" },
+                        { value: "default", label: "默认 (3 拆 / 5%)", tip: "保守推荐：3 拆 5% 步长 10% 浮动上限，候选方案 ~58 个" },
                         { value: "diversification", label: "分散化 (4 拆 / 5%)", tip: "暴露更多 60/20/20 跨期分散方案，候选方案 ~500 个，自动展开穷举报告" },
                         { value: "max", label: "最大分散化 (5 拆 / 5%)", tip: "允许 50% 浮动和 5 拆，候选方案 ~2000 个，自动展开穷举报告" }
                       ].map((opt) => (
@@ -2168,40 +2416,74 @@ export default function StrategyLab() {
               </div>
               {openControlGroups.preferences && (
                 <div className="control-group-body">
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <div className="slider-label-row">
-                      <span className="form-label">当前权重摘要</span>
-                      <span className="slider-value">总和 100%</span>
-                    </div>
-                    <div className="param-explanation">
-                      这组参数只参与“偏好匹配推荐”的综合打分。提高某一项时，其它项会按比例自动缩放。
-                    </div>
-                    <div className="preference-summary-row preference-summary-panel">
-                      {preferenceSummaryItems.map((item) => (
-                        <span key={item.key} className="preference-summary-chip">
-                          {item.label.split(" (")[0]} {weights[item.key]}%
-                        </span>
-                      ))}
-                    </div>
+                  <div className="param-explanation" style={{ marginTop: 0, marginBottom: "var(--sp-3)" }}>
+                    以下 {preferenceWeightItems.length} 项权重之和固定为 100%。调高任一项时，其它项会按比例自动缩放。仅影响"偏好匹配推荐"，不会改变利率模拟参数与其它推荐卡。
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <div className="slider-label-row">
-                      <span className="form-label">详细调参</span>
-                      <span className="slider-value">弹窗编辑</span>
+
+                  {preferenceWeightItems.map((item) => (
+                    <div key={item.key} className="preference-inline-row">
+                      <div className="slider-label-row">
+                        <span className="form-label">{item.label}</span>
+                        <span className="slider-value">{weights[item.key] ?? 0}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        className="slider-input preference-inline-slider"
+                        min={0}
+                        max={25}
+                        step={1}
+                        defaultValue={weights[item.key] ?? 0}
+                        aria-label={`${item.label}权重`}
+                        aria-valuemin={0}
+                        aria-valuemax={25}
+                        onInput={(e) => {
+                          // Live preview: imperatively update the % display
+                          // without triggering React state per drag tick.
+                          applySliderFill(e.currentTarget);
+                          const display = e.currentTarget.parentElement?.querySelector(".slider-value");
+                          if (display) display.textContent = `${e.currentTarget.value}%`;
+                        }}
+                        onPointerUp={(e) => {
+                          const v = parseInt(e.currentTarget.value, 10);
+                          if (Number.isFinite(v)) handleWeightChange(item.key, v);
+                        }}
+                        onKeyUp={(e) => {
+                          if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"].includes(e.key)) {
+                            const v = parseInt(e.currentTarget.value, 10);
+                            if (Number.isFinite(v)) handleWeightChange(item.key, v);
+                          }
+                        }}
+                      />
+                      <div className="slider-range-desc">
+                        <span>{item.minText}</span>
+                        <span>{item.maxText}</span>
+                      </div>
+                      <p className="param-explanation">{item.explanation}</p>
                     </div>
-                    <div className="param-explanation">
-                      打开后可调整全部 7 项偏好权重，结果卡会实时重排，但不会改变上面的利率模拟参数。
-                    </div>
-                  </div>
-                  <div className="preference-inline-actions preference-actions-consistent">
-                    <button
-                      type="button"
-                      className="weights-reset-btn preference-action-btn"
-                      onClick={() => setPreferenceModalOpen(true)}
-                    >
-                      调整偏好
-                    </button>
-                    {isWeightsModified && (
+                  ))}
+
+                  {/* Live hint — same recipe as PreferenceWeightsModal */}
+                  {(() => {
+                    const TOTAL_KEYS = PREFERENCE_WEIGHT_KEYS.length;
+                    const itemKeys = preferenceWeightItems.map((it) => it.key);
+                    const knownKeys = new Set(itemKeys);
+                    const allKeys = [...knownKeys];
+                    const total = allKeys.reduce((sum, k) => sum + (weights[k] || 0), 0);
+                    const activeKeys = allKeys.filter((k) => (weights[k] || 0) > 0).length;
+                    const zeroKeys = TOTAL_KEYS - activeKeys;
+                    return (
+                      <div
+                        className="preference-inline-live-hint"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        已分配 {total}% ({activeKeys}/{TOTAL_KEYS} 维度); 剩余 {zeroKeys} 维度权重为 0
+                      </div>
+                    );
+                  })()}
+
+                  {isWeightsModified && (
+                    <div className="preference-inline-actions">
                       <button
                         type="button"
                         className="weights-reset-btn preference-action-btn"
@@ -2209,8 +2491,8 @@ export default function StrategyLab() {
                       >
                         恢复默认权重
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2336,6 +2618,8 @@ export default function StrategyLab() {
             </div>
             */}
           </section>
+        </div>
+        )}
 
           {/* Scenario Rates Chart */}
           <section className="glass-panel chart-section accent-cyan">
@@ -2397,7 +2681,6 @@ export default function StrategyLab() {
               </div>
             </div>
           </section>
-        </div>
 
         {/* Right Column: Results & Recommendations */}
         <div className="right-results-col">
@@ -2459,6 +2742,27 @@ export default function StrategyLab() {
 
             {simulationRunning ? (
               <div className="progress-panel">
+                {simCountIsHigh && (
+                  <div
+                    className="warning-banner"
+                    style={{
+                      background: "rgba(245, 158, 11, 0.10)",
+                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                      borderRadius: "8px",
+                      padding: "10px 12px",
+                      marginBottom: "12px",
+                      color: "var(--chart-amber)"
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: "4px", fontSize: "12.5px" }}>
+                      ⚠️ 当前正在执行大规模仿真: <strong>{totalSims.toLocaleString()}</strong> 次
+                    </div>
+                    <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: "1.5" }}>
+                      该规模高于 {SIM_COUNT_WARNING_THRESHOLD.toLocaleString()} 次警戒线，预计耗时会更长。可等待当前结果完成，
+                      或取消后收紧 split 数、增大步长、缩短模拟期限再重试。
+                    </div>
+                  </div>
+                )}
                 <div className="progress-bar-container">
                   <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
                 </div>
@@ -2515,9 +2819,9 @@ export default function StrategyLab() {
               <h2 className="section-title"><span className="step-num">9</span>帕累托推荐 — 每个维度的最优策略</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
                 系统对每个 Pareto 目标维度独立挑出数学最优策略(不受偏好权重影响),让您清楚看到不同维度的 trade-off。
-                顶部 6 张 benchmark 卡分别是:成本最优 / 最坏利息最优 / 峰值供款最优 / 到期分散最优 / 预算最稳 / 本金压缩最快 / 浮动头寸最高。
-                <strong>底部那张"综合偏好"卡</strong>根据您拖动上方 7 个权重滑块实时调整。所有权重之和固定为 100%，调高某一项时其他项会按比例自动让出权重。
-                {maxSplits > 1 ? " 推荐卡默认只从 2 笔及以上的真实拆分方案中选择；100% 单一产品会保留在下方表格和传统对照里，作为 benchmark 参考。" : " 当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击任意推荐卡片可快速将其设为当前对比策略。</strong>
+                顶部 3 张 benchmark 卡分别是:最低期望成本 / 最稳妥供款 / 最坏情景抗压。
+                <strong>底部那张"综合偏好"卡</strong>根据您拖动上方 <strong>8</strong> 个权重滑块实时调整。所有权重之和固定为 100%，单项上限 25%(强制至少 4 个维度同时考虑),调高某一项时其他项会按比例自动让出权重。
+                {maxSplits > 1 ? " 推荐卡默认只从 2 笔及以上的真实拆分方案中选择；100% 单一产品会保留在下方表格和传统对照里，作为 benchmark 参考。" : " 当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击任意卡片可打开详情弹窗查看完整时间线与对比分析。</strong>
               </p>
 
               {detailScenarioOptions.length > 1 && (
@@ -2559,6 +2863,8 @@ export default function StrategyLab() {
                       {renderStrategySplit(recPreference.strategyId)}
                     </h3>
                     <p className="rec-desc">根据您当前设置的约束参数和偏好权重，系统算出的综合得分最高的个性化贷款 split。</p>
+                    {/* v10: no mutex suffix on the preference card itself —
+                        this is the anchor that the other 3 cards exclude. */}
 
                     {renderCardMetrics(recPreference.strategyId)}
 
@@ -2603,7 +2909,14 @@ export default function StrategyLab() {
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recLowestCost.strategyId)}
                     </h3>
-                    <p className="rec-desc">在所有未来走势情景下，数学期望总利息支出最低的拆分组合（降息通道下偏向短期，但伴随重定价波动风险）。</p>
+                    <p className="rec-desc">
+                      在所有未来走势情景下，数学期望总利息支出最低的拆分组合（降息通道下偏向短期，但伴随重定价波动风险）。
+                      {recPreference && (
+                        <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
+                          （本卡已避开偏好卡选中的「{renderStrategySplit(recPreference.strategyId)}」，聚焦次低期望利息的细分优势。）
+                        </span>
+                      )}
+                    </p>
 
                     {renderCardMetrics(recLowestCost.strategyId)}
 
@@ -2647,7 +2960,14 @@ export default function StrategyLab() {
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recMostStable.strategyId)}
                     </h3>
-                    <p className="rec-desc">还款流波动率与极端高息情景下峰值供款最小的组合（偏向长期锁死固定利率，最抗利息飙升风险，但可能损失降息红利）。</p>
+                    <p className="rec-desc">
+                      还款流波动率与极端高息情景下峰值供款最小的组合（偏向长期锁死固定利率，最抗利息飙升风险，但可能损失降息红利）。
+                      {recPreference && recLowestCost && (
+                        <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
+                          （本卡已避开偏好卡「{renderStrategySplit(recPreference.strategyId)}」与最低成本卡「{renderStrategySplit(recLowestCost.strategyId)}」选中的方案，聚焦次稳的峰值供款。）
+                        </span>
+                      )}
+                    </p>
 
                     {renderCardMetrics(recMostStable.strategyId)}
 
@@ -2672,29 +2992,36 @@ export default function StrategyLab() {
                     {renderTileFooter(recMostStable.strategyId, "mostStable", "benchmark")}
                   </div>
                 )}
-              {/* 4. Lowest Worst-Case Cost (term mode) */}
-                {recLowestWorstCaseCost && (
+              {/* 4. Worst-Case Defense Card (v9) — replaces 6 v6 benchmark cards. */}
+                {recWorstCaseDefense && (
                   <div
-                    className={`rec-card glass-panel clickable-card accent-rose ${selectedRecType === "lowestWorstCaseCost" ? "selected-rec-card" : ""}`}
+                    className={`rec-card glass-panel clickable-card accent-rose ${selectedRecType === "worstCaseDefense" ? "selected-rec-card" : ""}`}
                     onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recLowestWorstCaseCost.strategyId);
+                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recWorstCaseDefense.strategyId);
                       if (fullDetails) {
-                        setSelectedRecType("lowestWorstCaseCost");
+                        setSelectedRecType("worstCaseDefense");
                       }
                     }}
                   >
-                    <div className="badge badge-rose">最坏利息最优</div>
+                    <div className="badge badge-rose">最坏情景抗压</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      最坏情景下总利息最小（与权重无关）
+                      综合最坏利息 + 违约 + 月供的客观最优（与权重无关）
                     </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recLowestWorstCaseCost.strategyId)}
+                      {renderStrategySplit(recWorstCaseDefense.strategyId)}
                     </h3>
-                    <p className="rec-desc">在高利率情景下仍能压住总利息的组合（偏向长期固定锁定，是极端尾部防御的典型代表）。</p>
-                    {renderCardMetrics(recLowestWorstCaseCost.strategyId)}
+                    <p className="rec-desc">
+                      在所有未来走势情景下，最坏总利息、最坏月供峰值、超预算次数的加权综合分最低的拆分组合。
+                      {recPreference && recLowestCost && recMostStable && (
+                        <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
+                          （本卡已避开前 3 张卡选中的方案「{renderStrategySplit(recPreference.strategyId)} / {renderStrategySplit(recLowestCost.strategyId)} / {renderStrategySplit(recMostStable.strategyId)}」，聚焦次优最坏情景综合分。）
+                        </span>
+                      )}
+                    </p>
+                    {renderCardMetrics(recWorstCaseDefense.strategyId)}
                     <div className="pros-cons">
                       <div className="pro-list">
-                        {recLowestWorstCaseCost.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
+                        {recWorstCaseDefense.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
                           <div key={i} className="pro-con-item pro-text">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
                             <span>{p}</span>
@@ -2702,7 +3029,7 @@ export default function StrategyLab() {
                         ))}
                       </div>
                       <div className="con-list">
-                        {recLowestWorstCaseCost.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
+                        {recWorstCaseDefense.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
                           <div key={i} className="pro-con-item con-text">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             <span>{c}</span>
@@ -2710,217 +3037,7 @@ export default function StrategyLab() {
                         ))}
                       </div>
                     </div>
-                    {renderTileFooter(recLowestWorstCaseCost.strategyId, "lowestWorstCaseCost", "benchmark")}
-                  </div>
-                )}
-
-                {/* 5. Lowest Worst-Case Payment (term mode) */}
-                {recLowestWorstCasePayment && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-amber ${selectedRecType === "lowestWorstCasePayment" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recLowestWorstCasePayment.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("lowestWorstCasePayment");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-amber">峰值供款最优</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      最坏月供最小（与权重无关）
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recLowestWorstCasePayment.strategyId)}
-                    </h3>
-                    <p className="rec-desc">在所有情景下，月度还款峰值最低的组合（最不易爆预算，偏向长锁定期固定）。</p>
-                    {renderCardMetrics(recLowestWorstCasePayment.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recLowestWorstCasePayment.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recLowestWorstCasePayment.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recLowestWorstCasePayment.strategyId, "lowestWorstCasePayment", "benchmark")}
-                  </div>
-                )}
-
-                {/* 6. Lowest Refix Concentration */}
-                {recLowestRefixConcentration && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-cyan ${selectedRecType === "lowestRefixConcentration" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recLowestRefixConcentration.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("lowestRefixConcentration");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-cyan">到期分散最优</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      单月同时到期比例最低（与权重无关）
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recLowestRefixConcentration.strategyId)}
-                    </h3>
-                    <p className="rec-desc">重定价最分散的组合（任意单月到期比例最低，是反 refix 集中风险的纯客观最优）。</p>
-                    {renderCardMetrics(recLowestRefixConcentration.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recLowestRefixConcentration.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recLowestRefixConcentration.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recLowestRefixConcentration.strategyId, "lowestRefixConcentration", "benchmark")}
-                  </div>
-                )}
-
-                {/* 7. Lowest Budget Breaches (term mode) */}
-                {recLowestBudgetBreaches && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-emerald ${selectedRecType === "lowestBudgetBreaches" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recLowestBudgetBreaches.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("lowestBudgetBreaches");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-emerald">预算最稳</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      超预算次数最少（与权重无关）
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recLowestBudgetBreaches.strategyId)}
-                    </h3>
-                    <p className="rec-desc">在所有情景下,实际月供超出您设定 maxAffordablePayment 次数最少的组合。</p>
-                    {renderCardMetrics(recLowestBudgetBreaches.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recLowestBudgetBreaches.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recLowestBudgetBreaches.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recLowestBudgetBreaches.strategyId, "lowestBudgetBreaches", "benchmark")}
-                  </div>
-                )}
-
-                {/* 8. Lowest Ending Balance (term mode) */}
-                {recLowestEndingBalance && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-emerald ${selectedRecType === "lowestEndingBalance" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recLowestEndingBalance.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("lowestEndingBalance");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-emerald">本金压缩最快</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      期末剩余本金最少（与权重无关）
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recLowestEndingBalance.strategyId)}
-                    </h3>
-                    <p className="rec-desc">在预测窗口内本金压缩最快的组合（适合希望提早接近清零贷款的用户）。</p>
-                    {renderCardMetrics(recLowestEndingBalance.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recLowestEndingBalance.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recLowestEndingBalance.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recLowestEndingBalance.strategyId, "lowestEndingBalance", "benchmark")}
-                  </div>
-                )}
-
-                {/* 10. Most Floating Exposure */}
-                {recMostFloating && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-indigo ${selectedRecType === "mostFloating" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recMostFloating.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("mostFloating");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-indigo">浮动头寸最高</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      浮动 / Offset 占比最高（与权重无关）
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recMostFloating.strategyId)}
-                    </h3>
-                    <p className="rec-desc">保留最大浮动或 Offset 空间,降息通道下能即时受益,且可在机会出现时灵活还款或对冲。</p>
-                    {renderCardMetrics(recMostFloating.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recMostFloating.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recMostFloating.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recMostFloating.strategyId, "mostFloating", "benchmark")}
+                    {renderTileFooter(recWorstCaseDefense.strategyId, "worstCaseDefense", "benchmark")}
                   </div>
                 )}
               </div>
@@ -3074,6 +3191,10 @@ export default function StrategyLab() {
                         <th>期望已还本金</th>
                         <th>期望剩余本金</th>
                         <th>还款波动</th>
+                        <th>最坏总利息</th>
+                        <th>最坏违约次数</th>
+                        <th title="分散度 = 最大单笔贷款占比;越低越分散。已纳入 Pareto 主导关系。">分散度</th>
+                        <th>refix 事件数</th>
                         <th>帕累托前沿?</th>
                         <th>综合评分</th>
                         <th>明细</th>
@@ -3099,7 +3220,7 @@ export default function StrategyLab() {
                         if (displayedList.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={10} className="text-muted" style={{ textAlign: "center", padding: "24px 8px", fontSize: "12px" }}>
+                              <td colSpan={15} className="text-muted" style={{ textAlign: "center", padding: "24px 8px", fontSize: "12px" }}>
                                 当前筛选条件下没有匹配的拆分组合,请尝试其它拆分笔数。
                               </td>
                             </tr>
@@ -3135,6 +3256,10 @@ export default function StrategyLab() {
                               <td className="text-emerald">${Math.round(principalRepaid).toLocaleString()}</td>
                               <td>${Math.round(s.expectedEndingBalance).toLocaleString()}</td>
                               <td className="text-secondary">±${Math.round(s.expectedPaymentVolatility).toLocaleString()}</td>
+                              <td className="text-rose">${Math.round(s.worstCaseInterest || 0).toLocaleString()}</td>
+                              <td className="text-secondary">{Math.round(s.worstCaseAffordabilityBreaches || 0)}</td>
+                              <td className="text-secondary">{Math.round((s.concentration || 0) * 100)}%</td>
+                              <td className="text-secondary">{Math.round(s.expectedRefixEventCount || 0)}</td>
                               <td>
                                 {s.isParetoOptimal ? (
                                   <span className="badge badge-emerald">帕累托最优</span>
@@ -3150,13 +3275,9 @@ export default function StrategyLab() {
                                   .map((/** @type {any} */ tag) => {
                                     const benchmarkKey = String(tag).split("|")[1];
                                     const shortLabels = {
+                                      preference: "偏好",
                                       lowestCost: "成本",
-                                      lowestWorstCaseCost: "最坏利息",
-                                      lowestWorstCasePayment: "峰值",
-                                      lowestRefixConcentration: "到期分散",
-                                      lowestBudgetBreaches: "预算",
-                                      lowestEndingBalance: "本金压缩",
-                                      mostFloating: "浮动",
+                                      worstCaseDefense: "抗压",
                                       mostStable: "稳健"
                                     };
                                     return (
@@ -3232,15 +3353,6 @@ export default function StrategyLab() {
         {/* StrategyDetailModal — single instance mounted at the end of the
             right-results-col. Triggered by "查看详情" on any tile, Pareto row,
             or the selected-strategy header. Renders null when isOpen=false. */}
-        <PreferenceWeightsModal
-          isOpen={preferenceModalOpen}
-          onClose={() => setPreferenceModalOpen(false)}
-          weights={weights}
-          items={preferenceWeightItems}
-          onWeightChange={handleWeightChange}
-          onReset={handleResetWeights}
-          isModified={isWeightsModified}
-        />
 
         <StrategyDetailModal
           isOpen={detailModalOpen}
@@ -3283,6 +3395,26 @@ export default function StrategyLab() {
           detailScenarioLabel={getActiveDetailScenarioOption()?.label || null}
           isDetailLoading={detailLoadingStrategyId === detailModalStrategyId && !detailResultsByStrategy[detailModalStrategyId]}
           formatMoney={(/** @type {number} */ n) => `$${Math.round(n).toLocaleString()}`}
+          intro={(() => {
+            const id = detailModalStrategyId;
+            if (!id || !optimisedData) return null;
+            const ranked = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === id);
+            if (!ranked) return null;
+            const originKey = detailModalRecKey && detailModalRecKey !== "row" ? detailModalRecKey : "row";
+            return buildStrategyIntro(ranked, {
+              originCard: originKey,
+              allStrategies: optimisedData.rankedStrategies,
+              weights,
+              // v10: pass the other rec-card strategyIds so the intro can
+              // suffix the mutex-aware narrative ("避开 X 卡选中的方案").
+              recIds: {
+                preference: optimisedData.recommendations.preference?.strategyId,
+                lowestCost: optimisedData.recommendations.lowestCost?.strategyId,
+                mostStable: optimisedData.recommendations.mostStable?.strategyId,
+                worstCaseDefense: optimisedData.recommendations.worstCaseDefense?.strategyId
+              }
+            });
+          })()}
         />
 
       </div>
@@ -3346,21 +3478,36 @@ export default function StrategyLab() {
         .lab-grid {
           display: grid;
           grid-template-columns: 360px minmax(0, 1fr);
-          gap: 24px;
+          gap: 16px;
           align-items: start;
+        }
+
+        .lab-grid.inputs-hidden {
+          grid-template-columns: minmax(0, 1fr);
         }
 
         .left-controls-col {
           display: flex;
           flex-direction: column;
-          gap: 24px;
+          gap: 16px;
+          grid-column: 1;
         }
 
         .right-results-col {
           height: auto;
           display: flex;
           flex-direction: column;
-          gap: 24px;
+          gap: 16px;
+          grid-column: 2;
+        }
+
+        .chart-section {
+          grid-column: 2;
+        }
+
+        .lab-grid.inputs-hidden .chart-section,
+        .lab-grid.inputs-hidden .right-results-col {
+          grid-column: 1;
         }
 
         .control-section {
@@ -3471,6 +3618,14 @@ export default function StrategyLab() {
           display: flex;
           align-items: center;
           gap: 12px;
+        }
+
+        .parameter-section-title {
+          justify-content: space-between;
+        }
+
+        .parameter-reset-all-btn {
+          border-radius: 8px;
         }
 
         .section-title :global(.step-num) {
@@ -3723,6 +3878,21 @@ export default function StrategyLab() {
           transform: translateY(-1px);
         }
 
+        .weights-reset-btn:disabled {
+          cursor: default;
+          opacity: 0.45;
+          transform: none;
+          box-shadow: none;
+        }
+
+        .weights-reset-btn:disabled:hover {
+          color: var(--text-secondary);
+          background: rgba(99, 102, 241, 0.08);
+          border-color: rgba(99, 102, 241, 0.25);
+          box-shadow: none;
+          transform: none;
+        }
+
         .weights-reset-btn:active {
           transform: translateY(0);
         }
@@ -3913,11 +4083,49 @@ export default function StrategyLab() {
           white-space: nowrap;
         }
 
+        /* Each preference slider row — flat, same density as the other
+           sliders in the page (no card wrapper). Use a subtle top divider
+           instead of a card to keep visual rhythm consistent with the
+           other control-groups. */
+        .preference-inline-row {
+          padding-top: var(--sp-3);
+          padding-bottom: var(--sp-3);
+          border-top: 1px solid var(--border-glass);
+        }
+
+        .preference-inline-row:first-of-type {
+          padding-top: var(--sp-2);
+          border-top: none;
+        }
+
+        .preference-inline-row .slider-input.preference-inline-slider {
+          margin-top: 2px;
+          margin-bottom: 4px;
+        }
+
+        .preference-inline-row .param-explanation {
+          margin-top: 4px;
+          margin-bottom: 0;
+        }
+
+        /* Live hint — same visual recipe as PreferenceWeightsModal */
+        .preference-inline-live-hint {
+          margin-top: var(--sp-3);
+          padding: 8px var(--sp-3);
+          border-radius: var(--radius-md);
+          background: var(--accent-soft-indigo);
+          border: 1px solid rgba(99, 102, 241, 0.30);
+          color: var(--color-primary);
+          font-size: var(--fs-sm);
+          line-height: 1.5;
+        }
+
         .preference-inline-actions {
           display: flex;
           justify-content: flex-end;
           gap: 8px;
           flex-wrap: wrap;
+          margin-top: var(--sp-3);
         }
 
         .preference-actions-consistent {
@@ -4238,8 +4446,8 @@ export default function StrategyLab() {
           width: 100%;
           display: flex;
           flex-direction: column;
-          gap: 8px;
-          padding-top: 8px;
+          gap: 6px;
+          padding-top: 6px;
           margin-top: 0;
           border-top: 1px solid rgba(255,255,255,0.05);
         }
@@ -4247,11 +4455,16 @@ export default function StrategyLab() {
         .path-explain-copy {
           display: flex;
           align-items: flex-start;
-          gap: 8px;
+          gap: 7px;
           color: var(--text-secondary);
-          font-size: 12px;
-          line-height: 1.55;
+          font-size: 11px;
+          line-height: 1.45;
           letter-spacing: 0.01em;
+        }
+
+        .path-explain-copy strong {
+          color: #e5e7eb;
+          font-weight: 700;
         }
 
         .path-dot {
@@ -4272,12 +4485,12 @@ export default function StrategyLab() {
         .path-target-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          column-gap: 18px;
-          row-gap: 3px;
+          column-gap: 14px;
+          row-gap: 2px;
         }
 
         .path-target-grid div {
-          padding: 3px 0;
+          padding: 2px 0;
           background: transparent;
           border: none;
           display: grid;
@@ -4290,8 +4503,8 @@ export default function StrategyLab() {
         .path-target-grid span {
           display: block;
           color: var(--text-muted);
-          font-size: 10px;
-          line-height: 1.4;
+          font-size: 9.5px;
+          line-height: 1.35;
           letter-spacing: 0.01em;
           margin: 0;
           min-width: 0;
@@ -4302,7 +4515,7 @@ export default function StrategyLab() {
 
         .path-target-grid strong {
           color: #e2e8f0;
-          font-size: 11px;
+          font-size: 10.5px;
           font-weight: 600;
           font-family: var(--font-heading);
           letter-spacing: 0;
@@ -4784,6 +4997,11 @@ export default function StrategyLab() {
         @media (max-width: 992px) {
           .lab-grid {
             grid-template-columns: minmax(0, 1fr);
+          }
+          .left-controls-col,
+          .chart-section,
+          .right-results-col {
+            grid-column: 1;
           }
           .lab-header {
             align-items: stretch;

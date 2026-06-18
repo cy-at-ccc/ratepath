@@ -110,6 +110,18 @@
   --chart-info: #60a5fa;
   --chart-soft: #a5b4fc;
   --chart-amber: #fbbf24;
+
+  /* Slider geometry (single source of truth across strategy-lab / modals) */
+  --slider-track-h: 6px;
+  --slider-thumb-size: 18px;
+  --slider-thumb-border: 2px;
+
+  /* Focus rings (used by form inputs, number inputs, selects, step badges) */
+  --focus-ring-primary: 0 0 0 3px rgba(99, 102, 241, 0.40);
+  --focus-ring-danger: 0 0 0 3px rgba(244, 63, 94, 0.35);
+
+  /* Modal backdrop scrim (semi-transparent overlay tint) */
+  --backdrop-scrim: rgba(11, 15, 25, 0.70);
 }
 
 /* Global Reset & Base Styles */

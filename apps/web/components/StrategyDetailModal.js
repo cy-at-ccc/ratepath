@@ -26,6 +26,10 @@ import SvgChart from "./SvgChart.js";
  * @param {string} [props.detailScenarioLabel] - "概率加权期望路径" etc.
  * @param {boolean} [props.isDetailLoading]
  * @param {(n: number) => string} [props.formatMoney]
+ * @param {{whyThisOne: string, tradeOff: Array<{label: string, status: string}>, suitableFor: string[], comparison: Array<{label: string, interestDelta: number, stabilityDelta: number}>} | null} [props.intro]
+ *   - v9: personalised "why this card picked this strategy" block. When the
+ *     page passes a non-null intro, the modal renders 4 sub-sections above
+ *     its metrics grid (whyThisOne / tradeOff / suitableFor / comparison).
  */
 export default function StrategyDetailModal(/** @type {any} */ props) {
   const {
@@ -37,7 +41,8 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
     detailTimelineData = null,
     detailScenarioLabel = null,
     isDetailLoading = false,
-    formatMoney = (/** @type {number} */ n) => `$${Math.round(n).toLocaleString()}`
+    formatMoney = (/** @type {number} */ n) => `$${Math.round(n).toLocaleString()}`,
+    intro = null
   } = props;
 
   const closeBtnRef = useRef(/** @type {any} */ (null));
@@ -287,6 +292,58 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
 
         <p id="sdm-desc" className="sdm-desc">{description}</p>
 
+        {/* v9: personalised intro block — why this card picked this strategy,
+            per-axis trade-off, suitableFor tags, and 2 nearest neighbours by
+            score. Rendered when the page passes a non-null `intro` prop. */}
+        {intro && (
+          <div className="sdm-intro" data-testid="sdm-intro">
+            {intro.whyThisOne && (
+              <div className="sdm-intro-section">
+                <h3 className="sdm-intro-title">为什么是它</h3>
+                <p className="sdm-intro-body">{intro.whyThisOne}</p>
+              </div>
+            )}
+            {Array.isArray(intro.tradeOff) && intro.tradeOff.length > 0 && (
+              <div className="sdm-intro-section">
+                <h3 className="sdm-intro-title">12 维度对标</h3>
+                <ul className="sdm-intro-list">
+                  {intro.tradeOff.map((/** @type {any} */ t, /** @type {number} */ i) => (
+                    <li key={i} className={`sdm-intro-row sdm-intro-row-${t.status === "优异" ? "top" : t.status === "较弱" ? "bottom" : "mid"}`}>
+                      <span className="sdm-intro-label">{t.label}</span>
+                      <span className={`sdm-intro-status sdm-intro-status-${t.status === "优异" ? "top" : t.status === "较弱" ? "bottom" : "mid"}`}>{t.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(intro.suitableFor) && intro.suitableFor.length > 0 && (
+              <div className="sdm-intro-section">
+                <h3 className="sdm-intro-title">适合人群</h3>
+                <div className="sdm-intro-tags">
+                  {intro.suitableFor.map((/** @type {any} */ tag, /** @type {number} */ i) => (
+                    <span key={i} className="sdm-intro-tag">{tag}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Array.isArray(intro.comparison) && intro.comparison.length > 0 && (
+              <div className="sdm-intro-section">
+                <h3 className="sdm-intro-title">相似方案对照</h3>
+                <ul className="sdm-intro-list">
+                  {intro.comparison.map((/** @type {any} */ c, /** @type {number} */ i) => (
+                    <li key={i} className="sdm-intro-row">
+                      <span className="sdm-intro-label">{c.label}</span>
+                      <span className="sdm-intro-diff">
+                        利息 {c.interestDelta >= 0 ? "+" : ""}{c.interestDelta.toLocaleString()} · 峰值 {c.stabilityDelta >= 0 ? "+" : ""}{c.stabilityDelta.toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* METRICS GRID — 4 columns on desktop, 2 on tablet, 1 on phone */}
         <div className="sdm-metrics">
           {detailSummary && (
@@ -309,11 +366,21 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           {!detailSummary && strategy.expectedPaymentVolatility !== undefined && (
             <MetricTile label="还款波动 (stddev)" value={`±${fmtMoney(strategy.expectedPaymentVolatility)}`} />
           )}
-          {!detailSummary && strategy.expectedWorstCaseInterest !== undefined && strategy.expectedWorstCaseInterest !== null && (
-            <MetricTile label="最坏情景总利息" value={fmtMoney(strategy.expectedWorstCaseInterest)} tone="rose" />
+          {!detailSummary && strategy.worstCaseInterest !== undefined && strategy.worstCaseInterest !== null && (
+            <MetricTile label="最坏情景总利息" value={fmtMoney(strategy.worstCaseInterest)} tone="rose" />
           )}
-          {!detailSummary && strategy.expectedWorstCasePayment !== undefined && strategy.expectedWorstCasePayment !== null && (
-            <MetricTile label="最坏月供峰值" value={fmtMoney(strategy.expectedWorstCasePayment)} tone="rose" />
+          {!detailSummary && strategy.worstCasePayment !== undefined && strategy.worstCasePayment !== null && (
+            <MetricTile label="最坏月供峰值" value={fmtMoney(strategy.worstCasePayment)} tone="rose" />
+          )}
+          {/* v10: dispersion metric — max single allocation share. Surfaced
+              only when the optimiser populated it (i.e. the page passed the
+              strategies generator output). */}
+          {!detailSummary && strategy.concentration !== undefined && strategy.concentration !== null && (
+            <MetricTile
+              label="分散度 (最大单笔占比)"
+              value={`${Math.round((strategy.concentration || 0) * 100)}%`}
+              tone="indigo"
+            />
           )}
           {!detailSummary && strategy.expectedMaxConcurrentRefixPercentage !== undefined && (
             <MetricTile
@@ -663,6 +730,79 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           color: var(--text-muted);
           line-height: 1.55;
           margin: 0 0 16px;
+        }
+        .sdm-intro {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          margin: 0 0 18px;
+          padding: 14px 16px;
+          border-radius: 12px;
+          background: linear-gradient(180deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02));
+          border: 1px solid rgba(99,102,241,0.18);
+        }
+        .sdm-intro-section {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .sdm-intro-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--text-secondary);
+          margin: 0;
+          letter-spacing: 0.02em;
+        }
+        .sdm-intro-body {
+          font-size: 13px;
+          line-height: 1.6;
+          margin: 0;
+          color: var(--text-primary);
+        }
+        .sdm-intro-list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 6px 14px;
+        }
+        .sdm-intro-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          font-size: 12px;
+        }
+        .sdm-intro-label {
+          color: var(--text-secondary);
+        }
+        .sdm-intro-status {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-weight: 600;
+        }
+        .sdm-intro-status-top { background: rgba(52, 211, 153, 0.18); color: #34d399; }
+        .sdm-intro-status-mid { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+        .sdm-intro-status-bottom { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+        .sdm-intro-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .sdm-intro-tag {
+          font-size: 11px;
+          padding: 3px 9px;
+          border-radius: 10px;
+          background: rgba(99, 102, 241, 0.16);
+          border: 1px solid rgba(99, 102, 241, 0.30);
+          color: #c7d2fe;
+        }
+        .sdm-intro-diff {
+          font-size: 11.5px;
+          color: var(--text-secondary);
+          font-variant-numeric: tabular-nums;
         }
         .sdm-metrics {
           display: grid;

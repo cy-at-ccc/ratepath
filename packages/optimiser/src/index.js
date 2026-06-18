@@ -31,7 +31,15 @@ export const DEFAULT_TOLERANCES_TERM = {
   // tolerance ≈ 0.04% of principal — meaningful but doesn't drown real splits.
   expectedEndingBalance: 200,
   // 1: same boundary semantics as `expectedAffordabilityBreaches`.
-  worstCaseAffordabilityBreaches: 1
+  worstCaseAffordabilityBreaches: 1,
+  // v9: count type, same boundary semantics as `expectedAffordabilityBreaches`
+  // — an off-by-one on the refix event count is within noise of the term
+  // length and product catalogue.
+  expectedRefixEventCount: 1,
+  // v10: max single allocation share; 5pp tolerance matches the 5%/10%
+  // step granularity of the NZ product catalogue. Two strategies within 5pp
+  // on their largest single tranche are tied for Pareto purposes.
+  concentration: 0.05
 };
 
 /** @type {Record<string, number>} */
@@ -44,7 +52,12 @@ export const DEFAULT_TOLERANCES_PAYMENT = {
   payoffTime: 3,
   expectedMaxConcurrentRefixPercentage: 0.02,
   flexibilityPenalty: 0.02,
-  expectedPaymentVolatility: 0.05
+  expectedPaymentVolatility: 0.05,
+  // v9: count type, same semantics as the term-mode `expectedRefixEventCount`.
+  expectedRefixEventCount: 1,
+  // v10: max single allocation share; 5pp tolerance matches the 5%/10%
+  // step granularity of the NZ product catalogue. See term-mode map.
+  concentration: 0.05
 };
 
 /**
@@ -102,6 +115,12 @@ function getBoundsFor(strategies, key) {
  *   7. expectedPaymentVolatility (0.05) — schedule-flow stability
  *   8. expectedEndingBalance (200) — principal paydown speed (term-mode only)
  *   9. worstCaseAffordabilityBreaches (1) — tail budget-breach count
+ *   10. expectedRefixEventCount (1) — total refix event count (v9)
+ *   11. concentration (0.05) — max single allocation share (v10). The
+ *       strategy's largest tranche %. A 50/50 split ties a 55/45 split;
+ *       a 100/0 (single-product) is dominated by any 90/10 etc. within
+ *       tolerance. Derives from `strategies[].allocations[].percentage`
+ *       passed into `optimizeStrategies`; defaults to 1.0 when absent.
  * @param {Record<string, number>} [tolerances]
  * @returns {{objectives: string[], tolerances: Record<string, number>}}
  */
@@ -116,7 +135,9 @@ export function getTermObjectives(tolerances = {}) {
       "flexibilityPenalty",
       "expectedPaymentVolatility",
       "expectedEndingBalance",
-      "worstCaseAffordabilityBreaches"
+      "worstCaseAffordabilityBreaches",
+      "expectedRefixEventCount",
+      "concentration"
     ],
     tolerances: { ...DEFAULT_TOLERANCES_TERM, ...tolerances }
   };
@@ -130,6 +151,10 @@ export function getTermObjectives(tolerances = {}) {
  *   4. expectedMaxConcurrentRefixPercentage (0.02)
  *   5. flexibilityPenalty (0.02)
  *   6. expectedPaymentVolatility (0.05) — schedule-flow stability
+ *   7. worstCaseInterest ($50) — v9 worst-case defense
+ *   8. worstCaseAffordabilityBreaches (1) — v9 worst-case defense
+ *   9. expectedRefixEventCount (1) — v9 worst-case defense
+ *   10. concentration (0.05) — v10, same derivation as term-mode.
  *
  * Note: `expectedEndingBalance` is intentionally NOT a payment-mode objective
  * since `payoffTime` already captures the same signal (loan paid off -> balance
@@ -145,7 +170,11 @@ export function getPaymentObjectives(tolerances = {}) {
       "payoffTime",
       "expectedMaxConcurrentRefixPercentage",
       "flexibilityPenalty",
-      "expectedPaymentVolatility"
+      "expectedPaymentVolatility",
+      "worstCaseInterest",
+      "worstCaseAffordabilityBreaches",
+      "expectedRefixEventCount",
+      "concentration"
     ],
     tolerances: { ...DEFAULT_TOLERANCES_PAYMENT, ...tolerances }
   };
@@ -285,58 +314,77 @@ export function generateExplanations(s, bounds, mode = "term", opts = {}) {
  * vs 9.2). Infeasible strategies (any scenario flagged isInfeasible) are dropped
  * from the Pareto set.
  *
- * Returned recommendations carry three sources with distinct semantics:
+ * Returned recommendations carry four sources with distinct semantics (v9):
  *
- *   - `preference`  — the strategy with the lowest overall score under the
- *                     supplied `weights` (or the slider-derived defaults when
- *                     `weights` is omitted). This is the personalised pick
- *                     that responds to the user's preference sliders.
+ *   - `preference`        — the strategy with the lowest overall score under
+ *                           the supplied `weights` (or the slider-derived
+ *                           defaults when `weights` is omitted). The personalised
+ *                           pick that responds to the user's preference
+ *                           sliders.
  *
- *   - `lowestCost`  — always the strategy with the smallest `expectedInterest`,
- *                     independent of `weights`. This is the mathematical
- *                     expected-cost optimum and acts as an objective benchmark
- *                     that the user can compare their `preference` pick
- *                     against. Intentional by design — `weights` do not
- *                     influence this slot.
+ *   - `lowestCost`        — always the strategy with the smallest
+ *                           `expectedInterest`, independent of `weights`.
+ *                           The mathematical expected-cost optimum; an
+ *                           objective benchmark for comparison. `weights` do
+ *                           not influence this slot.
  *
- *   - `mostStable`  — term mode  -> smallest `worstCasePayment` (the
- *                     worst-scenario peak across all scenarios);
- *                     payment mode -> smallest `worstCaseEndingBalance`.
- *                     Also `weights`-independent by design, and bound to
- *                     `worstCasePayment` in term mode so the recommendation
- *                     aligns with the `resilience` weight's intent of
- *                     suppressing worst-case peaks rather than the
- *                     probability-weighted average.
+ *   - `mostStable`        — term mode  -> smallest `worstCasePayment`
+ *                           (worst-scenario peak across all scenarios);
+ *                           payment mode -> smallest `worstCaseEndingBalance`.
+ *                           `weights`-independent by design; bound to
+ *                           `worstCasePayment` in term mode so the
+ *                           recommendation aligns with the `resilience` weight's
+ *                           intent of suppressing worst-case peaks.
+ *
+ *   - `worstCaseDefense`  — the strategy with the smallest
+ *                           `worstCaseCompositeScore` (worstCaseInterest 0.5
+ *                           + worstCaseAffordabilityBreaches 0.3 +
+ *                           worstCasePayment 0.2). `weights`-independent by
+ *                           design — the card surfaces the *objective optimum*
+ *                           along the same composite axis that the
+ *                           `worstCaseDefense` weight modulates in the
+ *                           weighted `preference` score. So the user sees both
+ *                           the weighted view and the optimum on the same
+ *                           composite.
  *
  * The `weights` parameter only changes which strategy lands in `preference`;
- * `lowestCost` and `mostStable` are deliberately weights-agnostic objective
- * baselines. This is product behaviour, not a bug.
+ * `lowestCost`, `mostStable`, and `worstCaseDefense` are deliberately
+ * weights-agnostic objective baselines. This is product behaviour, not a bug.
  *
  * @param {Object} input
  * @param {any[]} input.simulationResults - All strategy x scenario simulation results
  * @param {any[]} input.scenarios - List of scenarios with probabilities
  * @param {number} [input.sliderCostStability=0.5] - 0 = cost-priority, 1 = stability-priority
  * @param {number} [input.sliderFlexibility=0.0] - 0 = no flex, 1 = high flex
- * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, smoothness?: number}} [input.weights]
+ * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, smoothness?: number, worstCaseDefense?: number}} [input.weights]
  *   - Optional explicit weights. Honoured keys: `cost`, `principal`, `refix`,
- *     `resilience`, `flex`, `budget`, `smoothness` (the 7 preference sliders).
+ *     `resilience`, `flex`, `budget`, `smoothness` (the 7 preference sliders),
+ *     plus `worstCaseDefense` (the 8th v9 key, drives a composite of
+ *     worstCaseInterest + worstCaseAffordabilityBreaches + worstCasePayment).
  *     Missing keys default to 0. Sum of present keys must be > 0 or all weights
  *     are ignored. `stability`, `endingBalance`, and `payoff` are NOT read from
  *     this object — in payment mode those keys are derived from
  *     `sliderCostStability` / `sliderFlexibility` via the slider-derived branch
  *     below. These weights only steer the `preference` recommendation;
- *     `lowestCost` and `mostStable` remain weights-agnostic (see function
- *     description).
+ *     `lowestCost`, `mostStable`, and `worstCaseDefense` remain
+ *     weights-agnostic (see function description).
  * @param {"term"|"payment"} [input.mode] - Mode selector for the objective set (defaults to "term")
  * @param {Record<string, number>} [input.tolerances] - Per-objective tolerance override
  * @param {number} [input.recommendationMinAllocationCount] - Minimum number of
- *   allocations required for the three headline recommendations. This does not
- *   filter `rankedStrategies`, so single-product benchmarks can still appear in
- *   the detailed table.
+ *   allocations required for the four headline recommendations (v9 forces this
+ *   filter on ALL four cards, not just `preference` — see plan v9 H). This
+ *   does not filter `rankedStrategies`, so single-product benchmarks can still
+ *   appear in the detailed table.
  * @param {boolean} [input.diversification=false] - When true, the user has
  *   opted into the Diversification preset (richer candidate sets + refix-heavy
  *   weights). Pros/cons emission adapts accordingly; ranking and Pareto
  *   classification are unaffected.
+ * @param {any[]} [input.strategies] - Optional list of candidate strategies
+ *   (same shape produced by the strategy-generator: `{ id, allocations: [{productCode, percentage, ...}] }`).
+ *   When provided, used to derive the `concentration` Pareto axis (max single
+ *   `allocation.percentage`). When omitted, `concentration` defaults to 1.0
+ *   per strategy — backward compatible with callers that don't carry the
+ *   generator output. v10 addition.
  * @returns {any} Ranks, recommendations, and Pareto frontier details
  */
 export function optimizeStrategies({
@@ -348,7 +396,8 @@ export function optimizeStrategies({
   mode = "term",
   tolerances = undefined,
   recommendationMinAllocationCount = 1,
-  diversification = false
+  diversification = false,
+  strategies = undefined
 }) {
   // 1. Group simulation results by strategyId
   /** @type {Record<string, any[]>} */
@@ -427,6 +476,16 @@ export function optimizeStrategies({
     worstCaseInterest = Math.round(worstCaseInterest * 100) / 100;
     worstCaseEndingBalance = Math.round(worstCaseEndingBalance * 100) / 100;
 
+    // v10: derive `concentration` from the strategy-generator output's
+    // allocations. When the caller does not pass `strategies`, fall back
+    // to 1.0 (single-allocation) so legacy callers stay unaffected.
+    const stratEntry = strategies && Array.isArray(strategies)
+      ? strategies.find((/** @type {any} */ x) => x.id === strategyId || x.strategyId === strategyId)
+      : undefined;
+    const concentration = stratEntry && Array.isArray(stratEntry.allocations) && stratEntry.allocations.length > 0
+      ? Math.max(...stratEntry.allocations.map((/** @type {any} */ a) => Number(a.percentage) || 0))
+      : 1.0;
+
     aggregatedStrategies.push({
       strategyId,
       allocationCount,
@@ -447,7 +506,10 @@ export function optimizeStrategies({
       bestCaseInterest,
       baseCaseInterest,
       // Derived Pareto key (spec 9.1: 1 - expectedFloatingExposure).
-      flexibilityPenalty: Math.round((1 - expectedFloatingExposure) * 1e4) / 1e4
+      flexibilityPenalty: Math.round((1 - expectedFloatingExposure) * 1e4) / 1e4,
+      // v10: max single allocation share, surfaced as a Pareto axis so a
+      // single-product 100% strategy is dominated by any split.
+      concentration: Math.round(concentration * 1e4) / 1e4
     });
   }
 
@@ -478,11 +540,20 @@ export function optimizeStrategies({
     budget: getBoundsFor(aggregatedStrategies, "expectedAffordabilityBreaches"),
     endingBalance: getBoundsFor(aggregatedStrategies, "worstCaseEndingBalance"),
     payoff: getBoundsFor(aggregatedStrategies, "expectedPayoffTime"),
-    smoothness: getBoundsFor(aggregatedStrategies, "expectedPaymentVolatility")
+    smoothness: getBoundsFor(aggregatedStrategies, "expectedPaymentVolatility"),
+    // v9: 3 new Pareto-objective normalisation bounds. Each call is a no-op
+    // when all strategies share the same value (diff falls back to 1 — see
+    // getBoundsFor); the composite score below relies on that fallback so it
+    // remains defined even on a single-strategy candidate set.
+    worstCaseInterest: getBoundsFor(aggregatedStrategies, "worstCaseInterest"),
+    worstCaseBreaches: getBoundsFor(aggregatedStrategies, "worstCaseAffordabilityBreaches"),
+    refixEventCount: getBoundsFor(aggregatedStrategies, "expectedRefixEventCount"),
+    // v10: concentration normalisation bound for the per-axis score below.
+    concentration: getBoundsFor(aggregatedStrategies, "concentration")
   };
 
   // 5. Weight calculation (mode-aware per spec 10.2)
-  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff, wSmoothness;
+  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff, wSmoothness, wWorstCaseDefense;
   if (weights) {
     const totalRaw = (weights.cost || 0) +
       (weights.principal || 0) +
@@ -498,6 +569,11 @@ export function optimizeStrategies({
     wFlex = (weights.flex || 0) / totalRaw;
     wBudget = (weights.budget || 0) / totalRaw;
     wSmoothness = (weights.smoothness || 0) / totalRaw;
+    // v9: 8th weight key. Drives a composite of worstCaseInterest +
+    // worstCaseAffordabilityBreaches + worstCasePayment (see
+    // worstCaseCompositeScore). 0 by default for backward-compat with
+    // legacy callers that don't set it.
+    wWorstCaseDefense = (weights.worstCaseDefense || 0) / totalRaw;
     wStability = 0;
     wEndingBalance = 0;
     wPayoff = 0;
@@ -518,6 +594,7 @@ export function optimizeStrategies({
     wResilience = 0;
     wBudget = 0;
     wSmoothness = 0;
+    wWorstCaseDefense = 0;
   } else {
     const rawCostWeight = 0.65 - sliderCostStability * 0.40;
     const rawStabilityWeight = 0.15 + sliderCostStability * 0.30;
@@ -535,9 +612,28 @@ export function optimizeStrategies({
     wEndingBalance = 0;
     wPayoff = 0;
     wSmoothness = 0;
+    wWorstCaseDefense = 0;
   }
 
   // 6. Score and rank strategies
+  // v9: composite worst-case score. Combines the three worst-case axes
+  // (interest / breaches / payment) with a 0.5 / 0.3 / 0.2 weighting so the
+  // single `worstCaseDefense` slider can express the user's "I am most
+  // worried about the bad tail" preference without per-axis tuning. Falls
+  // back to a 0 contribution when all strategies tie on an axis (diff=1
+  // after getBoundsFor fallback).
+  /**
+   * @param {any} s
+   * @param {Record<string, {min: number, max: number, diff: number}>} bounds
+   * @returns {number}
+   */
+  const worstCaseCompositeScore = (s, bounds) => {
+    const wci = (s.worstCaseInterest - bounds.worstCaseInterest.min) / (bounds.worstCaseInterest.diff || 1);
+    const wcb = (s.worstCaseAffordabilityBreaches - bounds.worstCaseBreaches.min) / (bounds.worstCaseBreaches.diff || 1);
+    const wcp = (s.worstCasePayment - bounds.resilience.min) / (bounds.resilience.diff || 1);
+    return wci * 0.5 + wcb * 0.3 + wcp * 0.2;
+  };
+
   const scoredStrategies = aggregatedStrategies.map((/** @type {any} */ s) => {
     const costScore = (s.expectedInterest - bounds.cost.min) / bounds.cost.diff;
     const principalScore = (s.expectedEndingBalance - bounds.principal.min) / bounds.principal.diff;
@@ -549,6 +645,18 @@ export function optimizeStrategies({
     const endingBalanceScore = (s.worstCaseEndingBalance - bounds.endingBalance.min) / bounds.endingBalance.diff;
     const payoffScore = (s.expectedPayoffTime - bounds.payoff.min) / bounds.payoff.diff;
     const smoothnessScore = (s.expectedPaymentVolatility - bounds.smoothness.min) / bounds.smoothness.diff;
+    // v9: 3 new normalised Pareto scores for the worst-case axes. These
+    // participate in the dominance check (via the objectives list) but NOT
+    // in the weighted-sum — only the composite `worstCaseDefense` does,
+    // through wWorstCaseDefense * worstCaseCompositeScore below.
+    const worstCaseInterestScore = (s.worstCaseInterest - bounds.worstCaseInterest.min) / (bounds.worstCaseInterest.diff || 1);
+    const worstCaseBreachesScore = (s.worstCaseAffordabilityBreaches - bounds.worstCaseBreaches.min) / (bounds.worstCaseBreaches.diff || 1);
+    const refixEventCountScore = (s.expectedRefixEventCount - bounds.refixEventCount.min) / (bounds.refixEventCount.diff || 1);
+    // v10: per-axis normalised concentration score. Like the v9 worst-case
+    // axes, this is Pareto-only — it does NOT feed `overallScore` (no
+    // `wConcentration` slider). Surfaced on each ranked strategy so the
+    // Pareto table column can show the normalised position.
+    const concentrationScore = (s.concentration - bounds.concentration.min) / (bounds.concentration.diff || 1);
 
     const overallScore = wCost * costScore +
       wPrincipal * principalScore +
@@ -559,43 +667,64 @@ export function optimizeStrategies({
       wBudget * budgetScore +
       wEndingBalance * endingBalanceScore +
       wPayoff * payoffScore +
-      wSmoothness * smoothnessScore;
+      wSmoothness * smoothnessScore +
+      // v9: composite worst-case score. Driven by the 8th weight key
+      // `worstCaseDefense` (which defaults to 0 for legacy callers).
+      wWorstCaseDefense * worstCaseCompositeScore(s, bounds);
 
     return {
       ...s,
       isParetoOptimal: paretoStatus[s.strategyId],
-      score: Math.round(overallScore * 1000) / 1000
+      score: Math.round(overallScore * 1000) / 1000,
+      // v9: surface the per-axis scores for the UI's worst-case defense card
+      // and the strategy-detail modal's "trade-off" breakdown. Rounded to
+      // 3dp like the overall score.
+      worstCaseInterestScore: Math.round(worstCaseInterestScore * 1000) / 1000,
+      worstCaseBreachesScore: Math.round(worstCaseBreachesScore * 1000) / 1000,
+      refixEventCountScore: Math.round(refixEventCountScore * 1000) / 1000,
+      worstCaseCompositeScore: Math.round(worstCaseCompositeScore(s, bounds) * 1000) / 1000,
+      // v10: Pareto-only — surfaced for the Pareto table column / detail modal.
+      concentrationScore: Math.round(concentrationScore * 1000) / 1000
     };
   });
 
   scoredStrategies.sort((a, b) => a.score - b.score);
 
-  // 7. Recommendations: preference, lowest cost, most stable (mode-aware).
+  // 7. Recommendations: 4 slots (v9) — preference + lowestCost + mostStable +
+  // worstCaseDefense. The previous release exposed 10 objective benchmarks;
+  // v9 collapses them into 4 cards (see plan v9 "G. PickMin → 4 recommendation
+  // slots"). The remaining 6 axes are still observable in the Pareto table
+  // and StrategyDetailModal.
   //
-  // `preference` is driven by the supplied `weights` (or the slider-derived
-  // default weights): it is the strategy with the lowest overall score after
-  // weighting + normalisation, i.e. the personalised pick.
+  //   - `preference`        : weighted-sum preference (responds to `weights`).
+  //   - `lowestCost`        : smallest `expectedInterest` (term & payment).
+  //                            Weights-independent by design.
+  //   - `mostStable`        : term -> smallest `worstCasePayment`,
+  //                            payment -> smallest `worstCaseEndingBalance`.
+  //                            Weights-independent by design.
+  //   - `worstCaseDefense`  : smallest `worstCaseCompositeScore` — the same
+  //                            composite used in the overallScore formula
+  //                            (worstCaseInterest 0.5 + worstCaseAffordability
+  //                            Breaches 0.3 + worstCasePayment 0.2). Responds
+  //                            to the 8th weight key, but the card itself is
+  //                            the *objective optimum* along that composite,
+  //                            so the user sees both the weighted view
+  //                            (preference) and the optimum (worstCaseDefense).
   //
-  // `lowestCost` and `mostStable` are deliberately *weights-independent*
-  // objective benchmarks (by design, not a bug): they always pick the
-  // mathematical best of the relevant dimension, regardless of the user's
-  // slider/weights, so the user can compare their personalised pick against
-  // the objective optimum. Concretely:
-  //   - `lowestCost`             : smallest `expectedInterest` (term & payment).
-  //   - `lowestWorstCaseCost`    : smallest `worstCaseInterest` (term only).
-  //   - `lowestWorstCasePayment` : smallest `worstCasePayment` (term only).
-  //   - `lowestRefixConcentration`: smallest `expectedMaxConcurrentRefixPercentage`.
-  //   - `lowestBudgetBreaches`   : smallest `expectedAffordabilityBreaches` (term).
-  //   - `lowestVolatility`       : smallest `expectedPaymentVolatility`.
-  //   - `lowestEndingBalance`    : smallest `expectedEndingBalance` (term only).
-  //   - `mostFloating`           : smallest `flexibilityPenalty` (i.e. largest
-  //                                `expectedFloatingExposure`).
-  //   - `mostStable`             : term -> smallest `worstCasePayment`,
-  //                                payment -> smallest `worstCaseEndingBalance`.
-  //   - `preference`             : weighted-sum preference (responds to `weights`).
-  // Each `lowest*` / `mostFloating` benchmark is weights-independent by design
-  // so users can compare their personalised pick against each objective's
-  // mathematical optimum. See spec 10.4.
+  // v10 mutex: each card is forced to pick a DIFFERENT strategy when 2+
+  // candidates exist. Picker ordering is fixed:
+  //     preference -> lowestCost -> mostStable -> worstCaseDefense
+  // Each pick excludes all previously-picked strategyIds from the candidate
+  // pool. If the filtered pool is empty (only 1 viable candidate), the picker
+  // falls back to the full pool so the 4 cards all return that single
+  // strategy. This guarantees that with 3+ distinct candidates, the 4 cards
+  // surface 4 different strategies — preventing the v9 bug where the 3
+  // benchmark cards could all lock onto the same "lowestCost" pick.
+  //
+  // All four slots share the same `recommendationCandidates` pool — v9 forces
+  // every card to prefer ≥2-allocation strategies when the constraint is
+  // active, so the single-product extreme (e.g. "100% floating") never wins
+  // any of the 4 cards unless no split exists.
   const recommendationPool = scoredStrategies.filter(
     (/** @type {any} */ s) => (s.allocationCount || 1) >= recommendationMinAllocationCount
   );
@@ -612,20 +741,46 @@ export function optimizeStrategies({
     cmp ? cmp(a[key], b[key]) : (a[key] ?? Infinity) - (b[key] ?? Infinity)
   )[0];
 
-  const lowestCost = pickMin(recommendationCandidates, "expectedInterest");
-  const lowestWorstCaseCost = pickMin(recommendationCandidates, "worstCaseInterest");
-  const lowestWorstCasePayment = pickMin(recommendationCandidates, "worstCasePayment");
-  const lowestRefixConcentration = pickMin(recommendationCandidates, "expectedMaxConcurrentRefixPercentage");
-  const lowestBudgetBreaches = pickMin(recommendationCandidates, "expectedAffordabilityBreaches");
-  const lowestVolatility = pickMin(recommendationCandidates, "expectedPaymentVolatility");
-  const lowestEndingBalance = pickMin(recommendationCandidates, "expectedEndingBalance");
-  // `flexibilityPenalty = 1 - expectedFloatingExposure` (minimise). So min
-  // flexibilityPenalty corresponds to the strategy with the LARGEST floating
-  // exposure — i.e. `mostFloating` semantically.
-  const mostFloating = pickMin(recommendationCandidates, "flexibilityPenalty");
+  // v10: mutex-aware pickers. `excludedStrategyIds` accumulates the picks
+  // from earlier cards; each subsequent pick filters the pool. If filtering
+  // empties the pool, the picker falls back to the full pool (small-pool
+  // fallback) so a single viable candidate is returned by every card
+  // instead of `undefined`.
+  /** @type {Set<string>} */
+  const excludedStrategyIds = new Set();
+  /**
+   * @param {any[]} pool
+   * @param {string} key
+   * @param {(a: any, b: any) => number} [cmp]
+   * @returns {any}
+   */
+  const pickExcluding = (pool, key, cmp) => {
+    const filtered = pool.filter((/** @type {any} */ s) => !excludedStrategyIds.has(s.strategyId));
+    if (filtered.length === 0) return pickMin(pool, key, cmp); // small-pool fallback
+    return pickMin(filtered, key, cmp);
+  };
+  /**
+   * Composite-score picker that mirrors `pickExcluding` semantics but sorts
+   * by the precomputed `worstCaseCompositeScore` instead of a single key.
+   * @param {any[]} pool
+   * @returns {any}
+   */
+  const pickExcludingComposite = (pool) => {
+    const filtered = pool.filter((/** @type {any} */ s) => !excludedStrategyIds.has(s.strategyId));
+    if (filtered.length === 0) {
+      return [...pool].sort((a, b) => (a.worstCaseCompositeScore ?? 0) - (b.worstCaseCompositeScore ?? 0))[0];
+    }
+    return [...filtered].sort((a, b) => (a.worstCaseCompositeScore ?? 0) - (b.worstCaseCompositeScore ?? 0))[0];
+  };
+
+  excludedStrategyIds.add(preference.strategyId);
+  const lowestCost = pickExcluding(recommendationCandidates, "expectedInterest");
+  excludedStrategyIds.add(lowestCost.strategyId);
   const mostStable = mode === "payment"
-    ? pickMin(recommendationCandidates, "worstCaseEndingBalance")
-    : pickMin(recommendationCandidates, "worstCasePayment");
+    ? pickExcluding(recommendationCandidates, "worstCaseEndingBalance")
+    : pickExcluding(recommendationCandidates, "worstCasePayment");
+  excludedStrategyIds.add(mostStable.strategyId);
+  const worstCaseDefense = pickExcludingComposite(recommendationCandidates);
 
   const buildRecObject = (/** @type {any} */ s) => {
     if (!s) return null;
@@ -644,14 +799,8 @@ export function optimizeStrategies({
     recommendations: {
       preference: buildRecObject(preference),
       lowestCost: buildRecObject(lowestCost),
-      lowestWorstCaseCost: buildRecObject(lowestWorstCaseCost),
-      lowestWorstCasePayment: buildRecObject(lowestWorstCasePayment),
-      lowestRefixConcentration: buildRecObject(lowestRefixConcentration),
-      lowestBudgetBreaches: buildRecObject(lowestBudgetBreaches),
-      lowestVolatility: buildRecObject(lowestVolatility),
-      lowestEndingBalance: buildRecObject(lowestEndingBalance),
-      mostFloating: buildRecObject(mostFloating),
-      mostStable: buildRecObject(mostStable)
+      mostStable: buildRecObject(mostStable),
+      worstCaseDefense: buildRecObject(worstCaseDefense)
     }
   };
 }
