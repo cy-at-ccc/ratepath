@@ -2,8 +2,11 @@ import { getRateFromPath } from "./interpolation.js";
 
 /**
  * Derives future rate paths for all mortgage products based on a policy rate path and current market rates.
- * ForecastProductRate(k,t) = CurrentProductRate(k) + Beta(k) * ExpectedPolicyRateChange(k,t) + spreadShock
- * where ExpectedPolicyRateChange(k,t) = (Average Policy Rate from t to t+term-1) - (Average Policy Rate from 0 to term-1)
+ * Floating products continue to use a beta-scaled OCR transmission model:
+ *   ForecastFloatingRate(k,t) = CurrentProductRate(k) + Beta(k) * (PolicyRate(t) - PolicyRate(0)) + spreadShock
+ *
+ * Fixed products are repriced off the OCR level at the refix month:
+ *   ForecastFixedRate(k,t) = CurrentProductRate(k) + (PolicyRate(t) - PolicyRate(0)) + spreadShock
  * @param {Object} input
  * @param {Array<{month: number, rate: number}>} input.policyRatePath - Central bank policy rate path
  * @param {Record<string, number>} input.currentProductRates - Current rate for each product at Month 0
@@ -23,6 +26,7 @@ export function deriveProductRatePaths({
 }) {
   /** @type {Record<string, Array<{month: number, rate: number}>>} */
   const result = {};
+  const currentPolicyRate = getRateFromPath(policyRatePath, 0, "linear");
 
   products.forEach(product => {
     const code = product.code;
@@ -32,26 +36,16 @@ export function deriveProductRatePaths({
     }
 
     const beta = betas[code] ?? 1.0;
-    const term = product.fixedMonths ?? 1; // Floating has a term of 1 month
+    const isFixedProduct = product.fixedMonths !== null && product.fixedMonths !== undefined;
 
-    // 1. Calculate base average policy rate starting at Month 0 (Current average)
-    let currentAverageSum = 0;
-    for (let offset = 0; offset < term; offset++) {
-      currentAverageSum += getRateFromPath(policyRatePath, offset, "linear");
-    }
-    const currentAverage = currentAverageSum / term;
-
-    // 2. Derive rate at each month step in the forecast horizon
+    // Derive the offer rate available at each month in the forecast horizon.
     const productPath = [];
     for (let t = 0; t <= forecastMonths; t++) {
-      let forecastSum = 0;
-      for (let offset = 0; offset < term; offset++) {
-        forecastSum += getRateFromPath(policyRatePath, t + offset, "linear");
-      }
-      const forecastAverage = forecastSum / term;
-
-      const expectedPolicyChange = forecastAverage - currentAverage;
-      const derivedRate = currentRate + beta * expectedPolicyChange + spreadShock;
+      const policyRateAtMonth = getRateFromPath(policyRatePath, t, "linear");
+      const expectedPolicyChange = policyRateAtMonth - currentPolicyRate;
+      const derivedRate = isFixedProduct
+        ? currentRate + expectedPolicyChange + spreadShock
+        : currentRate + beta * expectedPolicyChange + spreadShock;
 
       productPath.push({
         month: t,

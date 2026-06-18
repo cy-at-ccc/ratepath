@@ -10,16 +10,17 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "next": "16.2.9",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "@mortgage/schemas": "*",
     "@mortgage/country-adapters": "*",
+    "@mortgage/optimiser": "*",
     "@mortgage/rate-engine": "*",
     "@mortgage/scenario-engine": "*",
-    "@mortgage/strategy-generator": "*",
+    "@mortgage/schemas": "*",
     "@mortgage/simulation-engine": "*",
-    "@mortgage/optimiser": "*"
+    "@mortgage/strategy-generator": "*",
+    "next": "^16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "vitest": "4.1.9"
   },
   "devDependencies": {
     "eslint": "^9",

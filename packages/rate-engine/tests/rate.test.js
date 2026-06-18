@@ -63,6 +63,61 @@ describe("Rate Engine: Policy Rate Path Generation", () => {
     // after 12m, trend is +0.005/year * 1 year = +0.005
     expect(path[2].rate).toBe(0.035);
   });
+
+  it("should flatten the policy path after month 36 by default", () => {
+    const path = buildPolicyRatePath({
+      initialRate: 0.05,
+      controls: { shortTermChange: 0.01, mediumTermDirection: 1, changeSpeed: 0.5 },
+      nodes: [12, 24, 36, 48, 60]
+    });
+
+    expect(path[0].rate).toBe(0.06);
+    expect(path[1].rate).toBe(0.065);
+    expect(path[2].rate).toBe(0.07);
+    expect(path[3].rate).toBe(0.07);
+    expect(path[4].rate).toBe(0.07);
+  });
+
+  it("should follow the short-term OCR example from 2.25% to 0.25% over 12 months", () => {
+    const path = buildPolicyRatePath({
+      initialRate: 0.0225,
+      controls: { shortTermChange: -0.02, mediumTermDirection: 0, changeSpeed: 0.5 },
+      nodes: [0, 6, 12, 24]
+    });
+
+    expect(path[0].rate).toBe(0.0225);
+    expect(path[1].rate).toBe(0.0125);
+    expect(path[2].rate).toBe(0.0025);
+    expect(path[3].rate).toBe(0.0025);
+  });
+
+  it("should apply the medium-term decline only from month 13 to 36, then stay flat", () => {
+    const path = buildPolicyRatePath({
+      initialRate: 0.0225,
+      controls: { shortTermChange: 0, mediumTermDirection: -1, changeSpeed: 0.5 },
+      nodes: [12, 24, 36, 48, 60]
+    });
+
+    expect(path[0].rate).toBe(0.0225);
+    expect(path[1].rate).toBe(0.0175);
+    expect(path[2].rate).toBe(0.0125);
+    expect(path[3].rate).toBe(0.0125);
+    expect(path[4].rate).toBe(0.0125);
+  });
+
+  it("should stay flat from month 13 onward when medium-term direction is 0", () => {
+    const path = buildPolicyRatePath({
+      initialRate: 0.0225,
+      controls: { shortTermChange: 0.01, mediumTermDirection: 0, changeSpeed: 0.5 },
+      nodes: [12, 18, 24, 36, 48]
+    });
+
+    expect(path[0].rate).toBe(0.0325);
+    expect(path[1].rate).toBe(0.0325);
+    expect(path[2].rate).toBe(0.0325);
+    expect(path[3].rate).toBe(0.0325);
+    expect(path[4].rate).toBe(0.0325);
+  });
 });
 
 describe("Rate Engine: Product Rate Path Derivation", () => {
@@ -101,10 +156,46 @@ describe("Rate Engine: Product Rate Path Derivation", () => {
     expect(derived.floating[0].rate).toBe(0.075);
     expect(derived.floating[12].rate).toBe(0.057);
 
-    // Fixed 1y term is 12 months.
-    // Current expected average policy rate (m0 to m11) is the average of 0.05 to 0.03166667
-    // Let's check calculations or just verify the derived fixed rate path exists and matches properties.
+    // Fixed terms now use the OCR level at the refix month directly.
     expect(derived["fixed-1y"][0].rate).toBe(0.065);
-    expect(derived["fixed-1y"][12].rate).toBeLessThan(0.065);
+    expect(derived["fixed-1y"][12].rate).toBe(0.045);
+  });
+
+  it("should reprice fixed-1y from the OCR level at the refix month", () => {
+    const path = Array.from({ length: 25 }, (_, month) => {
+      if (month <= 12) {
+        return { month, rate: 0.0225 + (0.01 * month / 12) };
+      }
+      return { month, rate: 0.0325 };
+    });
+
+    const derived = deriveProductRatePaths({
+      policyRatePath: path,
+      currentProductRates: { "fixed-1y": 0.0465 },
+      betas: { "fixed-1y": 0.75 },
+      products: [{ code: "fixed-1y", fixedMonths: 12 }],
+      forecastMonths: 24
+    });
+
+    const expectedRefixRate = 0.0565;
+
+    expect(derived["fixed-1y"][12].rate).toBe(expectedRefixRate);
+  });
+
+  it("should apply the same direct OCR delta rule to longer fixed terms", () => {
+    const path = [
+      { month: 0, rate: 0.0225 },
+      { month: 24, rate: 0.0325 }
+    ];
+
+    const derived = deriveProductRatePaths({
+      policyRatePath: path,
+      currentProductRates: { "fixed-2y": 0.0525 },
+      betas: { "fixed-2y": 0.55 },
+      products: [{ code: "fixed-2y", fixedMonths: 24 }],
+      forecastMonths: 24
+    });
+
+    expect(derived["fixed-2y"][24].rate).toBe(0.0625);
   });
 });

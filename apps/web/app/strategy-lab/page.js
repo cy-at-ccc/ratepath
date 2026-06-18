@@ -848,6 +848,7 @@ export default function StrategyLab() {
               <div className="param-explanation">
                 新西兰央行（RBNZ）在未来 12 个月内对 OCR 官方贴现率的预测累计变化幅度。第 1 至 12 个月将平滑递变（如考虑了第 6 个月的过渡变化）。
                 <div className="param-example">👉 例子：若当前 OCR 为 2.25%，设置为 -2.00%，代表第 12 个月时 OCR 将跌至 0.25%；在第 6 个月时则约跌至 1.25%。</div>
+                <div className="param-example">说明：1 年固定、2 年固定等固定期限产品不会在锁定期内逐月跟随此滑杆变化，而是在到期续约（refix）时，按续约当月 OCR 相对当前 OCR 的变化重新定价。</div>
               </div>
             </div>
 
@@ -871,8 +872,8 @@ export default function StrategyLab() {
                 <span>明显回升 (+1.0)</span>
               </div>
               <div className="param-explanation">
-                第 13 至 {simDurationYears * 12} 个月之间，政策利率在宏观周期中的中长期年度走向趋势斜率。1.0 个单位的变动代表利率每年变化 0.50%。
-                <div className="param-example">👉 例子：若设置为 -1.0，代表从第 13 个月起，利率每年以 -0.50% 的速度持续下降；设置为 0.0 则保持平稳。</div>
+                第 13 至第 {Math.min(simDurationYears * 12, 36)} 个月之间，政策利率按该滑杆设定的中期趋势变化。1.0 个单位的变动代表利率每年变化 0.50%；超过第 36 个月后，OCR 路径将保持在第 36 个月的水平，不再继续上升或下降。
+                <div className="param-example">👉 例子：若设置为 -1.0，代表从第 13 个月起到第 36 个月止，利率每年以 -0.50% 的速度下降；第 36 个月之后保持平稳。设置为 0.0 则从第 13 个月起保持平稳。</div>
               </div>
             </div>
 
@@ -1491,6 +1492,9 @@ export default function StrategyLab() {
                     </h3>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px", lineHeight: "1.5" }}>
                       下表以每6个月为间隔，展示每笔贷款分片（Tranche）在该6个月窗口内的利率、续约事件、利息支出、本金偿还和剩余本金。利率为窗口末点的即时利率；利息与本金为该窗口内的累计值。
+                      <div style={{ marginTop: "6px" }}>
+                        其中固定利率分片在锁定期内保持原利率不变，只有到期续约时才会反映 OCR 情景变化；例如 `1 Year Fixed` 会按续约当月 OCR 相对当前 OCR 的变化重新定价，因此当短期滑杆设为 `+1.00%` 且第 12 个月 OCR 比当前高 `1.00%` 时，续约利率会在当前利率基础上相应上调 `1.00%`。
+                      </div>
                     </div>
 
                     <table className="detail-timeline-table">

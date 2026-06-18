@@ -169,6 +169,53 @@ describe("Mortgage Timeline Simulation", () => {
     expect(refixEvent.newRate).toBe(0.04);
   });
 
+  it("should keep a fixed-1y tranche rate unchanged before refix, then switch at month 12", () => {
+    /** @type {any} */
+    const fixedMortgage = {
+      id: "m-fixed-window",
+      repaymentFrequency: "monthly",
+      tranches: [
+        {
+          id: "tranche-1",
+          productCode: "fixed-1y",
+          balance: 100000,
+          annualRate: 0.0465,
+          fixedUntil: "2027-06-16",
+          remainingTermMonths: 300,
+          repaymentType: "principal-and-interest"
+        }
+      ],
+      extraRepayments: []
+    };
+
+    /** @type {any} */
+    const fixedScenario = {
+      id: "scen-fixed-window",
+      productRatePaths: {
+        "fixed-1y": [
+          { month: 0, rate: 0.0465 },
+          { month: 6, rate: 0.048 },
+          { month: 12, rate: 0.0491 }
+        ]
+      }
+    };
+
+    const result = simulateMortgageTimeline({
+      mortgage: fixedMortgage,
+      scenario: fixedScenario,
+      startDate: "2026-06-16",
+      forecastMonths: 13,
+      refixRule: { type: "same-term" },
+      products: [{ code: "fixed-1y", fixedMonths: 12 }]
+    });
+
+    expect(result.timeline[0].tranches[0].rate).toBe(0.0465);
+    expect(result.timeline[5].tranches[0].rate).toBe(0.0465);
+    expect(result.timeline[11].tranches[0].rate).toBe(0.0465);
+    expect(result.timeline[12].tranches[0].rate).toBe(0.0491);
+    expect(result.refixEvents[0].newRate).toBe(0.0491);
+  });
+
   it("should apply general extra repayments correctly and pay off early", () => {
     /** @type {any} */
     const extraRepayments = [
