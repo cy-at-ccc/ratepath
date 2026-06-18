@@ -13,8 +13,9 @@ export default function PrivacyPolicy() {
         <Link href="/about" className="back-link">← 返回关于</Link>
         <h1 className="title gradient-text-primary">RatePath 隐私声明</h1>
         <p className="meta-row">
-          <span><strong>生效日期：</strong>2026-06-17</span>
-          <span><strong>版本：</strong>{buildId}</span>
+          <span><strong>生效日期：</strong>2026-06-19</span>
+          <span><strong>应用版本：</strong>0.2.0（Beta）</span>
+          <span><strong>构建版本：</strong>{buildId}</span>
         </p>
       </header>
 

@@ -123,8 +123,38 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
   const pros = Array.isArray(strategy.pros) ? strategy.pros : [];
   const cons = Array.isArray(strategy.cons) ? strategy.cons : [];
   const badgeLabel = recommendation?.badgeLabel || (recommendation?.type === "preference" ? "偏好匹配推荐" : "策略详情");
-  const subtitle = recommendation?.subtitle || recommendation?.type || "完整明细";
+  // Use friendly Chinese label from caller (page passes a label map) before
+  // falling back to the rec type. Avoid leaking internal keys like
+  // "lowestEndingBalance" to the user.
+  const friendlyRecLabel = recommendation?.label
+    || (recommendation?.type && recommendation.type !== "row" ? null : null);
   const description = recommendation?.description || "查看该策略在所有 Pareto 维度的完整指标、优劣势与时间线。";
+
+  // Allocation list — page enriches strategy.allocations with displayName,
+  // percentage, amount, isFloating and fixedMonths. Fall back to [] when
+  // the caller forgot to enrich (defensive).
+  const allocations = Array.isArray(strategy.allocations) ? strategy.allocations : [];
+  const totalAllocationAmount = allocations.reduce((sum, a) => sum + (a.amount || 0), 0);
+  const floatingTotal = allocations
+    .filter((a) => a.isFloating)
+    .reduce((sum, a) => sum + (a.percentage || 0), 0);
+  const fixedTotal = 1 - floatingTotal;
+
+  // Compose intro / portfolio description: for a 1-allocation strategy this
+  // reads as "<name> 100% 锁定方案"; for multi-allocation it reads as
+  // "X% 浮动 + Y% 固定拆分".
+  const portfolioIntro = (() => {
+    if (allocations.length === 0) return null;
+    if (allocations.length === 1) {
+      const a = allocations[0];
+      const fixed = a.fixedMonths ? `${a.fixedMonths} 个月固定` : (a.isFloating ? "浮动" : "锁定");
+      return `100% ${fixed}单一方案（${a.displayName}）`;
+    }
+    const parts = [];
+    if (floatingTotal > 0.001) parts.push(`${(floatingTotal * 100).toFixed(0)}% 浮动`);
+    if (fixedTotal > 0.001) parts.push(`${(fixedTotal * 100).toFixed(0)}% 固定`);
+    return `组合方案：${parts.join(" + ")}，共 ${allocations.length} 个分片`;
+  })();
 
   const detailTranches = detailTimelineData?.tranches || [];
   const detailSnapshots = detailTimelineData?.snapshotMonths || [];
@@ -160,8 +190,13 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             <div className="sdm-badge-row">
               <span className="badge badge-indigo">{badgeLabel}</span>
               <span className="sdm-split-count">{splitCountLabel}</span>
+              {friendlyRecLabel && (
+                <span className="sdm-rec-friend-label">{friendlyRecLabel}</span>
+              )}
             </div>
-            <div className="sdm-subtitle">{subtitle}</div>
+            {portfolioIntro && (
+              <div className="sdm-portfolio-intro">{portfolioIntro}</div>
+            )}
           </div>
           <button
             ref={closeBtnRef}
@@ -173,7 +208,83 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             ×
           </button>
         </div>
-        <h2 id="sdm-title" className="sdm-strategy-title">{renderSplitInline(strategy)}</h2>
+
+        {/* PORTFOLIO COMPOSITION — primary title + ratio bar + per-tranche chips */}
+        <div className="sdm-composition">
+          {allocations.length > 0 ? (
+            <h2 id="sdm-title" className="sdm-composition-title">
+              {allocations.map((a, i) => (
+                <span key={i} className="sdm-composition-item">
+                  {i > 0 && <span className="sdm-composition-plus"> + </span>}
+                  <span className="sdm-composition-name">{a.displayName}</span>
+                  <span className="sdm-composition-meta">
+                    : ${(a.amount || 0).toLocaleString()}
+                    <span className="sdm-composition-pct"> ({((a.percentage || 0) * 100).toFixed(0)}%)</span>
+                  </span>
+                </span>
+              ))}
+            </h2>
+          ) : (
+            <h2 id="sdm-title" className="sdm-strategy-title">
+              {strategy.strategyId || "(unknown strategy)"}
+            </h2>
+          )}
+
+          {allocations.length > 1 && (
+            <div
+              className="sdm-ratio-bar"
+              role="img"
+              aria-label={`投资组合比例：${allocations
+                .map((a) => `${a.displayName} ${((a.percentage || 0) * 100).toFixed(0)}%`)
+                .join("，")}`}
+            >
+              {allocations.map((a, i) => {
+                const segClass = a.isFloating
+                  ? "sdm-segment-floating"
+                  : a.fixedMonths
+                    ? `sdm-segment-fixed-${a.fixedMonths}`
+                    : "sdm-segment-fixed";
+                return (
+                  <div
+                    key={i}
+                    className={`sdm-ratio-segment ${segClass}`}
+                    style={{ width: `${(a.percentage || 0) * 100}%` }}
+                    title={`${a.displayName}: ${((a.percentage || 0) * 100).toFixed(1)}%`}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {allocations.length > 0 && (
+            <div className="sdm-portfolio-chips">
+              {allocations.map((a, i) => {
+                const chipClass = a.isFloating
+                  ? "sdm-chip-floating"
+                  : a.fixedMonths
+                    ? `sdm-chip-fixed-${a.fixedMonths}`
+                    : "sdm-chip-fixed";
+                return (
+                  <div key={i} className={`sdm-portfolio-chip ${chipClass}`}>
+                    <span className="sdm-chip-dot" aria-hidden="true" />
+                    <span className="sdm-chip-name">{a.displayName}</span>
+                    <span className="sdm-chip-amount">${(a.amount || 0).toLocaleString()}</span>
+                    <span className="sdm-chip-pct">{((a.percentage || 0) * 100).toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+              {allocations.length > 1 && (
+                <div className="sdm-portfolio-chip sdm-chip-total">
+                  <span className="sdm-chip-dot" aria-hidden="true" />
+                  <span className="sdm-chip-name">合计</span>
+                  <span className="sdm-chip-amount">${totalAllocationAmount.toLocaleString()}</span>
+                  <span className="sdm-chip-pct">100%</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <p id="sdm-desc" className="sdm-desc">{description}</p>
 
         {/* METRICS GRID — 4 columns on desktop, 2 on tablet, 1 on phone */}
@@ -392,6 +503,161 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           margin: 6px 0 8px;
           color: var(--text-primary);
         }
+
+        /* —— Portfolio composition block —— */
+        .sdm-rec-friend-label {
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          padding: 3px 9px;
+          border-radius: 10px;
+          background: rgba(99, 102, 241, 0.22);
+          color: #c7d2fe;
+          border: 1px solid rgba(99, 102, 241, 0.45);
+        }
+
+        .sdm-portfolio-intro {
+          font-size: 12px;
+          color: var(--text-muted);
+          margin-top: 4px;
+          line-height: 1.5;
+        }
+
+        .sdm-composition {
+          margin: 12px 0 8px;
+          padding: 14px 16px;
+          border-radius: 12px;
+          background: linear-gradient(180deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02));
+          border: 1px solid rgba(99,102,241,0.18);
+        }
+
+        .sdm-composition-title {
+          font-size: 15px;
+          font-weight: 700;
+          line-height: 1.55;
+          margin: 0 0 10px;
+          color: var(--text-primary);
+          word-break: break-word;
+        }
+
+        .sdm-composition-item {
+          display: inline;
+        }
+
+        .sdm-composition-name {
+          color: #fff;
+          font-weight: 700;
+        }
+
+        .sdm-composition-meta {
+          color: var(--text-secondary);
+          font-weight: 500;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .sdm-composition-pct {
+          color: var(--color-primary);
+          font-weight: 700;
+        }
+
+        .sdm-composition-plus {
+          color: var(--text-muted);
+          font-weight: 600;
+          margin: 0 2px;
+        }
+
+        .sdm-ratio-bar {
+          display: flex;
+          width: 100%;
+          height: 8px;
+          border-radius: 999px;
+          overflow: hidden;
+          background: rgba(255,255,255,0.04);
+          margin: 8px 0 12px;
+          border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .sdm-ratio-segment {
+          height: 100%;
+          transition: filter 0.15s ease;
+        }
+
+        .sdm-ratio-segment:hover {
+          filter: brightness(1.25);
+        }
+
+        .sdm-segment-floating { background: linear-gradient(90deg, #06b6d4, #22d3ee); }
+        .sdm-segment-fixed { background: linear-gradient(90deg, #6366f1, #818cf8); }
+        .sdm-segment-fixed-6 { background: linear-gradient(90deg, #6366f1, #818cf8); }
+        .sdm-segment-fixed-12 { background: linear-gradient(90deg, #4f46e5, #6366f1); }
+        .sdm-segment-fixed-18 { background: linear-gradient(90deg, #4338ca, #6366f1); }
+        .sdm-segment-fixed-24 { background: linear-gradient(90deg, #3730a3, #4f46e5); }
+        .sdm-segment-fixed-36 { background: linear-gradient(90deg, #312e81, #4338ca); }
+        .sdm-segment-fixed-60 { background: linear-gradient(90deg, #1e1b4b, #312e81); }
+
+        .sdm-portfolio-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .sdm-portfolio-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px 10px;
+          border-radius: 8px;
+          font-size: 11.5px;
+          font-weight: 600;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.04);
+          color: var(--text-primary);
+          line-height: 1.2;
+        }
+
+        .sdm-portfolio-chip .sdm-chip-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          flex-shrink: 0;
+        }
+
+        .sdm-portfolio-chip .sdm-chip-amount,
+        .sdm-portfolio-chip .sdm-chip-pct {
+          font-variant-numeric: tabular-nums;
+        }
+
+        .sdm-portfolio-chip .sdm-chip-pct {
+          padding-left: 4px;
+          border-left: 1px solid rgba(255,255,255,0.12);
+          font-weight: 700;
+        }
+
+        .sdm-chip-floating .sdm-chip-dot { background: #22d3ee; }
+        .sdm-chip-floating .sdm-chip-pct { color: #22d3ee; }
+        .sdm-chip-fixed .sdm-chip-dot { background: #818cf8; }
+        .sdm-chip-fixed .sdm-chip-pct { color: #a5b4fc; }
+        .sdm-chip-fixed-6 .sdm-chip-dot { background: #818cf8; }
+        .sdm-chip-fixed-12 .sdm-chip-dot { background: #6366f1; }
+        .sdm-chip-fixed-18 .sdm-chip-dot { background: #6366f1; }
+        .sdm-chip-fixed-24 .sdm-chip-dot { background: #4f46e5; }
+        .sdm-chip-fixed-36 .sdm-chip-dot { background: #4338ca; }
+        .sdm-chip-fixed-60 .sdm-chip-dot { background: #3730a3; }
+        .sdm-chip-fixed-6 .sdm-chip-pct { color: #c7d2fe; }
+        .sdm-chip-fixed-12 .sdm-chip-pct { color: #c7d2fe; }
+        .sdm-chip-fixed-18 .sdm-chip-pct { color: #a5b4fc; }
+        .sdm-chip-fixed-24 .sdm-chip-pct { color: #a5b4fc; }
+        .sdm-chip-fixed-36 .sdm-chip-pct { color: #a5b4fc; }
+        .sdm-chip-fixed-60 .sdm-chip-pct { color: #c7d2fe; }
+
+        .sdm-chip-total {
+          background: rgba(99,102,241,0.16);
+          border-color: rgba(99,102,241,0.45);
+          color: #fff;
+        }
+        .sdm-chip-total .sdm-chip-dot { background: #c7d2fe; }
+        .sdm-chip-total .sdm-chip-pct { color: #fff; }
+
         .sdm-desc {
           font-size: 12.5px;
           color: var(--text-muted);
@@ -542,14 +808,9 @@ function MetricTile(/** @type {any} */ props) {
  * Render the strategy split inline. Looks up the strategy via the page's
  * optimiser map; if not available, falls back to a summary label.
  */
-function renderSplitInline(/** @type {any} */ strategy) {
-  const s = strategy;
-  // The page's ranked strategies don't include allocation detail by default;
-  // the user can see the full split via the strategy-split renderer in the
-  // page. The modal just shows the strategyId and a generic summary.
-  if (s.strategyId) return s.strategyId;
-  return "(unknown strategy)";
-}
+// (removed — the page now enriches `strategy.allocations` with displayName +
+// percentage + amount, and the modal renders the composition block directly
+// from that data. Keeping this stub would leak the bare strategyId again.)
 
 /**
  * Compact inline timeline view for the modal. Renders a small table of
@@ -759,6 +1020,14 @@ function InlineTimelineV2(/** @type {any} */ props) {
   return (
     <div style={{ overflowX: "auto", maxHeight: "420px" }}>
       <table className="sdm-timeline-table-v2">
+        <colgroup>
+          <col style={{ width: "180px" }} />
+          <col style={{ width: "140px" }} />
+          {snapshotMonths.map((/** @type {number} */ m) => (
+            <col key={`col-${m}`} style={{ width: "112px" }} />
+          ))}
+          <col style={{ width: "148px" }} />
+        </colgroup>
         <thead>
           <tr>
             <th className="sdm-v2-head-sticky-1">贷款分片</th>
@@ -777,10 +1046,10 @@ function InlineTimelineV2(/** @type {any} */ props) {
             const finalBalance = snaps[snaps.length - 1]?.balance || tranche.initialBalance;
 
             const rows = [
-              { key: "rate", label: "加权平均利率", valueFor: (snap) => ratePct(snap.rate), finalValue: "—" },
-              { key: "payment", label: "总还款", valueFor: (snap) => money(snap.totalPayment), finalValue: money(totalPayment), className: "sdm-tone-indigo" },
-              { key: "interest", label: "总利息", valueFor: (snap) => money(snap.interestPaid), finalValue: money(totalInterest), className: "sdm-tone-indigo" },
-              { key: "balance", label: "总本金余额", valueFor: (snap) => money(snap.balance), finalValue: money(finalBalance), className: "sdm-tone-emerald" }
+              { key: "rate", label: "预测利率", valueFor: (snap) => ratePct(snap.rate), finalValue: "—" },
+              { key: "payment", label: "预测还款额", valueFor: (snap) => money(snap.totalPayment), finalValue: money(totalPayment), className: "sdm-tone-indigo" },
+              { key: "interest", label: "预测支付利息", valueFor: (snap) => money(snap.interestPaid), finalValue: money(totalInterest), className: "sdm-tone-indigo" },
+              { key: "balance", label: "预测本金余额", valueFor: (snap) => money(snap.balance), finalValue: money(finalBalance), className: "sdm-tone-emerald" }
             ];
 
             return rows.map((row, rowIndex) => (
@@ -803,10 +1072,10 @@ function InlineTimelineV2(/** @type {any} */ props) {
           })}
 
           {[
-            { key: "rate", label: "加权平均利率", valueFor: (col) => ratePct(col.weightedRate), finalValue: ratePct(finalTotalRate) },
-            { key: "payment", label: "总还款", valueFor: (col) => money(col.totalPayment), finalValue: money(sumBy(totalColumns, (col) => col.totalPayment)), className: "sdm-tone-indigo" },
-            { key: "interest", label: "总利息", valueFor: (col) => money(col.totalInterest), finalValue: money(sumBy(totalColumns, (col) => col.totalInterest)), className: "sdm-tone-indigo" },
-            { key: "balance", label: "总本金余额", valueFor: (col) => money(col.totalBalance), finalValue: money(totalColumns[totalColumns.length - 1]?.totalBalance || 0), className: "sdm-tone-emerald" }
+            { key: "rate", label: "预测利率", valueFor: (col) => ratePct(col.weightedRate), finalValue: ratePct(finalTotalRate) },
+            { key: "payment", label: "预测还款额", valueFor: (col) => money(col.totalPayment), finalValue: money(sumBy(totalColumns, (col) => col.totalPayment)), className: "sdm-tone-indigo" },
+            { key: "interest", label: "预测支付利息", valueFor: (col) => money(col.totalInterest), finalValue: money(sumBy(totalColumns, (col) => col.totalInterest)), className: "sdm-tone-indigo" },
+            { key: "balance", label: "预测本金余额", valueFor: (col) => money(col.totalBalance), finalValue: money(totalColumns[totalColumns.length - 1]?.totalBalance || 0), className: "sdm-tone-emerald" }
           ].map((row, rowIndex, rows) => (
             <tr key={`total-${row.key}`} className={`sdm-v2-total-row ${row.className || ""}`}>
               {rowIndex === 0 && (
@@ -825,7 +1094,8 @@ function InlineTimelineV2(/** @type {any} */ props) {
       </table>
       <style jsx>{`
         .sdm-timeline-table-v2 {
-          width: 100%;
+          width: max-content;
+          min-width: 100%;
           border-collapse: separate;
           border-spacing: 0;
           font-size: 12px;
@@ -838,6 +1108,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
           border-bottom: 1px solid rgba(255, 255, 255, 0.06);
           text-align: right;
           white-space: nowrap;
+          overflow: hidden;
         }
         .sdm-timeline-table-v2 :global(thead th) {
           position: sticky;

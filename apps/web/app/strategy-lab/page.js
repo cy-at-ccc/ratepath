@@ -79,6 +79,22 @@ function Slider(/** @type {any} */ props) {
   );
 }
 
+// Friendly Chinese label for each recommendation key. Used by the strategy
+// detail modal so users see a meaningful subtitle (e.g. "本金压缩最快")
+// instead of the internal key (e.g. "lowestEndingBalance").
+const RECOMMENDATION_LABEL_MAP = {
+  preference: "偏好匹配推荐",
+  lowestCost: "最低期望成本",
+  mostStable: "最稳供款数",
+  lowestWorstCaseCost: "最坏利息最优",
+  lowestWorstCasePayment: "峰值供款最优",
+  lowestRefixConcentration: "到期分散最优",
+  lowestBudgetBreaches: "预算最稳",
+  lowestVolatility: "还款波动最小",
+  lowestEndingBalance: "本金压缩最快",
+  mostFloating: "浮动头寸最高"
+};
+
 export default function StrategyLab() {
   const [mortgage, setMortgage] = useState(/** @type {any} */(null));
   const [loading, setLoading] = useState(true);
@@ -191,7 +207,8 @@ export default function StrategyLab() {
     risk: false,
     longTerm: false,
     horizon: false,
-    constraints: false
+    constraints: false,
+    preferences: false
   });
   const [showOnlyBestPerMix, setShowOnlyBestPerMix] = useState(true);
   const [showOnlyPareto, setShowOnlyPareto] = useState(false);
@@ -241,12 +258,12 @@ export default function StrategyLab() {
 
   const defaultSimDurationYears = useMemo(() => Math.min(5, simMaxYears), [simMaxYears]);
 
-  const toggleControlGroup = (/** @type {"trend"|"risk"|"longTerm"|"horizon"|"constraints"} */ groupKey) => {
+  const toggleControlGroup = (/** @type {"trend"|"risk"|"longTerm"|"horizon"|"constraints"|"preferences"} */ groupKey) => {
     setOpenControlGroups((prev) => {
       if (prev[groupKey]) {
         return { ...prev, [groupKey]: false };
       }
-      const next = { trend: false, risk: false, longTerm: false, horizon: false, constraints: false };
+      const next = { trend: false, risk: false, longTerm: false, horizon: false, constraints: false, preferences: false };
       next[groupKey] = true;
       return next;
     });
@@ -455,11 +472,6 @@ export default function StrategyLab() {
   const [detailResultsByStrategy, setDetailResultsByStrategy] = useState(/** @type {Record<string, any[] | undefined>} */ ({}));
   const [detailLoadingStrategyId, setDetailLoadingStrategyId] = useState(/** @type {string|null} */(null));
   const [optimisedData, setOptimisedData] = useState(/** @type {any} */(null));
-  const [selectedStrategy, setSelectedStrategy] = useState(/** @type {any} */(null));
-  // Note: the previous `selectedStrategy` state (which fed the savings-comparison
-  // card + "已设为当前" badges + the modal's "设为当前对比策略" CTA) has been
-  // removed in v4 of the V6 redesign. Detail-timeline data is now fetched
-  // lazily whenever any strategy's modal is opened.
   const [selectedRecType, setSelectedRecType] = useState(/** @type {string|null} */("preference"));
   // Controls whether the selected strategy's 60-month detail timeline table is
   // expanded. Default false — the table is heavy (one row per tranche per
@@ -494,9 +506,8 @@ export default function StrategyLab() {
     setDetailModalOpen(true);
     // Lazy-fetch the per-tranche detail timeline so the modal's inline
     // timeline panel can render. Safe to call repeatedly — the inner
-    // useEffect on selectedStrategy already populates the cache for the
-    // selected strategy; this path extends coverage to any benchmark tile /
-    // Pareto row the user opens.
+    // cache (detailResultsByStrategy) deduplicates concurrent fetches so
+    // repeated opens from benchmark tiles / Pareto rows share the same data.
     loadDetailForStrategy(strategyId);
   };
   const [allStrategies, setAllStrategies] = useState(/** @type {any[]} */([]));
@@ -1172,7 +1183,8 @@ export default function StrategyLab() {
   /**
    * Render the "查看详情 →" footer CTA placed at the bottom-right of every
    * benchmark / preference tile. Click stops propagation so the card body's
-   * existing setSelectedStrategy handler does NOT also fire.
+   * own setSelectedRecType handler (which highlights the tile) does NOT also
+   * fire — the modal opens instead.
    * @param {string|null} strategyId
    * @param {string} recKey - which recommendation this tile represents
    * @param {"benchmark"|"preference"} origin
@@ -1392,32 +1404,6 @@ export default function StrategyLab() {
         </div>
       </div>
     );
-  };
-
-  const getComparisonData = () => {
-    if (!selectedStrategy || !optimisedData || !simResults) return [];
-    const currentCost = selectedStrategy.expectedInterest;
-
-    return optimisedData.rankedStrategies
-      .filter((/** @type {any} */ s) => {
-        const strat = allStrategies.find((x) => x.id === s.strategyId);
-        return strat && strat.allocations.length === 1;
-      })
-      .map((/** @type {any} */ s) => {
-        const strat = allStrategies.find((x) => x.id === s.strategyId);
-        const allocation = strat.allocations[0];
-        const productCode = allocation.productCode;
-        const prod = nzProfile.products.find((/** @type {any} */ p) => p.code === productCode);
-        const displayName = prod ? prod.displayName : productCode;
-        const diff = s.expectedInterest - currentCost;
-        return {
-          displayName,
-          productCode,
-          expectedInterest: s.expectedInterest,
-          diff: Math.round(diff * 100) / 100
-        };
-      })
-      .sort((/** @type {any} */ a, /** @type {any} */ b) => b.diff - a.diff);
   };
 
   const buildDetailTimelineData = (/** @type {string|null} */ strategyIdArg) => {
@@ -2136,6 +2122,98 @@ export default function StrategyLab() {
               )}
             </div>
 
+            <div className="control-group">
+              <div
+                className="control-group-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleControlGroup("preferences")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleControlGroup("preferences");
+                  }
+                }}
+              >
+                <span className="control-group-title-wrap">
+                  <span className="step-num">6</span>
+                  <span>
+                    <span className="control-group-title">个人还款偏好</span>
+                    <span className="control-group-subtitle">只影响“偏好匹配推荐”，不改变利率路径和其它推荐卡</span>
+                  </span>
+                </span>
+                <span className="control-group-actions">
+                  {isWeightsModified && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleResetWeights();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleResetWeights();
+                        }
+                      }}
+                      className="weights-reset-btn"
+                    >
+                      重置默认
+                    </span>
+                  )}
+                  <span className="control-group-toggle">{openControlGroups.preferences ? "收起 ▴" : "展开 ▾"}</span>
+                </span>
+              </div>
+              {openControlGroups.preferences && (
+                <div className="control-group-body">
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <div className="slider-label-row">
+                      <span className="form-label">当前权重摘要</span>
+                      <span className="slider-value">总和 100%</span>
+                    </div>
+                    <div className="param-explanation">
+                      这组参数只参与“偏好匹配推荐”的综合打分。提高某一项时，其它项会按比例自动缩放。
+                    </div>
+                    <div className="preference-summary-row preference-summary-panel">
+                      {preferenceSummaryItems.map((item) => (
+                        <span key={item.key} className="preference-summary-chip">
+                          {item.label.split(" (")[0]} {weights[item.key]}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <div className="slider-label-row">
+                      <span className="form-label">详细调参</span>
+                      <span className="slider-value">弹窗编辑</span>
+                    </div>
+                    <div className="param-explanation">
+                      打开后可调整全部 7 项偏好权重，结果卡会实时重排，但不会改变上面的利率模拟参数。
+                    </div>
+                  </div>
+                  <div className="preference-inline-actions preference-actions-consistent">
+                    <button
+                      type="button"
+                      className="weights-reset-btn preference-action-btn"
+                      onClick={() => setPreferenceModalOpen(true)}
+                    >
+                      调整偏好
+                    </button>
+                    {isWeightsModified && (
+                      <button
+                        type="button"
+                        className="weights-reset-btn preference-action-btn"
+                        onClick={handleResetWeights}
+                      >
+                        恢复默认权重
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             {/*
                 <span className="control-group-title-wrap">
                   <span>
@@ -2503,40 +2581,6 @@ export default function StrategyLab() {
                       </div>
                     </div>
 
-                    <div className="preference-inline-tools">
-                      <div className="preference-inline-copy">这张卡会随着偏好权重实时重排。</div>
-                      <div className="preference-summary-row">
-                        {preferenceSummaryItems.map((item) => (
-                          <span key={item.key} className="preference-summary-chip">
-                            {item.label.split(" (")[0]} {weights[item.key]}%
-                          </span>
-                        ))}
-                      </div>
-                      <div className="preference-inline-actions">
-                        {isWeightsModified && (
-                          <button
-                            type="button"
-                            className="btn btn-secondary preference-inline-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleResetWeights();
-                            }}
-                          >
-                            重置默认
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="btn btn-secondary preference-inline-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreferenceModalOpen(true);
-                          }}
-                        >
-                          调整偏好
-                        </button>
-                      </div>
-                    </div>
                     {renderTileFooter(recPreference.strategyId, "preference", "preference")}
                   </div>
                 )}
@@ -3062,22 +3106,19 @@ export default function StrategyLab() {
                           );
                         }
                         return slicedList.map((/** @type {any} */ s, /** @type {number} */ idx) => {
-                          const isSelected = selectedStrategy?.strategyId === s.strategyId;
                           const principalRepaid = getTotalBalance() - s.expectedEndingBalance;
                           return (
                             <tr
                               key={s.strategyId}
-                              className={`table-row ${isSelected ? "selected-row" : ""}`}
-                              role="button"
-                              tabIndex={0}
-                              aria-label={`选中拆分方案 ${s.strategyId}`}
-                              onClick={() => { setSelectedStrategy(s); setSelectedRecType(null); }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  setSelectedStrategy(s);
-                                  setSelectedRecType(null);
-                                }
+                              className="table-row"
+                              onClick={(e) => {
+                                // Avoid hijacking clicks on the inline "查看"
+                                // button (it stops propagation). Row clicks
+                                // just open the modal — there is no
+                                // selected-strategy concept anymore.
+                                const target = /** @type {any} */ (e.target);
+                            if (target && typeof target.closest === "function" && target.closest("button")) return;
+                                openStrategyDetailModal(e, s.strategyId, "row", "row");
                               }}
                               style={{ cursor: "pointer" }}
                             >
@@ -3210,26 +3251,37 @@ export default function StrategyLab() {
             const rec = detailModalRecKey && detailModalRecKey !== "row" && optimisedData?.recommendations?.[detailModalRecKey];
             const ranked = optimisedData?.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === id);
             if (!ranked) return null;
-            return rec ? { ...ranked, ...rec } : ranked;
+            // Enrich with allocation details (displayName / percentage / amount /
+            // isFloating / fixedMonths) so the modal can render a portfolio
+            // composition title + ratio bar + per-tranche chips instead of a
+            // bare strategyId.
+            const fullStrat = allStrategies.find((/** @type {any} */ s) => s.id === id);
+            const enrichedAllocations = Array.isArray(fullStrat?.allocations)
+              ? fullStrat.allocations.map((/** @type {any} */ a) => {
+                  const prod = nzProfile.products.find((/** @type {any} */ p) => p.code === a.productCode);
+                  const displayName = prod ? prod.displayName : a.productCode;
+                  const isFloating = a.productCode === "floating";
+                  const fixedMonths = prod?.fixedMonths ?? null;
+                  return {
+                    productCode: a.productCode,
+                    displayName,
+                    amount: a.amount,
+                    percentage: a.percentage,
+                    isFloating,
+                    fixedMonths
+                  };
+                })
+              : [];
+            const merged = rec ? { ...ranked, ...rec } : ranked;
+            return { ...merged, allocations: enrichedAllocations };
           })()}
           recommendation={detailModalRecKey && detailModalRecKey !== "row"
-            ? { type: detailModalRecKey }
+            ? { type: detailModalRecKey, label: RECOMMENDATION_LABEL_MAP[detailModalRecKey] || null }
             : null}
           showInlineTimeline={true}
           detailTimelineData={buildDetailTimelineData(detailModalStrategyId)}
           detailScenarioLabel={getActiveDetailScenarioOption()?.label || null}
           isDetailLoading={detailLoadingStrategyId === detailModalStrategyId && !detailResultsByStrategy[detailModalStrategyId]}
-          onSelectAsActive={() => {
-            const id = detailModalStrategyId;
-            if (!id) return;
-            const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === id);
-            if (fullDetails) {
-              setSelectedStrategy(fullDetails);
-              setSelectedRecType(detailModalRecKey === "row" ? null : detailModalRecKey);
-            }
-            setDetailModalOpen(false);
-          }}
-          isCurrentlySelected={selectedStrategy?.strategyId === detailModalStrategyId}
           formatMoney={(/** @type {number} */ n) => `$${Math.round(n).toLocaleString()}`}
         />
 
@@ -3834,27 +3886,18 @@ export default function StrategyLab() {
           margin-left: 2px;
         }
 
-        .preference-inline-tools {
-          margin-top: 14px;
-          padding: 12px;
-          border-radius: 14px;
-          background: rgba(99, 102, 241, 0.08);
-          border: 1px solid rgba(99, 102, 241, 0.16);
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .preference-inline-copy {
-          font-size: 11px;
-          line-height: 1.5;
-          color: var(--text-secondary);
-        }
-
         .preference-summary-row {
           display: flex;
           flex-wrap: wrap;
           gap: 8px;
+        }
+
+        .preference-summary-panel {
+          margin-top: 12px;
+          padding: 10px 12px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--border-glass);
+          border-radius: 10px;
         }
 
         .preference-summary-chip {
@@ -3877,10 +3920,13 @@ export default function StrategyLab() {
           flex-wrap: wrap;
         }
 
-        .preference-inline-btn {
+        .preference-actions-consistent {
+          justify-content: flex-start;
+          padding-top: 2px;
+        }
+
+        .preference-action-btn {
           min-height: 34px;
-          font-size: 12px;
-          padding: 6px 12px;
         }
 
         .exhausted-row-cta {

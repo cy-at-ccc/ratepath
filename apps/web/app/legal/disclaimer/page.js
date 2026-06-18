@@ -9,9 +9,23 @@ export default function Disclaimer() {
         <Link href="/about" className="back-link">← 返回关于</Link>
         <h1 className="page-title gradient-text-primary">RatePath 金融模型免责声明与使用条款</h1>
         <p className="meta-row">
-          <span><strong>生效日期：</strong>2026-06-17</span>
+          <span><strong>生效日期：</strong>2026-06-19</span>
+          <span><strong>应用版本：</strong>0.2.0（Beta）</span>
         </p>
       </header>
+
+      <section className="glass-panel legal-section highlight-warning">
+        <h2 className="section-title">0. 仿真性质与无质量保证（请先阅读）</h2>
+        <p>RatePath 是一款<strong>完全本地运行</strong>的房贷策略<strong>数学模拟工具</strong>，按"现状"（AS IS）提供。在法律允许的最大范围内：</p>
+        <ul>
+          <li><strong>所有输出均为模拟结果</strong>，包括但不限于：利率路径、OCR 预测、期望利息、月供曲线、剩余本金、风险指标、Pareto 排序与"推荐方案"。它们由参数化模型与蒙特卡洛随机抽样生成，<strong>不构成</strong>对未来事实、市场利率、银行报价、贷款资格或投资收益的预测、保证或陈述。</li>
+          <li><strong>零质量保证（No Warranty）</strong>：本应用对其输出的<strong>准确性、可靠性、完整性、时效性、适销性、特定用途适用性</strong>不作任何明示或暗示的保证。所有结果按"原样"提供，可能包含错误、遗漏或与现实显著偏离的内容。</li>
+          <li><strong>不进行质量控制</strong>：本应用不对任何输出执行金融机构级别的<strong>校验、复核、审计或质量控制流程</strong>。您不应假设任何输出已通过独立验证。</li>
+          <li><strong>Beta 版本</strong>：当前 v0.2.0 仍处于 Beta 阶段，模型、参数与界面均在持续迭代，输出可能随版本变化而显著变化。</li>
+          <li><strong>不构成专业建议</strong>：本应用不提供金融、借贷、税务、法律或投资建议。所有"推荐"仅为数学排序结果，<strong>不构成</strong>任何明示或暗示的咨询意见。</li>
+        </ul>
+        <p>继续使用 RatePath 即表示您已理解并接受上述条款。</p>
+      </section>
 
       <section className="glass-panel legal-section">
         <h2 className="section-title">1. 工具性质</h2>
@@ -27,9 +41,42 @@ export default function Disclaimer() {
       </section>
 
       <section className="glass-panel legal-section">
+        <h2 className="section-title">1A. 蒙特卡洛模拟的概率性质</h2>
+        <p>RatePath 在 36 个月以后的长期路径预测中使用<strong>蒙特卡洛随机抽样</strong>：</p>
+        <ul>
+          <li>每次运行会从用户定义的不确定性带中抽取一组样本路径，<strong>每次运行的输出可能不同</strong>；</li>
+          <li>蒙特卡洛输出<strong>仅描述概率分布</strong>（如分位数、置信区间），不代表任何"最可能"或"应当发生"的未来路径；</li>
+          <li>样本数量、随机种子与抽样的具体分布均由 RatePath 模型内置决定，<strong>不构成</strong>对真实经济过程的统计建模或预测。</li>
+        </ul>
+      </section>
+
+      <section className="glass-panel legal-section">
+        <h2 className="section-title">1B. 情景概率权重由用户控制</h2>
+        <p>低 / 基准 / 高三条 OCR 路径以及它们的概率权重（默认 15% / 70% / 15%）<strong>由您设定或调整</strong>，不来自任何市场数据源、央行或第三方机构：</p>
+        <ul>
+          <li>RatePath 不获取、不存储、不验证您设置的权重数值；</li>
+          <li>改变权重<strong>不</strong>意味着市场预期发生改变，它只是改变您查看综合期望指标时的混合方式；</li>
+          <li>汇总后的"期望"指标是数学加权结果，<strong>不是</strong>对现实发生概率的统计估计。</li>
+        </ul>
+      </section>
+
+      <section className="glass-panel legal-section">
         <h2 className="section-title">2. 不保证未来利率或结果</h2>
         <p>OCR、Swap Rate、银行资金成本、银行利差和房贷报价可能随时变化。历史数据、官方预测、市场预期和统计关系均不能保证未来表现。</p>
-        <p>所有金额、期限、节省额、还清日期、风险分数和概率仅为模型估计。实际结果可能与模型结果存在重大差异。</p>
+        <p>所有金额、期限、节省额、还清日期、风险分数和概率仅为模型估计，<strong>无任何准确性或合理性的保证</strong>。实际结果可能与模型结果存在重大差异，包括但不限于：利率升高、贷款被拒、合同条款与模型假设不符、银行政策变化等。</p>
+      </section>
+
+      <section className="glass-panel legal-section">
+        <h2 className="section-title">2A. 模型局限</h2>
+        <p>RatePath 的模型存在以下已知局限，<strong>任何忽略这些局限而依赖输出的决策均被视为用户自行承担风险</strong>：</p>
+        <ul>
+          <li>OCR 传导系数（Betas）是基于<strong>历史观测</strong>的统计估计，<strong>不保证</strong>未来银行实际报价会以相同幅度跟随 OCR；</li>
+          <li>36 个月后路径默认使用蒙特卡洛抽样 + 平滑趋势，<strong>不代表</strong>任何具体的宏观经济情景；</li>
+          <li>固定产品利率在 refix 月使用<strong>当月 OCR 水平</strong>重新定价，<strong>不模拟</strong>银行内部的流动性溢价、关系定价或促销活动；</li>
+          <li>还款频次匹配规则在摊销器中按"匹配按揭还款频次"实现，<strong>不</strong>支持每次额外还款的独立频次；</li>
+          <li>目标付款模式（payment-mode）只在显式启用时触发超额还款，<strong>不</strong>等同于 Offset 账户的即时冲抵；</li>
+          <li>模型<strong>不</strong>模拟税务、保险、利率 cap/collar 衍生品、汇率、跨币种贷款或司法冻结等场景。</li>
+        </ul>
       </section>
 
       <section className="glass-panel legal-section">
@@ -78,12 +125,13 @@ export default function Disclaimer() {
 
       <section className="glass-panel legal-section">
         <h2 className="section-title">6. 专业意见</h2>
+        <p><strong>RatePath 不提供、也不替代</strong>金融、借贷、税务、法律或投资领域的专业意见。任何使用本应用输出进行决策的行为，均应被视为：在未取得专业意见的情况下自行做出的判断。</p>
         <p>在签订、变更、续期、拆分、提前终止或再融资任何贷款前，您应：</p>
         <ul>
-          <li>获取贷款机构的正式报价；</li>
-          <li>阅读合同及费用条款；</li>
-          <li>核实提前还款、Offset 和 Break Cost 规则；</li>
-          <li>考虑咨询依法有资格提供相关服务的金融建议提供者、律师、会计师或其他专业人士。</li>
+          <li>获取贷款机构的正式书面报价；</li>
+          <li>阅读合同及费用条款，特别是 Break Cost、Early Repayment Cost 与 Offset 条款；</li>
+          <li>考虑咨询依法有资格提供相关服务的金融建议提供者、律师、会计师或其他专业人士；</li>
+          <li>对模型输出的<strong>每一项数字</strong>独立核实，不应假设任何数字已经过验证。</li>
         </ul>
       </section>
 
@@ -124,9 +172,11 @@ export default function Disclaimer() {
         <h2 className="section-title">11. 责任限制</h2>
         <p>RatePath 是一款<strong>免费、本地运行</strong>的模拟工具，它不向您收取任何费用，也不保存您的任何个人数据。基于此事实：</p>
         <ul>
-          <li>在法律允许的最大范围内，对于因使用、无法使用或依赖 RatePath、其模型或您自行输入的市场数据而产生的间接、附带、特殊或后果性损失（包括但不限于利润、机会、融资成本、决策偏差或预期节省损失），我们不承担责任。</li>
-          <li>由于 RatePath 不会持有您的本地数据，因设备故障、浏览器数据被清除、卸载 App 等原因导致的数据丢失，由您自行承担。</li>
-          <li>在法律允许限制责任的情况下，我们对与 RatePath 有关的全部索赔承担的累计责任上限不超过 NZ$100，或者您在导致索赔事件前 12 个月内实际向我们支付的费用（以较高者为准；鉴于 RatePath 目前免费，原则上为 NZ$100）。</li>
+          <li><strong>无质量保证</strong>：在法律允许的最大范围内，本应用<strong>不作任何</strong>关于其输出准确性、可靠性、完整性、可用性或特定用途适用性的保证。</li>
+          <li><strong>无间接损失责任</strong>：对于因使用、无法使用或依赖 RatePath、其模型或您自行输入的市场数据而产生的<strong>间接、附带、特殊、惩罚性或后果性损失</strong>（包括但不限于利润损失、机会损失、融资成本上升、决策偏差、预期节省落空、信用受损、合同损失），我们<strong>不承担责任</strong>。</li>
+          <li><strong>无直接损失责任（在法律允许范围内）</strong>：对于可归因于本应用模拟错误或界面缺陷的<strong>直接损失</strong>，在法律允许限制责任的情况下，我们承担的累计责任上限不超过 NZ$100，或者您在导致索赔事件前 12 个月内实际向我们支付的费用（以较高者为准；鉴于 RatePath 目前免费，原则上为 NZ$100）。</li>
+          <li><strong>本地数据丢失由用户承担</strong>：由于 RatePath 不会持有您的本地数据，因设备故障、浏览器数据被清除、卸载 App、操作系统重装、浏览器更新不兼容等原因导致的数据丢失、IndexedDB 损坏或迁移失败，<strong>由您自行承担</strong>。</li>
+          <li><strong>您应自行备份</strong>：RatePath 不提供云备份服务。建议您定期通过浏览器开发者工具导出 IndexedDB 内容。</li>
         </ul>
         <p>本限制<strong>不适用于</strong>法律禁止排除或限制的责任，包括新西兰《Consumer Guarantees Act 1993》和《Fair Trading Act 1986》赋予的、不可通过合同排除的法定权利。如本条款与不可排除的法律权利冲突，应以该法律权利为准。</p>
       </section>
@@ -207,6 +257,21 @@ export default function Disclaimer() {
 
         .legal-section {
           padding: 22px 24px;
+        }
+
+        .legal-section.highlight-warning {
+          border-color: rgba(244, 63, 94, 0.45);
+          box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.15) inset, 0 8px 24px rgba(244, 63, 94, 0.08);
+          background: linear-gradient(180deg, rgba(244, 63, 94, 0.05), rgba(244, 63, 94, 0.01));
+        }
+
+        .legal-section.highlight-warning .section-title {
+          color: #fecdd3;
+        }
+
+        .legal-section.highlight-warning .section-title::before {
+          background: linear-gradient(180deg, #f43f5e, #be123c);
+          box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
         }
 
         .section-title {
