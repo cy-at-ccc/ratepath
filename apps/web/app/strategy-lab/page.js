@@ -6,11 +6,12 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
-import { dbGetAll, dbGet, dbPut } from "../../features/storage.js";
+import { dbGetAll, dbGet, dbPut, dbDelete } from "../../features/storage.js";
 import { nzProfile, nzBetas } from "@mortgage/country-adapters";
 import { generateScenarios } from "@mortgage/scenario-engine";
 import { generateSplitStrategies } from "@mortgage/strategy-generator";
 import { optimizeStrategies } from "@mortgage/optimiser";
+import { simulateStrategyScenario } from "@mortgage/simulation-engine";
 import SvgChart from "../../components/SvgChart.js";
 
 /**
@@ -74,7 +75,7 @@ export default function StrategyLab() {
   const [mediumTermDirection, setMediumTermDirection] = useState(0.0); // -1 to +1
   const [changeSpeed, setChangeSpeed] = useState(0.5); // 0 to 1
   const [uncertainty, setUncertainty] = useState(0.01); // 0 to 2%
-  const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 10, base: 80, high: 10 });
+  const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 15, base: 70, high: 15 });
   const [longTermCycleYears, setLongTermCycleYears] = useState(2);
   const [longTermReversalBias, setLongTermReversalBias] = useState(0.7);
   const [simDurationYears, setSimDurationYears] = useState(5); // default 5 years (60 months)
@@ -107,6 +108,13 @@ export default function StrategyLab() {
   // UI in Section 2 lets the user coarsen to 10% or refine to 1%.
   const [percentageStep, setPercentageStep] = useState(0.10);
 
+  // Diversification preset ("default" | "diversification" | "max"). When set
+  // to a non-default value, the preset overwrites maxSplits, percentageStep,
+  // maxFloatingPercentage, weights and auto-expands the exhausted-report
+  // accordion so the user immediately sees the richer Pareto set. See plan
+  // section "Deliverable 3" for rationale.
+  const [diversificationPreset, setDiversificationPreset] = useState("default");
+
   // Preference Weights (User Customisable)
   // Default mix: cost-aware, principal-led, modest refix/flex headroom,
   // low resilience/budget weight. Tweak here is the single source of truth
@@ -129,6 +137,10 @@ export default function StrategyLab() {
     preferences: false
   });
   const [showOnlyBestPerMix, setShowOnlyBestPerMix] = useState(true);
+  // Filter the exhausted-report table by number of allocations per strategy.
+  // `null` means "all split counts"; otherwise the value is the exact count
+  // to keep (1, 2, 3, ...). Stacks on top of `showOnlyBestPerMix`.
+  const [splitCountFilter, setSplitCountFilter] = useState(/** @type {number|null} */(null));
 
   const handleWeightChange = (/** @type {string} */ key, /** @type {number} */ newValue) => {
     newValue = Math.max(0, Math.min(100, newValue));
@@ -237,13 +249,13 @@ export default function StrategyLab() {
   };
 
   const isRiskModified = uncertainty !== 0.01 ||
-    scenarioProbabilities.low !== 10 ||
-    scenarioProbabilities.base !== 80 ||
-    scenarioProbabilities.high !== 10;
+    scenarioProbabilities.low !== 15 ||
+    scenarioProbabilities.base !== 70 ||
+    scenarioProbabilities.high !== 15;
 
   const handleResetRisk = () => {
     setUncertainty(0.01);
-    setScenarioProbabilities({ low: 10, base: 80, high: 10 });
+    setScenarioProbabilities({ low: 15, base: 70, high: 15 });
   };
 
   const isLongTermModified = longTermCycleYears !== 2 ||
@@ -272,7 +284,76 @@ export default function StrategyLab() {
     setPercentageStep(0.10);
     setMaxFloatingPercentage(10);
     setMaxAffordablePayment(defaultMaxAffordablePayment);
+    setDiversificationPreset("default");
   };
+
+  /**
+   * Apply a diversification preset. The preset overwrites the four exposed
+   * constraint sliders AND the weights so the user sees the richer candidate
+   * set surfaced by the new constraints. For non-default presets we also
+   * auto-expand the exhausted-report accordion so the user immediately
+   * sees the broader Pareto set without an extra click.
+   *
+   * Preset profiles (kept in sync with the table in the plan):
+   *   - "default"          -> 3 splits, 10% step, 10% floating, weights-as-default
+   *   - "diversification"  -> 4 splits,  5% step, 30% floating, refix-heavy weights
+   *   - "max"              -> 5 splits,  5% step, 50% floating, refix+flex-heavy
+   *
+   * @param {"default"|"diversification"|"max"} preset
+   */
+  const handleDiversificationPresetChange = (/** @type {"default"|"diversification"|"max"} */ preset) => {
+    setDiversificationPreset(preset);
+    if (preset === "default") {
+      setMaxSplits(3);
+      setPercentageStep(0.10);
+      setMaxFloatingPercentage(10);
+      setWeights({ ...DEFAULT_WEIGHTS });
+    } else if (preset === "diversification") {
+      setMaxSplits(4);
+      setPercentageStep(0.05);
+      setMaxFloatingPercentage(30);
+      setWeights({ cost: 25, principal: 25, refix: 25, flex: 15, resilience: 5, budget: 5 });
+      setShowExhaustedReport(true);
+    } else {
+      setMaxSplits(5);
+      setPercentageStep(0.05);
+      setMaxFloatingPercentage(50);
+      setWeights({ cost: 15, principal: 15, refix: 35, flex: 25, resilience: 5, budget: 5 });
+      setShowExhaustedReport(true);
+    }
+  };
+
+  // Preset profiles used both by `handleDiversificationPresetChange` and the
+  // drift-detection effect below. Kept as a module-scope constant so the
+  // effect can re-derive the active profile without re-running on every
+  // render. Note: weights are NOT part of the profile here — the user has
+  // separate granular weight sliders and "重置默认" buttons, and we don't want
+  // a manual weight tweak to clobber the preset label.
+  const PRESET_PROFILES = {
+    default: { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 10 },
+    diversification: { maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 30 },
+    max: { maxSplits: 5, percentageStep: 0.05, maxFloatingPercentage: 50 }
+  };
+
+  // Drift detection: when the user manually tweaks a constraint slider, the
+  // active preset label becomes a lie. Revert to "default" (the "custom"
+  // state) so the segmented control reflects reality. The useEffect compares
+  // the current constraint values against the active preset's profile; if
+  // any field differs, the preset is cleared. This is safe against the React
+  // batching that fires `handleDiversificationPresetChange` — that function
+  // updates all three sliders in the same render, so by the time this effect
+  // runs the values already match the new preset.
+  useEffect(() => {
+    const active = PRESET_PROFILES[diversificationPreset];
+    if (!active) return;
+    if (
+      maxSplits !== active.maxSplits ||
+      Math.abs(percentageStep - active.percentageStep) > 1e-9 ||
+      maxFloatingPercentage !== active.maxFloatingPercentage
+    ) {
+      setDiversificationPreset("default");
+    }
+  }, [maxSplits, percentageStep, maxFloatingPercentage, diversificationPreset]);
 
   // Generated Scenarios
   const [scenarios, setScenarios] = useState(/** @type {any[]} */([]));
@@ -283,8 +364,12 @@ export default function StrategyLab() {
   // Simulation Status
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [completedSims, setCompletedSims] = useState(0);
   const [totalSims, setTotalSims] = useState(0);
+  const [currentSimulationInfo, setCurrentSimulationInfo] = useState(/** @type {any} */(null));
   const [simResults, setSimResults] = useState(/** @type {any} */(null));
+  const [detailResultsByStrategy, setDetailResultsByStrategy] = useState(/** @type {Record<string, any[] | undefined>} */ ({}));
+  const [detailLoadingStrategyId, setDetailLoadingStrategyId] = useState(/** @type {string|null} */(null));
   const [optimisedData, setOptimisedData] = useState(/** @type {any} */(null));
   const [selectedStrategy, setSelectedStrategy] = useState(/** @type {any} */(null));
   const [selectedRecType, setSelectedRecType] = useState(/** @type {string|null} */("preference"));
@@ -295,7 +380,7 @@ export default function StrategyLab() {
   const [recLowestCost, setRecLowestCost] = useState(/** @type {any} */(null));
   const [recMostStable, setRecMostStable] = useState(/** @type {any} */(null));
 
-  const simulatedMonths = simResults?.[0]?.timeline?.length || (simDurationYears * 12);
+  const simulatedMonths = simDurationYears * 12;
 
   const workerRef = useRef(/** @type {any} */(null));
   // Cache dependency keys (spec 3.6 / 11.3).
@@ -340,6 +425,55 @@ export default function StrategyLab() {
     "fixed-3y": 0.0549,
     "fixed-5y": 0.0589
   });
+
+  const resetSimulationDerivedState = () => {
+    setSimResults(null);
+    setDetailResultsByStrategy({});
+    setDetailLoadingStrategyId(null);
+    setOptimisedData(null);
+    setSelectedStrategy(null);
+    setSelectedRecType("preference");
+    setAllStrategies([]);
+    setShowExhaustedReport(false);
+    setShowAllRows(false);
+    setRecPreference(null);
+    setRecLowestCost(null);
+    setRecMostStable(null);
+    setProgress(0);
+    setCompletedSims(0);
+    setTotalSims(0);
+    setCurrentSimulationInfo(null);
+    setError(null);
+    rankingKeyRef.current = null;
+    optimisedDataRef.current = null;
+  };
+
+  const releaseSimulationArtifacts = async ({ clearParamsRecord = false } = {}) => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+
+    simulationInFlightRef.current = false;
+    simulationKeyRef.current = null;
+    resetSimulationDerivedState();
+    setSimulationRunning(false);
+
+    const deletes = [dbDelete("savedResults", "last_simulation")];
+    if (clearParamsRecord) {
+      deletes.push(dbDelete("savedResults", "last_simulation_params"));
+    }
+
+    try {
+      await Promise.all(deletes);
+    } catch (err) {
+      console.error("Failed to release previous simulation artifacts", err);
+    }
+  };
+
+  const handleClearSimulationOutput = async () => {
+    await releaseSimulationArtifacts();
+  };
 
   // Load Mortgage Setup from IndexedDB & Custom Market Rates from localStorage
   useEffect(() => {
@@ -445,6 +579,23 @@ export default function StrategyLab() {
     return monteCarloScenarios[monteCarloScenarios.length - 1];
   };
 
+  const buildPathTargetStats = (/** @type {Array<{month: number, value?: number, rate?: number}>} */ path) => {
+    if (!path || path.length === 0) return null;
+    const lastMonth = path[path.length - 1].month;
+    const finalYearPoints = path.filter((/** @type {any} */ p) => p.month > Math.max(0, lastMonth - 12));
+    const values = finalYearPoints.map((/** @type {any} */ p) => p.value ?? p.rate).filter((/** @type {any} */ v) => typeof v === "number");
+    const finalValue = path[path.length - 1].value ?? path[path.length - 1].rate;
+    if (values.length === 0 || typeof finalValue !== "number") return null;
+    return {
+      finalRate: finalValue,
+      averageRate: values.reduce((sum, v) => sum + v, 0) / values.length,
+      minRate: Math.min(...values),
+      maxRate: Math.max(...values)
+    };
+  };
+
+  const formatRatePercent = (/** @type {number} */ rate) => `${(rate * 100).toFixed(2)}%`;
+
   // Recalculate Scenario rate paths when sliders change (instant preview, debounced scenarios)
   useEffect(() => {
     const activeScenarios = generateScenarios({
@@ -491,15 +642,61 @@ export default function StrategyLab() {
     const optimisticScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.1);
     const medianScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.5);
     const stressScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.9);
+    const scenarioPathStats = (/** @type {any} */ scenario) => buildPathTargetStats((scenario?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })));
+    const expectedPathStats = buildPathTargetStats(expectedPath);
     const longTermOptions = simDurationYears * 12 > 36
       ? [
-          { id: "expected", label: "概率加权期望路径", type: "expected", color: "#f8fafc", strokeDasharray: "6 6" },
-          { id: "optimistic", label: "长期乐观样本 (P10)", type: "scenario", scenarioId: optimisticScenario?.id, color: "var(--color-emerald)", strokeDasharray: "2 6" },
-          { id: "median", label: "长期中位样本 (P50)", type: "scenario", scenarioId: medianScenario?.id, color: "#fde68a", strokeDasharray: "6 4" },
-          { id: "stress", label: "长期压力样本 (P90)", type: "scenario", scenarioId: stressScenario?.id, color: "var(--color-rose)", strokeDasharray: "10 6" }
+          {
+            id: "expected",
+            label: "概率加权期望路径",
+            type: "expected",
+            color: "#f8fafc",
+            strokeDasharray: "6 6",
+            description: "按低 / 基准 / 高情景权重加权后的平均 OCR 路径，适合作为默认综合推荐依据。",
+            targetStats: expectedPathStats
+          },
+          {
+            id: "optimistic",
+            label: "长期乐观路径",
+            type: "scenario",
+            scenarioId: optimisticScenario?.id,
+            color: "#22d3ee",
+            strokeDasharray: "2 6",
+            description: "长期 OCR 偏低的代表路径，适合查看降息或低利率延续时的 split 表现。",
+            targetStats: scenarioPathStats(optimisticScenario)
+          },
+          {
+            id: "median",
+            label: "长期中性路径",
+            type: "scenario",
+            scenarioId: medianScenario?.id,
+            color: "#fde68a",
+            strokeDasharray: "6 4",
+            description: "长期 OCR 处在样本中间位置的代表路径，适合作为中性长期判断。",
+            targetStats: scenarioPathStats(medianScenario)
+          },
+          {
+            id: "stress",
+            label: "长期压力路径",
+            type: "scenario",
+            scenarioId: stressScenario?.id,
+            color: "var(--color-rose)",
+            strokeDasharray: "10 6",
+            description: "长期 OCR 偏高的代表路径，适合观察高息压力下的供款峰值和剩余本金。",
+            targetStats: scenarioPathStats(stressScenario)
+          }
         ]
       : [
-          { id: "base", label: "基准情景", type: "scenario", scenarioId: "base", color: "var(--color-primary)", strokeDasharray: undefined }
+          {
+            id: "base",
+            label: "基准情景",
+            type: "scenario",
+            scenarioId: "base",
+            color: "var(--color-primary)",
+            strokeDasharray: undefined,
+            description: "36 个月以内使用基准 OCR 情景作为推荐和明细依据。",
+            targetStats: scenarioPathStats(activeScenarios.find((/** @type {any} */ s) => s.id === "base"))
+          }
         ];
 
     setDetailScenarioOptions(longTermOptions);
@@ -537,18 +734,42 @@ export default function StrategyLab() {
 
   }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates]);
 
-  // Recalculate optimization recommendations when preference weights sliders change (instant recalculation)
+  // Recalculate optimization recommendations when preference weights or the
+  // selected OCR basis changes. The default basis is probability-weighted; when
+  // the user selects a specific OCR path, recommendations are ranked on that
+  // path only so the cards and detail table describe the same scenario.
   useEffect(() => {
     if (!simResults) return;
+    const activeOption = detailScenarioOptions.find((/** @type {any} */ opt) => opt.id === selectedDetailScenario)
+      || detailScenarioOptions[0]
+      || { id: "expected", label: "概率加权期望路径", type: "expected" };
+    const selectedScenarioId = activeOption.type === "scenario" ? activeOption.scenarioId : null;
+    const activeSimulationResults = selectedScenarioId
+      ? simResults.filter((/** @type {any} */ r) => r.scenarioId === selectedScenarioId)
+      : simResults;
+    const activeScenarios = selectedScenarioId
+      ? scenarios
+          .filter((/** @type {any} */ s) => s.id === selectedScenarioId)
+          .map((/** @type {any} */ s) => ({ ...s, probability: 1 }))
+      : scenarios;
+
+    if (activeSimulationResults.length === 0 || activeScenarios.length === 0) return;
+
     // rankingKey memo (spec 11.3). Skip the optimiser re-run if neither
     // the simulation results nor the weights have changed since the last
     // successful run. The previous result is reused verbatim.
+    const recommendationMinAllocationCount = maxSplits > 1 ? 2 : 1;
     const newRankingKey = stableStringify({
-      scenarios,
+      selectedDetailScenario,
+      selectedScenarioId,
+      scenarios: activeScenarios,
       weights,
-      simResults: (simResults || []).map((r) => [
+      maxSplits,
+      recommendationMinAllocationCount,
+      simResults: (activeSimulationResults || []).map((r) => [
         r.strategyId,
         r.scenarioId,
+        r.allocationCount,
         r.totalInterest,
         r.maximumPayment,
         r.endingBalance,
@@ -566,11 +787,16 @@ export default function StrategyLab() {
     // mortgages get payment-mode Pareto objectives (worstCaseEndingBalance,
     // payoffTime) rather than term-mode objectives (worstCaseInterest,
     // worstCasePayment). Falls back to "term" when targetMode is not set.
+    // The `diversification` flag tells the optimiser to emit
+    // diversification-flavoured pros/cons when the user opted into a richer
+    // preset. It does not affect ranking or Pareto classification.
     const opt = optimizeStrategies({
-      simulationResults: simResults,
-      scenarios,
+      simulationResults: activeSimulationResults,
+      scenarios: activeScenarios,
       weights,
-      mode: mortgage?.targetMode === "payment" ? "payment" : "term"
+      mode: mortgage?.targetMode === "payment" ? "payment" : "term",
+      recommendationMinAllocationCount,
+      diversification: diversificationPreset !== "default"
     });
     optimisedDataRef.current = opt;
     rankingKeyRef.current = newRankingKey;
@@ -589,10 +815,49 @@ export default function StrategyLab() {
         setSelectedRecType("preference");
       }
     }
-  }, [weights, simResults]);
+  }, [weights, simResults, scenarios, detailScenarioOptions, selectedDetailScenario, mortgage?.targetMode, maxSplits]);
+
+  useEffect(() => {
+    if (!selectedStrategy || !simResults || !mortgage) return;
+    const strategyId = selectedStrategy.strategyId;
+    if (detailResultsByStrategy[strategyId] || detailLoadingStrategyId === strategyId) return;
+
+    const strategy = allStrategies.find((/** @type {any} */ s) => s.id === strategyId);
+    if (!strategy) return;
+
+    let cancelled = false;
+    setDetailLoadingStrategyId(strategyId);
+
+    Promise.resolve().then(() => {
+      const detailResults = scenarios.map((/** @type {any} */ scenario) => simulateStrategyScenario({
+        mortgage,
+        strategy,
+        scenario,
+        products: nzProfile.products,
+        currentProductRates: marketRates,
+        startDate: new Date().toISOString().split("T")[0],
+        forecastMonths: simDurationYears * 12,
+        maxAffordablePayment,
+        includeTimeline: true,
+        includeRefixEvents: true
+      }));
+
+      if (cancelled) return;
+      setDetailResultsByStrategy((prev) => ({ ...prev, [strategyId]: detailResults }));
+      setDetailLoadingStrategyId((prev) => prev === strategyId ? null : prev);
+    }).catch((err) => {
+      console.error("Failed to build strategy detail timeline", err);
+      if (cancelled) return;
+      setDetailLoadingStrategyId((prev) => prev === strategyId ? null : prev);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedStrategy, simResults, mortgage, allStrategies, scenarios, marketRates, simDurationYears, maxAffordablePayment, detailResultsByStrategy, detailLoadingStrategyId]);
 
   // Start Matrix Simulation using Web Worker
-  const handleStartSimulation = () => {
+  const handleStartSimulation = async () => {
     if (!mortgage) return;
     // Synchronous guard: if a simulation is already in flight, return
     // immediately. The ref is checked before the state setter runs, so the
@@ -600,6 +865,8 @@ export default function StrategyLab() {
     if (simulationInFlightRef.current) return;
     simulationInFlightRef.current = true;
 
+    await releaseSimulationArtifacts();
+    simulationInFlightRef.current = true;
     setError(null);
     setShowExhaustedReport(false);
     setShowAllRows(false);
@@ -615,8 +882,12 @@ export default function StrategyLab() {
         minPercentage: nzProfile.rules.minPercentage,
         percentageStep,
         minTrancheAmount: nzProfile.rules.minTrancheAmount,
-        maxFloatingPercentage: maxFloatingPercentage / 100,
-        minFixedPercentage: (100 - maxFloatingPercentage) / 100
+        maxFloatingPercentage: maxFloatingPercentage / 100
+        // `minFixedPercentage` is intentionally not passed: the strategy
+        // generator derives it as `1 - maxFloatingPercentage` internally (see
+        // packages/strategy-generator/src/index.js). Centralising the
+        // derivation removes a duplicated computation that previously lived
+        // here and could drift out of sync.
       },
       refixRule: { type: "same-term" }
     });
@@ -629,6 +900,8 @@ export default function StrategyLab() {
     }
 
     setTotalSims(strategies.length * scenarios.length);
+    setCompletedSims(0);
+    setCurrentSimulationInfo(null);
     setAllStrategies(strategies);
 
     // simulationKey (spec 11.3): hash the inputs that affect the simulation
@@ -659,27 +932,23 @@ export default function StrategyLab() {
 
     setSimulationRunning(true);
     setProgress(0);
+    setCompletedSims(0);
+    setCurrentSimulationInfo(null);
 
     workerRef.current.onmessage = (/** @type {any} */ e) => {
       const msg = e.data;
       if (msg.type === "progress") {
         setProgress(Math.round((msg.completed / msg.total) * 100));
+        setCompletedSims(msg.completed);
+        setTotalSims(msg.total);
+        setCurrentSimulationInfo(msg.current || null);
       } else if (msg.type === "success" || msg.type === "cached") {
         if (msg.key) {
           simulationKeyRef.current = msg.key;
         }
-        (async () => {
-          let results = msg.results;
-          if (msg.savedToDB || msg.type === "cached") {
-            const saved = await dbGet("savedResults", "last_simulation");
-            if (saved && saved.results) {
-              results = saved.results;
-            }
-          }
-          setSimResults(results);
-          simulationInFlightRef.current = false;
-          setSimulationRunning(false);
-        })();
+        setSimResults(msg.results || []);
+        simulationInFlightRef.current = false;
+        setSimulationRunning(false);
         // Save strategies and params to IndexedDB
         dbPut("savedResults", {
           id: "last_simulation_params",
@@ -734,6 +1003,8 @@ export default function StrategyLab() {
     simulationInFlightRef.current = false;
     setSimulationRunning(false);
     setProgress(0);
+    setCompletedSims(0);
+    setCurrentSimulationInfo(null);
   };
 
   const renderStrategySplit = (/** @type {string} */ strategyId) => {
@@ -766,19 +1037,52 @@ export default function StrategyLab() {
     || detailScenarioOptions[0]
     || null;
 
+  const renderSelectedPathExplanation = () => {
+    const activeOption = getActiveDetailScenarioOption();
+    if (!activeOption) return null;
+    const stats = activeOption.targetStats;
+
+    return (
+      <div className="recommendation-path-explain">
+        <div className="path-explain-copy">
+          <span className="path-dot" style={{ background: activeOption.color || "var(--text-secondary)" }} />
+          <span>{activeOption.description || "当前推荐和明细表会使用这条 OCR 路径作为计算依据。"}</span>
+        </div>
+        {stats && (
+          <div className="path-target-grid">
+            <div>
+              <span>最后一年平均 OCR</span>
+              <strong>{formatRatePercent(stats.averageRate)}</strong>
+            </div>
+            <div>
+              <span>最后一年预测区间</span>
+              <strong>{formatRatePercent(stats.minRate)} - {formatRatePercent(stats.maxRate)}</strong>
+            </div>
+            <div>
+              <span>期末 OCR 目标</span>
+              <strong>{formatRatePercent(stats.finalRate)}</strong>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const getDetailResultForStrategy = (/** @type {string} */ strategyId) => {
     if (!simResults) return null;
+    const strategyDetailResults = detailResultsByStrategy[strategyId];
+    if (!strategyDetailResults || strategyDetailResults.length === 0) return null;
     const activeOption = getActiveDetailScenarioOption();
     if (!activeOption) return null;
 
     if (activeOption.type === "scenario") {
-      const scenarioResult = simResults.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === activeOption.scenarioId);
+      const scenarioResult = strategyDetailResults.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === activeOption.scenarioId);
       return scenarioResult ? { ...scenarioResult, detailLabel: activeOption.label, isExpectedAggregate: false } : null;
     }
 
     const strategySummary = optimisedData?.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === strategyId);
     const probabilityMap = new Map(scenarios.map((/** @type {any} */ s) => [s.id, s.probability || 0]));
-    const relevantResults = simResults
+    const relevantResults = strategyDetailResults
       .filter((/** @type {any} */ r) => r.strategyId === strategyId && Array.isArray(r.timeline) && r.timeline.length > 0)
       .map((/** @type {any} */ r) => ({ result: r, probability: probabilityMap.get(r.scenarioId) || 0 }))
       .filter((/** @type {any} */ entry) => entry.probability > 0);
@@ -816,16 +1120,21 @@ export default function StrategyLab() {
   const getStrategyDisplayMetrics = (/** @type {string} */ strategyId) => {
     const strategySummary = optimisedData?.rankedStrategies.find((/** @type {any} */ x) => x.strategyId === strategyId);
     if (!strategySummary) return null;
+    const activeOption = getActiveDetailScenarioOption();
+    const scenarioId = activeOption?.type === "scenario" ? activeOption.scenarioId : null;
+    const scenarioResult = scenarioId
+      ? simResults?.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === scenarioId)
+      : null;
 
-    const baseResult = simResults?.find((/** @type {any} */ r) => r.strategyId === strategyId && r.scenarioId === "base");
-    const endingBalance = baseResult ? baseResult.endingBalance : strategySummary.expectedEndingBalance;
+    const endingBalance = scenarioResult ? scenarioResult.endingBalance : strategySummary.expectedEndingBalance;
 
     return {
-      interest: baseResult ? baseResult.totalInterest : strategySummary.expectedInterest,
-      maxPayment: baseResult ? baseResult.maximumPayment : strategySummary.expectedMaxPayment,
+      interest: scenarioResult ? scenarioResult.totalInterest : strategySummary.expectedInterest,
+      maxPayment: scenarioResult ? scenarioResult.maximumPayment : strategySummary.expectedMaxPayment,
       endingBalance,
       principalRepaid: getTotalBalance() - endingBalance,
-      usesBaseScenario: Boolean(baseResult)
+      label: activeOption?.label || "概率加权期望路径",
+      isScenarioSpecific: Boolean(scenarioResult)
     };
   };
 
@@ -833,7 +1142,7 @@ export default function StrategyLab() {
     const metrics = getStrategyDisplayMetrics(strategyId);
     if (!metrics) return null;
     const freqLabel = getRepaymentFrequencyLabel();
-    const metricLabelPrefix = metrics.usesBaseScenario ? "基准" : "期望";
+    const metricLabelPrefix = metrics.isScenarioSpecific ? metrics.label : "期望";
 
     return (
       <div className="rec-metrics">
@@ -1017,6 +1326,33 @@ export default function StrategyLab() {
     return bestPerMix;
   };
 
+  /**
+   * Return the number of allocations (split count) for a ranked strategy by
+   * looking it up in `allStrategies`. Falls back to 1 when the strategy is
+   * missing (matches the existing inline rendering at the table cell).
+   * @param {any} rankedStrategy
+   * @returns {number}
+   */
+  const getSplitCountForRanked = (/** @type {any} */ rankedStrategy) => {
+    const strat = allStrategies.find(x => x.id === rankedStrategy?.strategyId);
+    return strat?.allocations?.length || 1;
+  };
+
+  /**
+   * Available split-count buckets for the filter pills. Only counts that
+   * actually appear in the *currently visible* strategies are rendered, so
+   * the chips always reflect data the user can switch to.
+   * @returns {number[]}
+   */
+  const getAvailableSplitCounts = () => {
+    if (!optimisedData || !optimisedData.rankedStrategies) return [];
+    const counts = new Set();
+    optimisedData.rankedStrategies.forEach((/** @type {any} */ s) => {
+      counts.add(getSplitCountForRanked(s));
+    });
+    return Array.from(counts).sort((a, b) => a - b);
+  };
+
   const [error, setError] = useState(/** @type {string|null} */(null));
 
   if (loading) {
@@ -1030,8 +1366,21 @@ export default function StrategyLab() {
   return (
     <div className="lab-container">
       <header className="lab-header">
-        <h1 className="title">策略仿真实验室</h1>
-        <p className="subtitle">模拟不同未来利率情景，智能优化您的贷款拆分方案。</p>
+        <div className="header-copy">
+          <h1 className="title">策略仿真实验室</h1>
+          <p className="subtitle">模拟不同未来利率情景，智能优化您的贷款拆分方案。</p>
+        </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            onClick={handleClearSimulationOutput}
+            className="btn btn-secondary top-reset-btn"
+            disabled={simulationRunning || (!simResults && !optimisedData && allStrategies.length === 0)}
+            title="只清空仿真输出、缓存结果和推荐，不重置左侧输入参数"
+          >
+            清空仿真结果
+          </button>
+        </div>
       </header>
       <div className="lab-grid">
         <div className="left-controls-col">
@@ -1232,11 +1581,13 @@ export default function StrategyLab() {
                     ))}
                     <div className="slider-range-desc">
                       <span>总和自动保持 100%</span>
-                      <span>默认 10 / 80 / 10</span>
+                      <span>默认 15 / 70 / 15</span>
                     </div>
                     <div className="param-explanation">
-                      这三项决定“期望总利息”等概率加权指标如何看待低利率、基准和高利率情景。该组只影响 36 个月内的中期权重，不直接改写 36 个月后的蒙特卡洛规则。
-                      <div className="param-example">👉 例子：若将基准情景调到 70%，则其余两个情景会自动分摊剩余 30%。默认设置为低 10% / 基准 80% / 高 10%。</div>
+                      这三项不是利率涨跌幅，也不会直接改变低 / 基准 / 高三条 OCR 曲线的形状。它们是在模型汇总结果时使用的概率权重：系统会先分别模拟每条 OCR 路径，再按这里的比例计算“期望总利息”“期望最高供款”“期望剩余本金”等指标，并影响默认的概率加权推荐。
+                      <div className="param-example">👉 计算例子：某个 split 在低 / 基准 / 高情景下总利息分别为 $140,000 / $160,000 / $190,000，默认权重 15% / 70% / 15% 时，期望总利息 = 140,000 × 15% + 160,000 × 70% + 190,000 × 15% = $161,500。</div>
+                      <div className="param-example">👉 调整例子：若您更担心高息，把高利率权重调高，推荐会更重视高息情景下的供款压力和剩余本金；若您更相信降息，把低利率权重调高，推荐会更偏向低息环境下成本更低的方案。</div>
+                      <div className="param-example">说明：三项总和会自动保持 100%。默认设置为低 15% / 基准 70% / 高 15%。</div>
                     </div>
                   </div>
                 </div>
@@ -1455,6 +1806,34 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
+                      <span className="form-label">分散化预设 (Diversification Preset)</span>
+                      <span className="slider-value">{diversificationPreset === "default" ? "默认" : diversificationPreset === "diversification" ? "分散化" : "最大分散化"}</span>
+                    </div>
+                    <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+                      {[
+                        { value: "default", label: "默认 (3 拆 / 10%)", tip: "保守推荐：3 拆 10% 步长 10% 浮动上限，候选方案 ~58 个" },
+                        { value: "diversification", label: "分散化 (4 拆 / 5%)", tip: "暴露更多 60/20/20 跨期分散方案，候选方案 ~500 个，自动展开穷举报告" },
+                        { value: "max", label: "最大分散化 (5 拆 / 5%)", tip: "允许 50% 浮动和 5 拆，候选方案 ~2000 个，自动展开穷举报告" }
+                      ].map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          title={opt.tip}
+                          className={`segmented-btn ${diversificationPreset === opt.value ? "active" : ""}`}
+                          onClick={() => handleDiversificationPresetChange(opt.value)}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="param-explanation">
+                      一键切换方案搜索范围。"默认"模式保持当前推荐行为；"分散化"和"最大分散化"会放宽浮动上限和步长，自动展开穷举评估报告，并调整评分权重使跨期分散方案能赢得推荐卡片。手动修改下方任一参数会自动退出预设回到自定义状态。
+                      <div className="param-example">👉 例子：想看 60% 固定-2y + 20% 固定-1y + 20% 浮动这种跨期分散方案？切到"分散化"即可。</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
                       <span className="form-label">最大 Split / Tranche 数</span>
                       <span className="slider-value">{maxSplits} 个</span>
                     </div>
@@ -1505,7 +1884,7 @@ export default function StrategyLab() {
                       <span>高灵活性</span>
                     </div>
                     <div className="param-explanation">
-                      限制贷款中浮动利率（Floating/Offset/Revolving）部分的最高额度占比。该参数会同时约束最低固定比例为 {100 - maxFloatingPercentage}%。
+                      限制贷款中浮动利率（Floating/Offset/Revolving）部分的最高额度占比。系统会同时保证最低固定比例为 {100 - maxFloatingPercentage}%（即 1 - 浮动比例），并由策略生成器内部派生该约束。
                       <div className="param-example">👉 例子：若拉到 10%，代表贷款中最多只能有 10% 采用浮动利率，其余 90% 必须锁定在固定期限上。</div>
                     </div>
                   </div>
@@ -1664,9 +2043,59 @@ export default function StrategyLab() {
             <div style={{ marginTop: "16px" }}>
               <SvgChart data={chartScenarioPaths} yAxisType="rate" height={220} />
             </div>
-            <p className="text-muted" style={{ fontSize: "12px", lineHeight: "1.6", marginTop: "12px", marginBottom: 0 }}>
-              前 36 个月仍显示低 / 基准 / 高三条确定性 OCR 情景线；第 37 个月开始，系统会按您设置的长期周期与反转概率生成长期蒙特卡洛样本。白色虚线表示概率加权期望路径，彩色虚线表示从蒙特卡洛样本中抽取的代表性长期乐观 / 中位 / 压力路径；下方细节表可以切换到同名路径逐一对应查看。
-            </p>
+            <div className="chart-explain-box">
+              <div className="chart-explain-title">如何读这张图</div>
+              <div className="chart-explain-copy">
+                这张图会随着左侧 input 实时变化，不需要先运行策略仿真。前 36 个月显示低 / 基准 / 高三条确定性 OCR 情景线，反映您对中期利率走势的主观判断。第 37 个月开始，系统不再只延长单一路径，而是按您设置的长期周期与反转概率生成长期 Monte Carlo 样本，用来表达长期不确定性。
+              </div>
+
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>术语解释</div>
+              <div className="chart-glossary-grid">
+                <div className="chart-glossary-item">
+                  <strong>OCR</strong>
+                  <span>新西兰官方现金利率。它不是房贷利率本身，但会影响浮动利率和固定利率续约定价。</span>
+                </div>
+                <div className="chart-glossary-item">
+                  <strong>概率加权期望路径</strong>
+                  <span>白色虚线。把低 / 基准 / 高情景按您设定的权重逐月加权后的平均路径，用于期望利息和期望余额计算。</span>
+                </div>
+                <div className="chart-glossary-item">
+                  <strong>长期乐观路径</strong>
+                  <span>利率偏低的长期代表路径。专业上接近 P10 概念，也就是样本里偏乐观的一侧。</span>
+                </div>
+                <div className="chart-glossary-item">
+                  <strong>长期中性路径</strong>
+                  <span>利率处在中间位置的长期代表路径。专业上接近 P50，也就是中位样本。</span>
+                </div>
+                <div className="chart-glossary-item">
+                  <strong>长期压力路径</strong>
+                  <span>利率偏高的长期代表路径。专业上接近 P90，用来观察压力测试下的供款和余额。</span>
+                </div>
+                <div className="chart-glossary-item">
+                  <strong>Monte Carlo</strong>
+                  <span>不是再猜一条唯一未来线，而是生成多条可能路径，再从中提取代表样本和统计结果。</span>
+                </div>
+              </div>
+
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>例子</div>
+              <div className="chart-example-list">
+                <div className="chart-example-item">
+                  如果权重是低 50% / 基准 30% / 高 20%，那么白色虚线会更靠近低利率路径，因为它代表的是三条中期情景的加权平均，而不是单独某一条情景。
+                </div>
+                <div className="chart-example-item">
+                  如果 13-36 个月整体向上，且长期反转概率设为 70%，那么第 37 个月后的第一段长期样本更大概率先向下波动，但不会变成死板直线，仍会保留上下扰动。
+                </div>
+                <div className="chart-example-item">
+                  长期乐观 / 中性 / 压力不是固定涨跌幅，也不是用户设置的概率权重，而是从长期样本里挑出来的三类代表路径。
+                </div>
+                <div className="chart-example-item">
+                  如果第 36 个月低利率情景停在较低位置，但长期乐观路径从更高位置开始，看起来会有“跳空”。这是因为它是长期样本中的代表路径，不一定是低利率绿线本身的直接延长。
+                </div>
+                <div className="chart-example-item">
+                  下方细节表与图是一一对应的。切换到“长期中性路径”时，表格里的利息、最高供款和剩余本金都会改成这条路径对应的结果。
+                </div>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -1689,8 +2118,24 @@ export default function StrategyLab() {
                 </div>
                 <div className="progress-text-row">
                   <span>仿真模拟中... {Math.round(progress)}%</span>
-                  <span></span>
+                  <span>已完成 {completedSims.toLocaleString()} / 共 {totalSims.toLocaleString()} 次模拟</span>
                 </div>
+                {currentSimulationInfo && (
+                  <div className="simulation-current-grid">
+                    <div>
+                      <span>当前组合</span>
+                      <strong>{currentSimulationInfo.combination}</strong>
+                    </div>
+                    <div>
+                      <span>Fix 年限构成</span>
+                      <strong>{currentSimulationInfo.fixTerms}</strong>
+                    </div>
+                    <div>
+                      <span>OCR 情景路线</span>
+                      <strong>{currentSimulationInfo.scenarioPath}</strong>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={handleCancelSimulation}
@@ -1719,8 +2164,27 @@ export default function StrategyLab() {
             <section className="recommendations-section accent-amber">
               <h2 className="section-title"><span className="step-num">9</span>三大推荐拆分方案对比</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
-                系统基于您设置的最大 split 数、浮动占比、预算上限、未来情景预测和还款偏好，筛选出当前最优贷款 split。{maxSplits > 1 ? "推荐会优先展示真正拆分为多笔 tranche 的方案。" : "当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击下方推荐卡片可快速将其设为当前对比策略。</strong>
+                系统基于当前选择的 OCR 路径、最大 split 数、浮动占比、预算上限和还款偏好，筛选出当前最优贷款 split。默认使用“概率加权期望路径”；切换到乐观 / 中性 / 压力路径后，推荐卡和下方明细表会统一到同一条路径。{maxSplits > 1 ? "推荐卡默认只从 2 笔及以上的真实拆分方案中选择；100% 单一产品会保留在下方表格和传统对照里，作为 benchmark 参考。" : "当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击下方推荐卡片可快速将其设为当前对比策略。</strong>
               </p>
+
+              {detailScenarioOptions.length > 1 && (
+                <div className="recommendation-basis-panel">
+                  <div className="recommendation-basis-label">推荐依据</div>
+                  <div className="recommendation-basis-chips">
+                    {detailScenarioOptions.map((/** @type {any} */ option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`chip-btn ${selectedDetailScenario === option.id ? "selected-chip" : ""}`}
+                        onClick={() => setSelectedDetailScenario(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {renderSelectedPathExplanation()}
+                </div>
+              )}
 
               <div className="rec-cards-grid">
                 {/* 1. Preference Card */}
@@ -1863,18 +2327,9 @@ export default function StrategyLab() {
             <section className="glass-panel detail-timeline-section" style={{ marginTop: "24px" }}>
               <h2 className="section-title" style={{ marginBottom: "16px" }}>选定策略 {simulatedMonths} 个月细节汇总: {renderStrategySplit(selectedStrategy.strategyId)}</h2>
 
-              {detailScenarioOptions.length > 1 && (
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
-                  {detailScenarioOptions.map((/** @type {any} */ option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`chip-btn ${selectedDetailScenario === option.id ? "selected-chip" : ""}`}
-                      onClick={() => setSelectedDetailScenario(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+              {detailLoadingStrategyId === selectedStrategy.strategyId && !detailResultsByStrategy[selectedStrategy.strategyId] && (
+                <div className="detail-loading-note">
+                  正在按当前选定策略即时生成详细 timeline。为避免内存峰值，系统不会再为所有策略预先保存整包明细。
                 </div>
               )}
 
@@ -1933,6 +2388,7 @@ export default function StrategyLab() {
                 if (!detailData || detailData.tranches.length === 0) return null;
 
                 const { snapshotMonths, tranches } = detailData;
+                const totalAllocated = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.initialBalance, 0) || 1;
 
                 const formatMonthLabel = (/** @type {number} */ m) => {
                   const y = Math.floor(m / 12);
@@ -1946,113 +2402,141 @@ export default function StrategyLab() {
                 const allPaidOff = (/** @type {any} */ t) =>
                   t.snapshots.every((/** @type {any} */ s) => s.balance <= 0);
 
+                const accentPalette = ["primary", "cyan", "emerald", "amber", "rose"];
+                const badgeForAccent = { primary: "indigo", cyan: "cyan", emerald: "emerald", amber: "amber", rose: "rose" };
+
                 return (
-                  <div style={{ marginTop: "24px", overflowX: "auto" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: "700", color: "#fff", marginBottom: "12px" }}>
-                      {simulatedMonths}个月逐笔分片明细时间线
-                    </h3>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px", lineHeight: "1.5" }}>
-                      下表以每6个月为间隔，展示每笔贷款分片（Tranche）在该6个月窗口内的利率、续约事件、利息支出、本金偿还和剩余本金。利率为窗口末点的即时利率；利息与本金为该窗口内的累计值。
-                      <div style={{ marginTop: "6px" }}>
+                  <div className="detail-timeline-stack">
+                    <div className="detail-timeline-intro">
+                      <h3 className="detail-timeline-title">{simulatedMonths}个月逐笔分片明细时间线</h3>
+                      <p className="detail-timeline-desc">
+                        下表以每6个月为间隔，展示每笔贷款分片（Tranche）在该6个月窗口内的利率、续约事件、利息支出、本金偿还和剩余本金。利率为窗口末点的即时利率；利息与本金为该窗口内的累计值。
+                      </p>
+                      <p className="detail-timeline-desc">
                         其中固定利率分片在锁定期内保持原利率不变，只有到期续约时才会反映 OCR 情景变化；例如 `1 Year Fixed` 会按续约当月 OCR 相对当前 OCR 的变化重新定价，因此当短期滑杆设为 `+1.00%` 且第 12 个月 OCR 比当前高 `1.00%` 时，续约利率会在当前利率基础上相应上调 `1.00%`。
-                      </div>
+                      </p>
                     </div>
 
-                    <table className="detail-timeline-table">
-                      <thead>
-                        <tr>
-                          <th className="dtl-loan-header">贷款分片</th>
-                          <th className="dtl-item-header">明细项</th>
-                          {snapshotMonths.map((/** @type {number} */ m) => (
-                            <th key={m} className="dtl-col-header">{formatMonthLabel(m)}</th>
-                          ))}
-                          <th className="dtl-col-header" style={{ color: "#34d399", fontWeight: "700" }}>期末/累积总计</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {tranches.map((/** @type {any} */ tranche) => {
-                          if (allPaidOff(tranche)) return null;
-                          const rows = [
-                            { label: "利率", key: "rate", render: (/** @type {any} */ s) => s.rate > 0 ? `${(s.rate * 100).toFixed(2)}%` : "—" },
-                            { label: "续约事件", key: "events", render: (/** @type {any} */ s) => s.events.length > 0 ? s.events.join("；") : "—" },
-                            { label: "已付利息", key: "interestPaid", render: (/** @type {any} */ s) => formatMoney(s.interestPaid) },
-                            { label: "已还本金", key: "principalRepaid", render: (/** @type {any} */ s) => formatMoney(s.principalRepaid) },
-                            { label: "本金余额", key: "balance", render: (/** @type {any} */ s) => formatMoney(s.balance) }
-                          ];
-                          return rows.map((row, ri) => (
-                            <tr key={`${tranche.trancheId}-${row.key}`} className={ri === 0 ? "dtl-first-row" : ""}>
-                              {ri === 0 && (
-                                <td className="dtl-loan-cell" rowSpan={rows.length}>
-                                  <div style={{ fontWeight: "600", color: "#fff" }}>{tranche.displayName}</div>
-                                  <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>${tranche.initialBalance.toLocaleString()}</div>
-                                </td>
-                              )}
-                              <td className="dtl-item-cell">{row.label}</td>
-                              {tranche.snapshots.map((/** @type {any} */ s) => (
-                                <td key={s.month} className="dtl-val-cell">{row.render(s)}</td>
+                    <section className="dt-card" aria-label="分片明细与合计">
+                      <div className="dt-card-scroll">
+                        <table className="dt-inner-table">
+                          <caption className="sr-only">{simulatedMonths}个月内各分片的利率、续约事件、利息支出、本金偿还、剩余本金，以及所有分片合计</caption>
+                          <thead>
+                            <tr>
+                              <th scope="col" className="dt-row-label-head">明细项</th>
+                              {snapshotMonths.map((/** @type {number} */ m) => (
+                                <th key={m} scope="col" className="dt-col-head">{formatMonthLabel(m)}</th>
                               ))}
-                              {/* Accumulated Cell */}
-                              <td className="dtl-val-cell" style={{ fontWeight: "600", color: "#34d399" }}>
-                                {(() => {
-                                  if (row.key === "rate" || row.key === "events") return "—";
-                                  if (row.key === "interestPaid") {
-                                    const sum = tranche.snapshots.reduce((acc, s) => acc + s.interestPaid, 0);
-                                    return formatMoney(sum);
-                                  }
-                                  if (row.key === "principalRepaid") {
-                                    const sum = tranche.snapshots.reduce((acc, s) => acc + s.principalRepaid, 0);
-                                    return formatMoney(sum);
-                                  }
-                                  if (row.key === "balance") {
-                                    const lastBal = tranche.snapshots[tranche.snapshots.length - 1].balance;
-                                    return formatMoney(lastBal);
-                                  }
-                                  return "—";
-                                })()}
-                              </td>
+                              <th scope="col" className="dt-accum-head">期末/累积总计</th>
                             </tr>
-                          ));
-                        })}
-                      </tbody>
-                      <tfoot>
-                        {(() => {
-                          const totals = snapshotMonths.map((/** @type {number} */ m, /** @type {number} */ mi) => {
-                            const totalInterest = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].interestPaid, 0);
-                            const totalRepayments = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].interestPaid + t.snapshots[mi].principalRepaid, 0);
-                            const totalBalance = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].balance, 0);
-                            const weightedRateSum = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].rate * t.snapshots[mi].balance, 0);
-                            const avgRate = totalBalance > 0 ? weightedRateSum / totalBalance : 0;
-                            return { totalInterest, totalRepayments, totalBalance, avgRate };
-                          });
+                          </thead>
+                          <tbody>
+                            {tranches.flatMap((/** @type {any} */ tranche, /** @type {number} */ tIdx) => {
+                              if (allPaidOff(tranche)) return [];
+                              const pct = Math.max(1, Math.round((tranche.initialBalance / totalAllocated) * 100));
+                              const accent = accentPalette[tIdx % accentPalette.length];
 
-                          // Calculate accumulated totals across all snapshots
-                          const accumInterest = totals.reduce((sum, t) => sum + t.totalInterest, 0);
-                          const accumRepayments = totals.reduce((sum, t) => sum + t.totalRepayments, 0);
-                          const finalBalance = totals[totals.length - 1].totalBalance;
-                          const finalAvgRate = totals[totals.length - 1].avgRate;
+                              const rows = [
+                                { label: "利率", key: "rate", tone: "info", render: (/** @type {any} */ s) => s.rate > 0 ? `${(s.rate * 100).toFixed(2)}%` : "—" },
+                                { label: "续约事件", key: "events", tone: "warn", render: (/** @type {any} */ s) => s.events.length > 0 ? s.events.join("；") : "—" },
+                                { label: "已付利息", key: "interestPaid", tone: "rose", render: (/** @type {any} */ s) => formatMoney(s.interestPaid) },
+                                { label: "已还本金", key: "principalRepaid", tone: "emerald", render: (/** @type {any} */ s) => formatMoney(s.principalRepaid) },
+                                { label: "本金余额", key: "balance", tone: "primary", render: (/** @type {any} */ s) => formatMoney(s.balance) }
+                              ];
 
-                          const footRows = [
-                            { label: "加权平均利率", render: (/** @type {any} */ t) => t.avgRate > 0 ? `${(t.avgRate * 100).toFixed(2)}%` : "—", accumValue: finalAvgRate > 0 ? `${(finalAvgRate * 100).toFixed(2)}%` : "—" },
-                            { label: "总还款", render: (/** @type {any} */ t) => formatMoney(t.totalRepayments), accumValue: formatMoney(accumRepayments) },
-                            { label: "总利息", render: (/** @type {any} */ t) => formatMoney(t.totalInterest), accumValue: formatMoney(accumInterest) },
-                            { label: "总本金余额", render: (/** @type {any} */ t) => formatMoney(t.totalBalance), accumValue: formatMoney(finalBalance) }
-                          ];
+                              const trancheHeader = (
+                                <tr key={`${tranche.trancheId}-th`} className={`dt-tranche-header dt-tranche-header--${accent}`}>
+                                  <td colSpan={snapshotMonths.length + 2}>
+                                    <div className="dt-tranche-header-inner">
+                                      <span className="dt-tranche-bar" aria-hidden="true" />
+                                      <span className="dt-tranche-name">{tranche.displayName}</span>
+                                      <span className="dt-tranche-amount">${tranche.initialBalance.toLocaleString()}</span>
+                                      <span className={`dt-tranche-pct badge badge-${badgeForAccent[accent]}`}>{pct}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
 
-                          return footRows.map((fr, ri) => (
-                            <tr key={`foot-${ri}`} className="dtl-foot-row">
-                              {ri === 0 ? (
-                                <td className="dtl-loan-cell" rowSpan={footRows.length} style={{ fontWeight: "700", color: "#fff" }}>所有分片合计</td>
-                              ) : null}
-                              <td className="dtl-item-cell" style={{ fontWeight: "600" }}>{fr.label}</td>
-                              {totals.map((t, i) => (
-                                <td key={i} className="dtl-val-cell" style={{ fontWeight: "700", color: "var(--color-primary)" }}>{fr.render(t)}</td>
-                              ))}
-                              <td className="dtl-val-cell" style={{ fontWeight: "800", color: "#34d399" }}>{fr.accumValue}</td>
-                            </tr>
-                          ));
-                        })()}
-                      </tfoot>
-                    </table>
+                              const dataRows = rows.map((row) => (
+                                <tr key={`${tranche.trancheId}-${row.key}`} className={`dt-row dt-row--${row.tone}`}>
+                                  <th scope="row" className="dt-row-label">
+                                    <span className="dt-row-icon" aria-hidden="true" />
+                                    {row.label}
+                                  </th>
+                                  {tranche.snapshots.map((/** @type {any} */ s) => (
+                                    <td key={s.month} className="dt-val">{row.render(s)}</td>
+                                  ))}
+                                  <td className="dt-accum">
+                                    {(() => {
+                                      if (row.key === "rate" || row.key === "events") return "—";
+                                      if (row.key === "interestPaid") {
+                                        return formatMoney(tranche.snapshots.reduce((acc, s) => acc + s.interestPaid, 0));
+                                      }
+                                      if (row.key === "principalRepaid") {
+                                        return formatMoney(tranche.snapshots.reduce((acc, s) => acc + s.principalRepaid, 0));
+                                      }
+                                      if (row.key === "balance") {
+                                        return formatMoney(tranche.snapshots[tranche.snapshots.length - 1].balance);
+                                      }
+                                      return "—";
+                                    })()}
+                                  </td>
+                                </tr>
+                              ));
+
+                              return [trancheHeader, ...dataRows];
+                            })}
+
+                            {(() => {
+                              const totals = snapshotMonths.map((/** @type {number} */ m, /** @type {number} */ mi) => {
+                                const totalInterest = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].interestPaid, 0);
+                                const totalRepayments = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].interestPaid + t.snapshots[mi].principalRepaid, 0);
+                                const totalBalance = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].balance, 0);
+                                const weightedRateSum = tranches.reduce((/** @type {number} */ sum, /** @type {any} */ t) => sum + t.snapshots[mi].rate * t.snapshots[mi].balance, 0);
+                                const avgRate = totalBalance > 0 ? weightedRateSum / totalBalance : 0;
+                                return { totalInterest, totalRepayments, totalBalance, avgRate };
+                              });
+
+                              // Calculate accumulated totals across all snapshots
+                              const accumInterest = totals.reduce((sum, t) => sum + t.totalInterest, 0);
+                              const accumRepayments = totals.reduce((sum, t) => sum + t.totalRepayments, 0);
+                              const finalBalance = totals[totals.length - 1].totalBalance;
+                              const finalAvgRate = totals[totals.length - 1].avgRate;
+
+                              const footRows = [
+                                { label: "加权平均利率", render: (/** @type {any} */ t) => t.avgRate > 0 ? `${(t.avgRate * 100).toFixed(2)}%` : "—", accumValue: finalAvgRate > 0 ? `${(finalAvgRate * 100).toFixed(2)}%` : "—" },
+                                { label: "总还款", render: (/** @type {any} */ t) => formatMoney(t.totalRepayments), accumValue: formatMoney(accumRepayments) },
+                                { label: "总利息", render: (/** @type {any} */ t) => formatMoney(t.totalInterest), accumValue: formatMoney(accumInterest) },
+                                { label: "总本金余额", render: (/** @type {any} */ t) => formatMoney(t.totalBalance), accumValue: formatMoney(finalBalance) }
+                              ];
+
+                              const totalsHeader = (
+                                <tr key="totals-th" className="dt-tranche-header dt-tranche-header--totals">
+                                  <td colSpan={snapshotMonths.length + 2}>
+                                    <div className="dt-tranche-header-inner">
+                                      <span className="dt-tranche-bar" aria-hidden="true" />
+                                      <span className="dt-tranche-name">所有分片合计</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+
+                              const totalsDataRows = footRows.map((fr, ri) => (
+                                <tr key={`foot-${ri}`} className="dt-row dt-row--strong">
+                                  <th scope="row" className="dt-row-label dt-row-label--strong">{fr.label}</th>
+                                  {totals.map((t, i) => (
+                                    <td key={i} className="dt-val dt-val--strong">{fr.render(t)}</td>
+                                  ))}
+                                  <td className="dt-accum dt-accum--strong">{fr.accumValue}</td>
+                                </tr>
+                              ));
+
+                              return [totalsHeader, ...totalsDataRows];
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
                   </div>
                 );
               })()}
@@ -2158,7 +2642,7 @@ export default function StrategyLab() {
                 <h2 className="section-title" style={{ marginBottom: "8px" }}>所有可行拆分组合评估报告</h2>
                 <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
                   <strong>综合评分</strong>：系统根据您设定的偏好权重对每个方案进行归一化加权评分，分数越低表示综合表现越优。
-                  <strong>帕累托最优</strong>：在同等利息成本下还款波动最小、或在同等波动下利息最低的方案，标记为 <strong class="text-emerald">首选</strong>。
+                  <strong>帕累托最优</strong>：在同等利息成本下还款波动最小、或在同等波动下利息最低的方案，标记为 <strong className="text-emerald">首选</strong>。
                   <strong>被支配方案</strong>：存在另一个方案在各项指标上都不差于它、且至少有一项严格优于它。
                 </p>
 
@@ -2192,6 +2676,36 @@ export default function StrategyLab() {
                   </div>
                 </div>
 
+                {/* Split-count filter pills — stacks on top of the per-mix toggle. */}
+                {(() => {
+                  const counts = getAvailableSplitCounts();
+                  if (counts.length <= 1) return null;
+                  return (
+                    <div className="count-filter-pills" role="group" aria-label="按拆分笔数过滤">
+                      <span className="count-filter-label">拆分笔数</span>
+                      <button
+                        type="button"
+                        className={`count-pill ${splitCountFilter === null ? "active" : ""}`}
+                        onClick={() => { setSplitCountFilter(null); setShowAllRows(false); }}
+                        aria-pressed={splitCountFilter === null}
+                      >
+                        全部
+                      </button>
+                      {counts.map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`count-pill ${splitCountFilter === n ? "active" : ""}`}
+                          onClick={() => { setSplitCountFilter(n); setShowAllRows(false); }}
+                          aria-pressed={splitCountFilter === n}
+                        >
+                          {n} 拆分
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+
                 <div className="table-responsive">
                   <table className="exhausted-table">
                     <thead>
@@ -2210,8 +2724,20 @@ export default function StrategyLab() {
                     </thead>
                     <tbody>
                       {(() => {
-                        const displayedList = showOnlyBestPerMix ? getBestStrategiesPerMix() : optimisedData.rankedStrategies;
+                        const baseList = showOnlyBestPerMix ? getBestStrategiesPerMix() : optimisedData.rankedStrategies;
+                        const displayedList = splitCountFilter === null
+                          ? baseList
+                          : baseList.filter((/** @type {any} */ s) => getSplitCountForRanked(s) === splitCountFilter);
                         const slicedList = showAllRows ? displayedList : displayedList.slice(0, 10);
+                        if (displayedList.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={10} className="text-muted" style={{ textAlign: "center", padding: "24px 8px", fontSize: "12px" }}>
+                                当前筛选条件下没有匹配的拆分组合,请尝试其它拆分笔数。
+                              </td>
+                            </tr>
+                          );
+                        }
                         return slicedList.map((/** @type {any} */ s, /** @type {number} */ idx) => {
                           const isSelected = selectedStrategy?.strategyId === s.strategyId;
                           const principalRepaid = getTotalBalance() - s.expectedEndingBalance;
@@ -2229,7 +2755,7 @@ export default function StrategyLab() {
                                   <span className="pareto-mini-badge">首选</span>
                                 )}
                               </td>
-                              <td className="font-semibold text-center">{allStrategies.find(x => x.id === s.strategyId)?.allocations?.length || 1}</td>
+                              <td className="font-semibold text-center">{getSplitCountForRanked(s)}</td>
                               <td className="text-emerald">${Math.round(s.expectedInterest).toLocaleString()}</td>
                               <td>${Math.round(s.expectedMaxPayment).toLocaleString()}</td>
                               <td className="text-emerald">${Math.round(principalRepaid).toLocaleString()}</td>
@@ -2252,7 +2778,10 @@ export default function StrategyLab() {
                 </div>
 
                 {(() => {
-                  const displayedList = showOnlyBestPerMix ? getBestStrategiesPerMix() : optimisedData.rankedStrategies;
+                  const baseList = showOnlyBestPerMix ? getBestStrategiesPerMix() : optimisedData.rankedStrategies;
+                  const displayedList = splitCountFilter === null
+                    ? baseList
+                    : baseList.filter((/** @type {any} */ s) => getSplitCountForRanked(s) === splitCountFilter);
                   if (displayedList.length > 10) {
                     return (
                       <div style={{ textAlign: "center", marginTop: "20px" }}>
@@ -2286,6 +2815,25 @@ export default function StrategyLab() {
           gap: 24px;
         }
 
+        .lab-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 16px;
+          flex-wrap: wrap;
+        }
+
+        .header-copy {
+          min-width: 0;
+        }
+
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
+        }
+
         .title {
           font-size: 28px;
           font-weight: 800;
@@ -2296,6 +2844,11 @@ export default function StrategyLab() {
           font-size: 14px;
           color: var(--text-secondary);
           margin-top: 4px;
+        }
+
+        .top-reset-btn {
+          min-height: 38px;
+          white-space: nowrap;
         }
 
         .setup-prompt-box {
@@ -2513,6 +3066,59 @@ export default function StrategyLab() {
           color: #fff;
         }
 
+        .count-filter-pills {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 14px;
+          padding: 10px 12px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--border-glass);
+          border-radius: 10px;
+        }
+
+        .count-filter-label {
+          font-family: var(--font-heading);
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-secondary);
+          letter-spacing: 0.02em;
+          margin-right: 2px;
+        }
+
+        .count-pill {
+          min-height: 28px;
+          padding: 4px 12px;
+          border: 1px solid var(--border-glass);
+          background: rgba(255, 255, 255, 0.03);
+          color: var(--text-secondary);
+          border-radius: 999px;
+          font-family: var(--font-heading);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: var(--transition-smooth);
+          white-space: nowrap;
+        }
+
+        .count-pill:hover {
+          border-color: rgba(255, 255, 255, 0.22);
+          color: var(--text-primary);
+        }
+
+        .count-pill:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.45);
+        }
+
+        .count-pill.active {
+          background: rgba(99, 102, 241, 0.18);
+          border-color: var(--color-primary);
+          color: #fff;
+          box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+        }
+
         .number-input {
           width: 100%;
           margin-top: 8px;
@@ -2564,8 +3170,40 @@ export default function StrategyLab() {
         .progress-text-row {
           display: flex;
           justify-content: space-between;
+          gap: 12px;
           font-size: 12px;
           color: var(--text-secondary);
+        }
+
+        .simulation-current-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 12px;
+        }
+
+        .simulation-current-grid div {
+          min-width: 0;
+          padding: 10px 12px;
+          border-radius: 8px;
+          background: rgba(255,255,255,0.025);
+          border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .simulation-current-grid span {
+          display: block;
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.4;
+          margin-bottom: 4px;
+        }
+
+        .simulation-current-grid strong {
+          display: block;
+          color: #fff;
+          font-size: 12px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
         }
 
         .results-wrapper {
@@ -2973,9 +3611,11 @@ export default function StrategyLab() {
           border: 1px solid rgba(255, 255, 255, 0.08);
           color: var(--text-secondary);
           border-radius: 9999px;
-          padding: 7px 12px;
-          font-size: 12px;
+          padding: 6px 11px;
+          font-size: 11.5px;
           font-weight: 600;
+          white-space: nowrap;
+          flex-shrink: 0;
           cursor: pointer;
           transition: var(--transition-smooth);
         }
@@ -2990,6 +3630,200 @@ export default function StrategyLab() {
           border-color: rgba(96, 165, 250, 0.55);
           color: #fff;
           box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.18) inset;
+        }
+
+        .recommendation-basis-panel {
+          display: grid;
+          grid-template-columns: 1fr;
+          grid-template-rows: auto auto auto;
+          align-items: start;
+          column-gap: 0;
+          row-gap: 8px;
+          padding: 10px 14px 12px;
+          margin-bottom: 16px;
+          border: 1px solid rgba(255,255,255,0.05);
+          border-radius: 10px;
+          background: rgba(255,255,255,0.015);
+        }
+
+        .recommendation-basis-label {
+          color: var(--text-muted);
+          font-size: 9.5px;
+          font-weight: 500;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          white-space: nowrap;
+          font-family: var(--font-heading);
+        }
+
+        .recommendation-basis-chips {
+          display: flex;
+          justify-content: flex-end;
+          gap: 6px;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+
+        .recommendation-basis-chips::-webkit-scrollbar {
+          height: 4px;
+        }
+
+        .recommendation-basis-chips::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.12);
+          border-radius: 2px;
+        }
+
+        .recommendation-path-explain {
+          grid-column: 1 / -1;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-top: 8px;
+          margin-top: 0;
+          border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .path-explain-copy {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          color: var(--text-muted);
+          font-size: 8.5px;
+          line-height: 1.45;
+          letter-spacing: 0.005em;
+        }
+
+        .path-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 999px;
+          margin-top: 6px;
+          flex-shrink: 0;
+          box-shadow: 0 0 8px currentColor;
+        }
+
+        /* Target metric rows: flat list with dotted leader lines between
+           label and value. grid-template-columns: 1fr auto pushes the two
+           to opposite ends; the dotted border-bottom on the label paints
+           a leader across the empty middle space — same trick accounting
+           statements use. Avoids the label/value looking like a single
+           block of continuous text. */
+        .path-target-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          column-gap: 18px;
+          row-gap: 3px;
+        }
+
+        .path-target-grid div {
+          padding: 3px 0;
+          background: transparent;
+          border: none;
+          display: grid;
+          grid-template-columns: 1fr auto;
+          align-items: end;
+          column-gap: 8px;
+          min-width: 0;
+        }
+
+        .path-target-grid span {
+          display: block;
+          color: var(--text-muted);
+          font-size: 8.5px;
+          line-height: 1.4;
+          letter-spacing: 0.01em;
+          margin: 0;
+          min-width: 0;
+          padding-bottom: 1px;
+          border-bottom: 1px dotted rgba(148, 163, 184, 0.18);
+          height: 1em;
+          align-self: end;
+        }
+
+        .path-target-grid strong {
+          color: #f1f5f9;
+          font-size: 9.5px;
+          font-weight: 600;
+          font-family: var(--font-heading);
+          letter-spacing: 0;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+          text-align: right;
+        }
+
+        .detail-loading-note {
+          border: 1px solid rgba(96, 165, 250, 0.28);
+          background: rgba(96, 165, 250, 0.08);
+          color: #dbeafe;
+          border-radius: 10px;
+          padding: 12px 14px;
+          font-size: 12px;
+          line-height: 1.6;
+          margin-bottom: 16px;
+        }
+
+        .chart-explain-box {
+          margin-top: 12px;
+          padding: 14px;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 12px;
+          background: rgba(255,255,255,0.02);
+        }
+
+        .chart-explain-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: #fff;
+          margin-bottom: 6px;
+        }
+
+        .chart-explain-copy {
+          font-size: 12px;
+          line-height: 1.7;
+          color: var(--text-secondary);
+        }
+
+        .chart-glossary-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 8px;
+        }
+
+        .chart-glossary-item {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          background: rgba(255,255,255,0.025);
+          border: 1px solid rgba(255,255,255,0.05);
+          color: var(--text-secondary);
+          font-size: 11px;
+          line-height: 1.6;
+        }
+
+        .chart-glossary-item strong {
+          color: #fff;
+          font-size: 12px;
+        }
+
+        .chart-example-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          margin-top: 8px;
+        }
+
+        .chart-example-item {
+          font-size: 11px;
+          line-height: 1.7;
+          color: var(--text-secondary);
+          padding: 10px 12px;
+          border-left: 2px solid rgba(96, 165, 250, 0.45);
+          background: rgba(96, 165, 250, 0.05);
+          border-radius: 0 10px 10px 0;
         }
 
         /* Detail timeline table */
@@ -3102,9 +3936,304 @@ export default function StrategyLab() {
           background: rgba(22, 35, 59, 0.95) !important;
         }
 
+        /* Per-tranche detail timeline — card-per-tranche layout */
+        .sr-only {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
+        }
+
+        .detail-timeline-stack {
+          margin-top: 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .detail-timeline-intro {
+          padding: 0 4px;
+        }
+
+        .detail-timeline-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: #fff;
+          margin: 0 0 12px;
+          font-family: var(--font-heading);
+        }
+
+        .detail-timeline-desc {
+          font-size: 11px;
+          color: var(--text-muted);
+          line-height: 1.5;
+          margin: 0 0 8px;
+        }
+
+        .detail-timeline-desc:last-child {
+          margin-bottom: 0;
+        }
+
+        .dt-card {
+          background: var(--surface-1);
+          border: 1px solid var(--border-glass);
+          border-radius: var(--radius-md);
+          position: relative;
+          overflow: hidden;
+          transition: var(--transition-smooth);
+        }
+
+        .dt-card:hover {
+          border-color: var(--border-strong);
+        }
+
+        .dt-card-scroll {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          scroll-behavior: smooth;
+        }
+
+        .dt-inner-table {
+          width: 100%;
+          border-collapse: collapse;
+          text-align: center;
+          font-size: 12px;
+          font-family: var(--font-body);
+          min-width: 560px;
+        }
+
+        .dt-inner-table th,
+        .dt-inner-table td {
+          padding: 8px 10px;
+          white-space: nowrap;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .dt-inner-table thead th {
+          position: sticky;
+          top: 0;
+          background: var(--surface-2);
+          z-index: 2;
+          font-family: var(--font-heading);
+          font-size: 11px;
+          color: var(--text-secondary);
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          font-weight: 600;
+          border-bottom: 1px solid var(--border-glass);
+        }
+
+        .dt-row-label-head {
+          text-align: left !important;
+          position: sticky;
+          left: 0;
+          z-index: 3;
+          background: var(--surface-2) !important;
+          width: 120px;
+          min-width: 120px;
+          border-right: 1px solid var(--border-glass);
+        }
+
+        .dt-col-head {
+          color: var(--color-primary);
+          font-weight: 700;
+          font-family: var(--font-heading);
+          font-size: 11px;
+          text-transform: none;
+          letter-spacing: 0;
+        }
+
+        .dt-accum-head {
+          color: var(--color-emerald);
+          font-weight: 700;
+        }
+
+        .dt-row-label {
+          position: sticky;
+          left: 0;
+          z-index: 1;
+          background: var(--surface-1);
+          text-align: left;
+          font-weight: 500;
+          color: var(--text-primary);
+          font-size: 12px;
+          padding-left: 16px;
+          border-right: 1px solid var(--border-glass);
+          width: 120px;
+          min-width: 120px;
+          vertical-align: middle;
+        }
+
+        .dt-row-icon {
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          margin-right: 10px;
+          background: var(--text-muted);
+          vertical-align: middle;
+        }
+
+        .dt-row--info .dt-row-icon    { background: var(--accent-cyan); }
+        .dt-row--warn .dt-row-icon    { background: var(--color-amber); }
+        .dt-row--rose .dt-row-icon    { background: var(--color-rose); }
+        .dt-row--emerald .dt-row-icon { background: var(--color-emerald); }
+        .dt-row--primary .dt-row-icon { background: var(--color-primary); }
+
+        .dt-row-label--strong {
+          font-weight: 700;
+          color: #fff;
+          background: rgba(99, 102, 241, 0.06) !important;
+        }
+
+        .dt-val {
+          color: #fff;
+          font-family: var(--font-num);
+          font-feature-settings: "tnum";
+          font-weight: 500;
+        }
+
+        .dt-val--strong {
+          color: var(--color-primary);
+          font-weight: 700;
+        }
+
+        .dt-accum {
+          font-family: var(--font-num);
+          font-feature-settings: "tnum";
+          color: var(--color-emerald);
+          font-weight: 600;
+          background: rgba(16, 185, 129, 0.05);
+        }
+
+        .dt-accum--strong {
+          color: var(--color-emerald);
+          font-weight: 800;
+          background: rgba(16, 185, 129, 0.1);
+        }
+
+        .dt-row:nth-child(even) .dt-val,
+        .dt-row:nth-child(even) .dt-accum {
+          background: rgba(255, 255, 255, 0.018);
+        }
+
+        .dt-row--strong .dt-row-label,
+        .dt-row--strong .dt-val--strong,
+        .dt-row--strong .dt-accum--strong {
+          background: rgba(99, 102, 241, 0.08);
+        }
+
+        /* Section divider rows — span all columns and introduce a tranche or totals group */
+        .dt-tranche-header td {
+          padding: 0 !important;
+          border-bottom: 1px solid var(--border-glass) !important;
+        }
+
+        .dt-tranche-header-inner {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px 16px;
+          background: rgba(255, 255, 255, 0.018);
+          flex-wrap: wrap;
+          position: relative;
+        }
+
+        .dt-tranche-bar {
+          display: inline-block;
+          width: 3px;
+          height: 18px;
+          border-radius: 2px;
+          background: var(--color-primary);
+          flex-shrink: 0;
+        }
+
+        .dt-tranche-name {
+          font-family: var(--font-heading);
+          font-size: 13px;
+          font-weight: 700;
+          color: #fff;
+        }
+
+        .dt-tranche-amount {
+          font-family: var(--font-num);
+          font-size: 12px;
+          color: var(--text-secondary);
+          font-feature-settings: "tnum";
+        }
+
+        .dt-tranche-pct {
+          font-size: 11px;
+        }
+
+        .dt-tranche-header--primary .dt-tranche-bar { background: var(--color-primary); }
+        .dt-tranche-header--cyan    .dt-tranche-bar { background: var(--accent-cyan); }
+        .dt-tranche-header--emerald .dt-tranche-bar { background: var(--color-emerald); }
+        .dt-tranche-header--amber   .dt-tranche-bar { background: var(--color-amber); }
+        .dt-tranche-header--rose    .dt-tranche-bar { background: var(--color-rose); }
+
+        .dt-tranche-header--primary .dt-tranche-header-inner { background: rgba(99, 102, 241, 0.08); }
+        .dt-tranche-header--cyan    .dt-tranche-header-inner { background: rgba(6, 182, 212, 0.08); }
+        .dt-tranche-header--emerald .dt-tranche-header-inner { background: rgba(16, 185, 129, 0.08); }
+        .dt-tranche-header--amber   .dt-tranche-header-inner { background: rgba(245, 158, 11, 0.08); }
+        .dt-tranche-header--rose    .dt-tranche-header-inner { background: rgba(244, 63, 94, 0.08); }
+
+        .dt-tranche-header--totals .dt-tranche-header-inner {
+          background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(99, 102, 241, 0.04));
+          border-top: 2px solid rgba(99, 102, 241, 0.35);
+        }
+
+        .dt-tranche-header--totals .dt-tranche-bar {
+          background: linear-gradient(180deg, var(--color-primary), var(--accent-purple));
+          width: 4px;
+        }
+
+        @media (max-width: 768px) {
+          .dt-tranche-header-inner {
+            padding: 10px 12px;
+            gap: 8px;
+          }
+          .dt-tranche-name {
+            font-size: 12px;
+          }
+          .dt-tranche-amount {
+            font-size: 11px;
+          }
+          .dt-inner-table {
+            min-width: 480px;
+          }
+          .dt-row-label,
+          .dt-row-label-head {
+            width: 96px;
+            min-width: 96px;
+            padding-left: 12px;
+            font-size: 11px;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .dt-card-scroll {
+            scroll-behavior: auto;
+          }
+        }
+
         @media (max-width: 992px) {
           .lab-grid {
             grid-template-columns: minmax(0, 1fr);
+          }
+          .lab-header {
+            align-items: stretch;
+          }
+          .header-actions {
+            width: 100%;
+          }
+          .top-reset-btn {
+            width: 100%;
           }
           .pro-advice-grid {
             grid-template-columns: 1fr;
@@ -3113,6 +4242,49 @@ export default function StrategyLab() {
         }
 
         @media (max-width: 768px) {
+          .chart-glossary-grid {
+            grid-template-columns: 1fr;
+          }
+          .recommendation-basis-panel {
+            grid-template-columns: 1fr;
+            padding: 10px 12px 12px;
+          }
+          .recommendation-basis-chips {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+            overflow-x: visible;
+          }
+          .recommendation-basis-chips .chip-btn {
+            font-size: 11px;
+            padding: 5px 9px;
+          }
+          .path-target-grid {
+            grid-template-columns: 1fr;
+            row-gap: 2px;
+          }
+          .path-target-grid div {
+            padding: 4px 0;
+          }
+          .path-target-grid span {
+            font-size: 8.5px;
+          }
+          .path-target-grid strong {
+            font-size: 9.5px;
+          }
+          .recommendation-basis-label {
+            font-size: 9.5px;
+          }
+          .path-explain-copy {
+            font-size: 9px;
+            line-height: 1.45;
+          }
+          .progress-text-row {
+            flex-direction: column;
+            gap: 4px;
+          }
+          .simulation-current-grid {
+            grid-template-columns: 1fr;
+          }
           .exhausted-table th:nth-child(1),
           .exhausted-table td:nth-child(1),
           .exhausted-table th:nth-child(5),
@@ -3138,6 +4310,19 @@ export default function StrategyLab() {
           .comparison-grid {
             grid-template-columns: 1fr;
             gap: 10px;
+          }
+          .count-filter-pills {
+            padding: 10px;
+            gap: 6px;
+          }
+          .count-pill {
+            min-height: 36px;
+            padding: 6px 14px;
+            font-size: 12px;
+          }
+          .count-filter-label {
+            width: 100%;
+            margin-bottom: 2px;
           }
         }
       `}</style>
