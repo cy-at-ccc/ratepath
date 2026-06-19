@@ -1,5 +1,7 @@
 import { buildPolicyRatePath, deriveProductRatePaths } from "@mortgage/rate-engine";
 
+export { buildQuantileScenarios, quantileOfSorted } from "./quantile.js";
+
 /** @typedef {import("@mortgage/schemas").RateScenario} RateScenario */
 /** @typedef {import("@mortgage/schemas").MortgageProductDefinition} MortgageProductDefinition */
 

@@ -9,7 +9,7 @@ import { flushSync } from "react-dom";
 import Link from "next/link";
 import { dbGetAll, dbGet, dbPut, dbDelete } from "../../features/storage.js";
 import { nzProfile, nzBetas } from "@mortgage/country-adapters";
-import { generateScenarios } from "@mortgage/scenario-engine";
+import { generateScenarios, buildQuantileScenarios } from "@mortgage/scenario-engine";
 import { generateSplitStrategies } from "@mortgage/strategy-generator";
 import { optimizeStrategies } from "@mortgage/optimiser";
 import { simulateStrategyScenario } from "@mortgage/simulation-engine";
@@ -114,6 +114,7 @@ export default function StrategyLab() {
   const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 15, base: 70, high: 15 });
   const [longTermCycleYears, setLongTermCycleYears] = useState(2);
   const [longTermReversalBias, setLongTermReversalBias] = useState(0.5);
+  const [monteCarloSampleCount, setMonteCarloSampleCount] = useState(200); // 50 to 1000
   const [simDurationYears, setSimDurationYears] = useState(5); // default 5 years (60 months)
 
   // Sim-horizon upper bound:
@@ -339,11 +340,13 @@ export default function StrategyLab() {
   };
 
   const isLongTermModified = longTermCycleYears !== 2 ||
-    longTermReversalBias !== 0.5;
+    longTermReversalBias !== 0.5 ||
+    monteCarloSampleCount !== 200;
 
   const handleResetLongTerm = () => {
     setLongTermCycleYears(2);
     setLongTermReversalBias(0.5);
+    setMonteCarloSampleCount(200);
   };
 
   const isHorizonModified = simDurationYears !== defaultSimDurationYears;
@@ -760,6 +763,7 @@ export default function StrategyLab() {
           if (p.scenarioProbabilities !== undefined) setScenarioProbabilities(p.scenarioProbabilities);
           if (p.longTermCycleYears !== undefined) setLongTermCycleYears(p.longTermCycleYears);
           if (p.longTermReversalBias !== undefined) setLongTermReversalBias(p.longTermReversalBias);
+          if (p.monteCarloSampleCount !== undefined) setMonteCarloSampleCount(p.monteCarloSampleCount);
           if (p.simDurationYears !== undefined) setSimDurationYears(p.simDurationYears);
           if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
           if (p.maxFloatingPercentage !== undefined) setMaxFloatingPercentage(p.maxFloatingPercentage);
@@ -796,23 +800,6 @@ export default function StrategyLab() {
     }));
   };
 
-  const getRepresentativeScenarioByQuantile = (/** @type {any[]} */ activeScenarios, /** @type {number} */ quantile) => {
-    const monteCarloScenarios = activeScenarios
-      .filter((/** @type {any} */ s) => s.assumptions?.isMonteCarloTail)
-      .sort((a, b) => (a.assumptions?.post36AverageRate || 0) - (b.assumptions?.post36AverageRate || 0));
-
-    if (monteCarloScenarios.length === 0) {
-      return activeScenarios.find((/** @type {any} */ s) => s.id === "base") || activeScenarios[0] || null;
-    }
-
-    let cumulative = 0;
-    for (const scenario of monteCarloScenarios) {
-      cumulative += scenario.probability || 0;
-      if (cumulative >= quantile) return scenario;
-    }
-    return monteCarloScenarios[monteCarloScenarios.length - 1];
-  };
-
   const buildPathTargetStats = (/** @type {Array<{month: number, value?: number, rate?: number}>} */ path) => {
     if (!path || path.length === 0) return null;
     const lastMonth = path[path.length - 1].month;
@@ -832,12 +819,17 @@ export default function StrategyLab() {
 
   // Recalculate Scenario rate paths when sliders change (instant preview, debounced scenarios)
   useEffect(() => {
-    const activeScenarios = generateScenarios({
+    const forecastMonths = simDurationYears * 12;
+
+    // Stage 1a: raw MC pool (3N scenarios; N from the user-controlled slider).
+    // The MC pool is ONLY used to derive the P10/P50/P90 quantile paths for
+    // the chart. The simulation engine never receives it.
+    const mcScenarios = generateScenarios({
       initialRate: marketRates.ocr,
       currentProductRates: marketRates,
       betas: nzBetas,
       products: nzProfile.products,
-      forecastMonths: simDurationYears * 12,
+      forecastMonths,
       controls: {
         shortTermChange,
         mediumTermDirection,
@@ -849,43 +841,46 @@ export default function StrategyLab() {
           high: scenarioProbabilities.high / 100
         },
         longTermCycleYears,
-        longTermReversalBias
+        longTermReversalBias,
+        monteCarloSampleCount
       }
     });
 
+    // Stage 1b: aggregate the MC pool into 3 quantile scenarios.
+    const quantileScenarios = buildQuantileScenarios(
+      mcScenarios,
+      [0.1, 0.5, 0.9],
+      { forecastMonths, currentProductRates: marketRates, betas: nzBetas, products: nzProfile.products }
+    );
+
+    // Stage 1c: probability-weighted expected path over the quantile pool.
+    const expectedPath = buildExpectedPolicyPath(quantileScenarios);
+    const expectedScenario = {
+      id: "expected",
+      countryCode: "NZ",
+      name: t("strategyLab.path.expected.label"),
+      mode: "policy-rate-derived",
+      probability: 0.3,
+      forecastMonths,
+      policyRatePath: expectedPath.map((/** @type {any} */ p) => ({ month: p.month, rate: p.value })),
+      productRatePaths: quantileScenarios[1]?.productRatePaths || {},
+      assumptions: {
+        scenarioFamily: "expected",
+        isMonteCarloTail: true,
+        isExpectedAggregate: true,
+        sourceMonteCarloSampleCount: mcScenarios.length
+      }
+    };
+
+    const activeScenarios = [...quantileScenarios, expectedScenario];
     setScenarios(activeScenarios);
 
-    // Each family is a single continuous line: one color throughout, no time-based style split.
-    // The line is smooth 0-36 (deterministic + medium-term AR(1)) and noisier 37+ (long-term MC);
-    // both come from the same scenario's full policyRatePath. The 4 long-term samples (expected /
-    // optimistic / median / stress) are added separately and faded via strokeOpacity:0.55.
-    const scenarioFamilyPaths = ["low", "base", "high"].map((familyId) => {
-      const familyScenario = activeScenarios.find((/** @type {any} */ s) => (s.assumptions?.scenarioFamily || s.id) === familyId);
-      return {
-        id: familyId,
-        name: t(
-          familyId === "low" ? "strategyLab.scenarioFamily.low" : familyId === "base" ? "strategyLab.scenarioFamily.base" : "strategyLab.scenarioFamily.high",
-          { pct: familyId === "low" ? scenarioProbabilities.low : familyId === "base" ? scenarioProbabilities.base : scenarioProbabilities.high }
-        ),
-        color: familyId === "low" ? "var(--color-emerald)" : familyId === "base" ? "var(--color-primary)" : "var(--color-rose)",
-        points: (familyScenario?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })),
-        fillArea: false,
-        strokeDasharray: undefined
-      };
-    });
-
-    const expectedPath = buildExpectedPolicyPath(activeScenarios);
-    const optimisticScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.1);
-    const medianScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.5);
-    const stressScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.9);
-    const scenarioPathStats = (/** @type {any} */ scenario) => buildPathTargetStats((scenario?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })));
+    const pathFromScenario = (/** @type {any} */ s) => (s?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate }));
+    const [p10, p50, p90] = quantileScenarios;
+    const scenarioPathStats = (/** @type {any} */ scenario) => buildPathTargetStats(pathFromScenario(scenario));
     const expectedPathStats = buildPathTargetStats(expectedPath);
-    // Long-term options: only the probability-weighted expected path is
-    // surfaced in the chart legend / tooltip / chip selector. The
-    // optimistic / median / stress Monte Carlo samples are still computed
-    // (via `getRepresentativeScenarioByQuantile` above) so other code can
-    // reference them, but they are intentionally hidden from the UI.
-    const longTermOptions = simDurationYears * 12 > 36
+
+    const longTermOptions = forecastMonths > 36
       ? [
           {
             id: "expected",
@@ -893,48 +888,48 @@ export default function StrategyLab() {
             type: "expected",
             color: "#f8fafc",
             strokeDasharray: "6 6",
-            strokeOpacity: 0.55,
+            strokeOpacity: 0.85,
             description: t("strategyLab.path.expected.desc"),
             targetStats: expectedPathStats
           },
           {
-            id: "optimistic",
-            label: t("strategyLab.path.optimistic.label"),
+            id: "p10",
+            label: t("strategyLab.path.p10.label"),
             type: "scenario",
-            scenarioId: optimisticScenario?.id,
-            color: "var(--chart-optimistic)",
-            strokeDasharray: "2 6",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.optimistic.desc"),
-            targetStats: scenarioPathStats(optimisticScenario)
+            scenarioId: "p10",
+            color: "var(--color-emerald)",
+            strokeDasharray: undefined,
+            strokeOpacity: 1,
+            description: t("strategyLab.path.p10.desc"),
+            targetStats: scenarioPathStats(p10)
           },
           {
-            id: "median",
-            label: t("strategyLab.path.median.label"),
+            id: "p50",
+            label: t("strategyLab.path.p50.label"),
             type: "scenario",
-            scenarioId: medianScenario?.id,
-            color: "var(--chart-median)",
-            strokeDasharray: "6 4",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.median.desc"),
-            targetStats: scenarioPathStats(medianScenario)
+            scenarioId: "p50",
+            color: "var(--color-primary)",
+            strokeDasharray: undefined,
+            strokeOpacity: 1,
+            description: t("strategyLab.path.p50.desc"),
+            targetStats: scenarioPathStats(p50)
           },
           {
-            id: "stress",
-            label: t("strategyLab.path.stress.label"),
+            id: "p90",
+            label: t("strategyLab.path.p90.label"),
             type: "scenario",
-            scenarioId: stressScenario?.id,
+            scenarioId: "p90",
             color: "var(--color-rose)",
-            strokeDasharray: "10 6",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.stress.desc"),
-            targetStats: scenarioPathStats(stressScenario)
+            strokeDasharray: undefined,
+            strokeOpacity: 1,
+            description: t("strategyLab.path.p90.desc"),
+            targetStats: scenarioPathStats(p90)
           }
         ]
       : [
           {
             id: "base",
-            label: "Base scenario",
+            label: t("common.baseScenario"),
             type: "scenario",
             scenarioId: "base",
             color: "var(--color-primary)",
@@ -945,41 +940,54 @@ export default function StrategyLab() {
         ];
 
     setDetailScenarioOptions(longTermOptions);
-    setSelectedDetailScenario((prev) => longTermOptions.some((opt) => opt.id === prev) ? prev : (simDurationYears * 12 > 36 ? "expected" : "base"));
+    setSelectedDetailScenario((prev) => longTermOptions.some((opt) => opt.id === prev) ? prev : (forecastMonths > 36 ? "expected" : "base"));
 
-    const longTermChartPaths = longTermOptions.map((option) => {
-      if (option.type === "expected") {
-        return {
-          id: option.id,
-          name: option.label,
-          color: option.color,
-          points: expectedPath,
-          fillArea: false,
-          strokeDasharray: option.strokeDasharray,
-          strokeOpacity: option.strokeOpacity
-        };
-      }
-
-      const scenario = activeScenarios.find((/** @type {any} */ s) => s.id === option.scenarioId);
-      return {
-        id: option.id,
-        name: option.label,
-        color: option.color,
-        points: (scenario?.policyRatePath || [])
-          .filter((/** @type {any} */ p) => p.month >= Math.min(36, simDurationYears * 12))
-          .map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })),
-        fillArea: false,
-        strokeDasharray: option.strokeDasharray,
-        strokeOpacity: option.strokeOpacity
-      };
-    });
-
+    // Chart data: 3 solid quantile lines + fan band (P10↔P90) + dashed expected.
+    // No family lines — the quantile lines now encode the same low/base/high
+    // information with statistical meaning.
     setChartScenarioPaths([
-      ...scenarioFamilyPaths,
-      ...longTermChartPaths
+      {
+        id: "p90",
+        name: t("strategyLab.path.p90.label"),
+        color: "var(--color-rose)",
+        points: pathFromScenario(p90),
+        strokeOpacity: 1
+      },
+      {
+        id: "p10",
+        name: t("strategyLab.path.p10.label"),
+        color: "var(--color-emerald)",
+        points: pathFromScenario(p10),
+        strokeOpacity: 1
+      },
+      {
+        id: "p50",
+        name: t("strategyLab.path.p50.label"),
+        color: "var(--color-primary)",
+        points: pathFromScenario(p50),
+        strokeOpacity: 1
+      },
+      {
+        id: "fanBand",
+        name: t("strategyLab.path.fanBand.label"),
+        color: "var(--color-primary)",
+        points: pathFromScenario(p90),
+        fillToSeriesId: "p10",
+        fillColor: "rgba(99, 102, 241, 0.18)",
+        fillOpacity: 1,
+        legendHidden: true
+      },
+      {
+        id: "expected",
+        name: t("strategyLab.path.expected.label"),
+        color: "#f8fafc",
+        points: expectedPath,
+        strokeDasharray: "6 6",
+        strokeOpacity: 0.85
+      }
     ]);
 
-  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates, t]);
+  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, monteCarloSampleCount, simDurationYears, marketRates, t]);
 
   // Recalculate optimization recommendations ONLY when the underlying
   // simulation results or the right-side scenario basis changes.
@@ -1239,6 +1247,7 @@ export default function StrategyLab() {
             scenarioProbabilities,
             longTermCycleYears,
             longTermReversalBias,
+            monteCarloSampleCount,
             simDurationYears,
             maxSplits,
             maxFloatingPercentage,
@@ -1882,7 +1891,7 @@ export default function StrategyLab() {
     if (breaches === 0) suitableFor.push(t("strategyLab.intro.suitable.budgetConstrained"));
     if ((strategy.expectedEndingBalance || 0) <= boundsFor("expectedEndingBalance").min) suitableFor.push(t("strategyLab.intro.suitable.fastPayoff"));
     if ((strategy.worstCasePayment || 0) <= boundsFor("worstCasePayment").min) suitableFor.push(t("strategyLab.intro.suitable.stablePayment"));
-    if (suitableFor.length === 0) suitableFor.push("Balanced mix");
+    if (suitableFor.length === 0) suitableFor.push(t("strategyDetail.balancedMix"));
 
     // comparison: find 2 nearest strategies by score distance and show
     // interest / stability deltas so the user sees what they gain/lose.
@@ -2148,20 +2157,20 @@ export default function StrategyLab() {
                           step={1}
                           value={scenarioProbabilities[item.key]}
                           onChange={(e) => handleScenarioProbabilityChange(/** @type {"low"|"base"|"high"} */ (item.key), parseInt(e.target.value, 10))}
-                          aria-label={`${item.label} weight`}
+                          aria-label={`${item.label}${t("strategyLab.weight.weight")}`}
                           aria-valuetext={`${scenarioProbabilities[item.key]}%`}
                         />
                       </div>
                     ))}
                     <div className="slider-range-desc">
-                      <span>Total auto-kept at 100%</span>
-                      <span>Default 15 / 70 / 15</span>
+                      <span>{t("strategyLab.probability.totalAutoKept")}</span>
+                      <span>{t("strategyLab.probability.defaultHint")}</span>
                     </div>
                     <div className="param-explanation">
-                      These three are not rate moves, and they do not directly reshape the low / base / high OCR curves. They are the probability weights the model uses when aggregating results: the system simulates each OCR path independently, then combines them by these proportions to produce metrics like expected interest, expected max payment, and ending principal, and they steer the default probability-weighted recommendation.
-                      <div className="param-example">Worked example: a split with $140,000 / $160,000 / $190,000 of total interest under low / base / high scenarios, with the default 15% / 70% / 15% weights, gives expected interest = 140,000 × 15% + 160,000 × 70% + 190,000 × 15% = $161,500.</div>
-                      <div className="param-example">Adjustment example: if you are more worried about high rates, raise the high-rate weight and the recommendation will lean toward payment pressure and ending principal under high rates; if you expect cuts, raise the low-rate weight and the recommendation will favor lower-cost splits under low-rate environments.</div>
-                      <div className="param-example">Note: the three weights auto-balance to 100%. The default is low 15% / base 70% / high 15%.</div>
+                      {t("strategyLab.probability.explanation")}
+                      <div className="param-example">{t("strategyLab.probability.exampleWorked")}</div>
+                      <div className="param-example">{t("strategyLab.probability.exampleAdjustment")}</div>
+                      <div className="param-example">{t("strategyLab.probability.exampleNote")}</div>
                     </div>
                   </div>
                 </div>
@@ -2216,33 +2225,58 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Long-term cycle length</span>
-                      <span className="slider-value">{longTermCycleYears} yr</span>
+                      <span className="form-label">{t("strategyLab.longTerm.cycleLabel")}</span>
+                      <span className="slider-value">{longTermCycleYears} {t("strategyLab.longTerm.cycleUnitYr")}</span>
                     </div>
-                    <Slider min={1} max={3} step={1} value={longTermCycleYears} onChange={(e) => setLongTermCycleYears(parseInt(e.target.value, 10))} aria-label="Long-term cycle years" aria-valuetext={`${longTermCycleYears} yr`} />
+                    <Slider min={1} max={3} step={1} value={longTermCycleYears} onChange={(e) => setLongTermCycleYears(parseInt(e.target.value, 10))} aria-label={t("strategyLab.longTerm.cycleAriaLabel")} aria-valuetext={`${longTermCycleYears} ${t("strategyLab.longTerm.cycleUnitYr")}`} />
                     <div className="slider-range-desc">
-                      <span>1 yr</span>
-                      <span>2 yr</span>
-                      <span>3 yr</span>
+                      <span>{t("strategyLab.longTerm.cycleRange1")}</span>
+                      <span>{t("strategyLab.longTerm.cycleRange2")}</span>
+                      <span>{t("strategyLab.longTerm.cycleRange3")}</span>
                     </div>
                     <div className="param-explanation">
-                      Determines the dominant wave period of the long-term Monte Carlo path beyond month 36. With a 2-year cycle: if months 13-36 trend up, months 37-60 are more likely to turn down, then months 61-84 likely turn up again.
+                      {t("strategyLab.longTerm.cycleExplain")}
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Long-term reversal probability</span>
+                      <span className="form-label">{t("strategyLab.longTerm.reversalLabel")}</span>
                       <span className="slider-value">{Math.round(longTermReversalBias * 100)}%</span>
                     </div>
-                    <Slider min={0.2} max={1.0} step={0.1} value={longTermReversalBias} onChange={(e) => setLongTermReversalBias(parseFloat(e.target.value))} aria-label="Long-term reversal bias" aria-valuetext={`${Math.round(longTermReversalBias * 100)}%`} />
+                    <Slider min={0.2} max={1.0} step={0.1} value={longTermReversalBias} onChange={(e) => setLongTermReversalBias(parseFloat(e.target.value))} aria-label={t("strategyLab.longTerm.reversalAriaLabel")} aria-valuetext={`${Math.round(longTermReversalBias * 100)}%`} />
                     <div className="slider-range-desc">
-                      <span>20%</span>
-                      <span>60%</span>
-                      <span>100%</span>
+                      <span>{t("strategyLab.longTerm.reversalRange20")}</span>
+                      <span>{t("strategyLab.longTerm.reversalRange60")}</span>
+                      <span>{t("strategyLab.longTerm.reversalRange100")}</span>
                     </div>
                     <div className="param-explanation">
-                      If the medium-term trend over months 13-36 is upward, the first long-term cycle preferentially turns down with this probability; if downward, it preferentially turns up with the same probability. Otherwise the model keeps same-direction volatility possible.
+                      {t("strategyLab.longTerm.reversalExplain")}
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
+                      <span className="form-label">{t("strategyLab.monteCarloSampleCount.label")}</span>
+                      <span className="slider-value">{monteCarloSampleCount}</span>
+                    </div>
+                    <Slider
+                      min={50}
+                      max={1000}
+                      step={50}
+                      value={monteCarloSampleCount}
+                      onChange={(e) => setMonteCarloSampleCount(parseInt(e.target.value, 10))}
+                      aria-label={t("strategyLab.monteCarloSampleCount.label")}
+                      aria-valuetext={`${monteCarloSampleCount}`}
+                    />
+                    <div className="slider-range-desc">
+                      <span>50</span>
+                      <span>500</span>
+                      <span>1000</span>
+                    </div>
+                    <div className="param-explanation">
+                      {t("strategyLab.monteCarloSampleCount.explanation")}
+                      <div className="param-example">{t("strategyLab.monteCarloSampleCount.example")}</div>
                     </div>
                   </div>
                 </div>
@@ -2297,8 +2331,8 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>Simulation horizon</span>
-                      <span className="slider-value" style={{ color: "var(--chart-info)" }}>{simDurationYears} yr ({simDurationYears * 12} mo)</span>
+                      <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>{t("strategyLab.horizon.horizonLabel")}</span>
+                      <span className="slider-value" style={{ color: "var(--chart-info)" }}>{simDurationYears} {t("strategyLab.horizon.horizonUnit")} ({simDurationYears * 12} {t("strategyLab.horizon.horizonMonthsUnit")})</span>
                     </div>
                     <Slider
                       min={1}
@@ -2307,25 +2341,25 @@ export default function StrategyLab() {
                       value={simDurationYears}
                       onChange={(/** @type {any} */ e) => setSimDurationYears(parseInt(e.target.value, 10))}
                       className="slider-input"
-                      aria-label="Simulation horizon (years)"
+                      aria-label={t("strategyLab.horizon.horizonAriaLabel")}
                       aria-valuemin={1}
                       aria-valuemax={simMaxYears}
                       aria-valuenow={simDurationYears}
-                      aria-valuetext={`${simDurationYears} yr (${simDurationYears * 12} mo)`}
+                      aria-valuetext={`${simDurationYears} ${t("strategyLab.horizon.horizonUnit")} (${simDurationYears * 12} ${t("strategyLab.horizon.horizonMonthsUnit")})`}
                     />
                     <div className="slider-range-desc">
-                      <span>1 yr</span>
-                      <span>{Math.max(1, Math.round(simMaxYears / 2))} yr</span>
-                      <span>Max {simMaxYears} yr</span>
+                      <span>{t("strategyLab.horizon.range1yr")}</span>
+                      <span>{Math.max(1, Math.round(simMaxYears / 2))} {t("strategyLab.horizon.horizonUnit")}</span>
+                      <span>{t("strategyLab.horizon.rangeMaxLabel", { max: simMaxYears })}</span>
                     </div>
                     <div className="param-explanation" style={{ marginTop: "10px" }}>
-                      Sets the future horizon that the strategy simulation covers. Rate changes and repayment calculations are calibrated to this period.
+                      {t("strategyLab.horizon.horizonExplain")}
                       {simCappedByMortgage ? (
                         <div className="param-example">
-                          👉 Your mortgage-setup "expected payoff years" is about {simTargetYears.toFixed(1)} yr ({mortgage?.originalTermMonths} mo). The system has auto-clamped the slider's upper bound to {simMaxYears} yr (covering through the end of the target year). To adjust, return to the Mortgage Setup page.
+                          {t("strategyLab.horizon.horizonCappedExample", { target: simTargetYears.toFixed(1), months: mortgage?.originalTermMonths, max: simMaxYears })}
                         </div>
                       ) : (
-                        <div className="param-example">Example: drag to 3 yr and the analysis covers only the next 36 months, computing ending principal at month 36.</div>
+                        <div className="param-example">{t("strategyLab.horizon.horizonExample")}</div>
                       )}
                     </div>
                   </div>
@@ -2381,14 +2415,14 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Diversification preset</span>
-                      <span className="slider-value">{diversificationPreset === "default" ? "Default" : diversificationPreset === "diversification" ? "Diversification" : "Max diversification"}</span>
+                      <span className="form-label">{t("strategyLab.constraints.diversificationPreset")}</span>
+                      <span className="slider-value">{diversificationPreset === "default" ? t("strategyLab.constraints.diversificationDefault") : diversificationPreset === "diversification" ? t("strategyLab.constraints.diversificationDiversification") : t("strategyLab.constraints.diversificationMax")}</span>
                     </div>
                     <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                       {[
-                        { value: "default", label: "Default (3 splits / 5%)", tip: "Conservative: 3 splits, 5% step, 10% floating cap, ~58 candidates" },
-                        { value: "diversification", label: "Diversification (4 splits / 5%)", tip: "Surfaces more 60/20/20 cross-term splits, ~500 candidates, auto-expands the report" },
-                        { value: "max", label: "Max diversification (5 splits / 5%)", tip: "Allows 50% floating and 5 splits, ~2000 candidates, auto-expands the report" }
+                        { value: "default", label: t("strategyLab.constraints.presetDefaultLabel"), tip: t("strategyLab.constraints.presetDefaultTip") },
+                        { value: "diversification", label: t("strategyLab.constraints.presetDiversificationLabel"), tip: t("strategyLab.constraints.presetDiversificationTip") },
+                        { value: "max", label: t("strategyLab.constraints.presetMaxLabel"), tip: t("strategyLab.constraints.presetMaxTip") }
                       ].map((opt) => (
                         <button
                           key={opt.value}
@@ -2402,14 +2436,14 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      One-click toggle for the candidate search space. "Default" preserves the current recommendation behaviour; "Diversification" and "Max diversification" widen the floating cap and step, auto-expand the exhaustive report, and adjust scoring weights so cross-term splits can win recommendation cards. Manually editing any parameter below auto-exits the preset and returns to a custom state.
-                      <div className="param-example">Example: want to see a 60% fixed-2y + 20% fixed-1y + 20% floating cross-term split? Switch to "Diversification".</div>
+                      {t("strategyLab.constraints.presetExplain")}
+                      <div className="param-example">{t("strategyLab.constraints.presetExample")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Maximum splits / loan tranches</span>
+                      <span className="form-label">{t("strategyLab.constraints.maxSplitsLabel")}</span>
                       <span className="slider-value">{maxSplits}</span>
                     </div>
                     <div className="segmented-control">
@@ -2420,21 +2454,21 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      Caps the number of sub-loan tranches your loan can be split into. Setting to 1 disables splitting entirely and only compares single-term lock strategies.
-                      <div className="param-example">Example: set to 3 and the system will search the optimal strategy across all valid 1-, 2-, and 3-tranche splits.</div>
+                      {t("strategyLab.constraints.maxSplitsExplain")}
+                      <div className="param-example">{t("strategyLab.constraints.maxSplitsExample")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Combination grid step</span>
+                      <span className="form-label">{t("strategyLab.constraints.gridStepLabel")}</span>
                       <span className="slider-value">{(percentageStep * 100).toFixed(0)}%</span>
                     </div>
                     <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                       {[
-                        { value: 0.15, label: "15% (coarse)", tip: "Fewest combinations, fastest simulation" },
-                        { value: 0.10, label: "10% (default)", tip: "Balanced combinations, recommended daily use" },
-                        { value: 0.05, label: "5% (fine)", tip: "Rich combinations, slower simulation" }
+                        { value: 0.15, label: t("strategyLab.constraints.stepCoarseLabel"), tip: t("strategyLab.constraints.stepCoarseTip") },
+                        { value: 0.10, label: t("strategyLab.constraints.stepDefaultLabel"), tip: t("strategyLab.constraints.stepDefaultTip") },
+                        { value: 0.05, label: t("strategyLab.constraints.stepFineLabel"), tip: t("strategyLab.constraints.stepFineTip") }
                       ].map((opt) => (
                         <button key={opt.value} type="button" title={opt.tip} className={`segmented-btn ${percentageStep === opt.value ? "active" : ""}`} onClick={() => setPercentageStep(opt.value)}>
                           {opt.label}
@@ -2442,35 +2476,35 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      Allocation grid step across terms. Coarser step = fewer combinations = faster simulation. The default 10% balances richness and performance.
-                      <div className="param-example">Example: with a 10% step, a single-tranche split has 10 options: 10%, 20%, 30%, ..., 100%.</div>
+                      {t("strategyLab.constraints.gridStepExplain")}
+                      <div className="param-example">{t("strategyLab.constraints.gridStepExample")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Maximum floating / Offset share</span>
+                      <span className="form-label">{t("strategyLab.constraints.maxFloatingLabel")}</span>
                       <span className="slider-value">{maxFloatingPercentage}%</span>
                     </div>
-                    <Slider min={0} max={80} step={10} value={maxFloatingPercentage} onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value, 10))} aria-label="Maximum floating / Offset share" aria-valuetext={`${maxFloatingPercentage}%`} />
+                    <Slider min={0} max={80} step={10} value={maxFloatingPercentage} onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value, 10))} aria-label={t("strategyLab.constraints.maxFloatingLabel")} aria-valuetext={`${maxFloatingPercentage}%`} />
                     <div className="slider-range-desc">
                       <span>{t("strategyLab.maxFloatingPct.range0")}</span>
                       <span>{t("strategyLab.maxFloatingPct.range1")}</span>
                       <span>{t("strategyLab.maxFloatingPct.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      Caps the floating-rate (Floating / Offset / Revolving Credit) share of the loan. The system also guarantees a minimum fixed share of {100 - maxFloatingPercentage}% (i.e. 1 − floating share); the strategy generator derives that constraint internally.
-                      <div className="param-example">Example: at 10%, the loan can have at most 10% floating; the other 90% must be locked to a fixed term.</div>
+                      {t("strategyLab.constraints.maxFloatingExplain", { fixedPct: 100 - maxFloatingPercentage })}
+                      <div className="param-example">{t("strategyLab.constraints.maxFloatingExample")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">Per-period payment budget cap</span>
+                      <span className="form-label">{t("strategyLab.constraints.budgetCapLabel")}</span>
                       <span className="slider-value">${maxAffordablePayment.toLocaleString()}</span>
                     </div>
                     <NumberInput
-                      ariaLabel="Per-period payment budget cap"
+                      ariaLabel={t("strategyLab.constraints.budgetCapAriaLabel")}
                       min={0}
                       step={100}
                       prefix="$"
@@ -2479,8 +2513,8 @@ export default function StrategyLab() {
                       onChange={(/** @type {any} */e) => setMaxAffordablePayment(Math.max(0, parseInt(e.target.value || "0", 10)))}
                     />
                     <div className="param-explanation">
-                      The maximum per-period payment you can afford. Used to count "budget overage" instances under high-rate scenarios and feeds the composite score.
-                      <div className="param-example">Example: set to 5000 with fortnightly frequency; if a high-rate fortnightly payment hits 5200 the system records one overage.</div>
+                      {t("strategyLab.constraints.budgetCapExplain")}
+                      <div className="param-example">{t("strategyLab.constraints.budgetCapExample")}</div>
                     </div>
                   </div>
                 </div>
@@ -2534,7 +2568,7 @@ export default function StrategyLab() {
               {openControlGroups.preferences && (
                 <div className="control-group-body">
                   <div className="param-explanation" style={{ marginTop: 0, marginBottom: "var(--sp-3)" }}>
-                    The {preferenceWeightItems.length} weights below always sum to 100%. Raising one rescales the others proportionally. Affects only the "Preference-matched" card; rate-simulation parameters and other cards are unchanged.
+                    {t("strategyLab.preferencesIntro", { n: preferenceWeightItems.length })}
                   </div>
 
                   {preferenceWeightItems.map((item) => (
@@ -2551,7 +2585,7 @@ export default function StrategyLab() {
                         step={1}
                         defaultValue={weights[item.key] ?? 0}
                         ref={(el) => { preferenceSliderRefs.current[item.key] = el; }}
-                        aria-label={`${item.label} weight`}
+                        aria-label={`${item.label}${t("strategyLab.weight.weight")}`}
                         aria-valuemin={0}
                         aria-valuemax={35}
                         onInput={(e) => {
@@ -2658,7 +2692,7 @@ export default function StrategyLab() {
               {openControlGroups.preferences && (
                 <div className="control-group-body">
                   <p className="text-muted" style={{ fontSize: "11px", lineHeight: "1.5", margin: "0 0 14px" }}>
-                    Customise the weight mix across these 7 metrics. <strong>All weights sum to 100%</strong>. When you raise any slider, the others rescale proportionally.
+                    Customise the weight mix across these 5 metrics. <strong>All weights sum to 100%</strong>. When you raise any slider, the others rescale proportionally.
                   </p>
                   {[
                     {
@@ -2669,15 +2703,6 @@ export default function StrategyLab() {
                       maxText: t("strategyLab.weightKeys.costMax"),
                       explanation: t("strategyLab.weightKeys.costExplain"),
                       example: t("strategyLab.weightKeys.costExample")
-                    },
-                    {
-                      key: "principal",
-                      label: t("strategyLab.weightKeys.principal"),
-                      value: weights.principal,
-                      minText: t("strategyLab.weightKeys.principalMin"),
-                      maxText: t("strategyLab.weightKeys.principalMax"),
-                      explanation: t("strategyLab.weightKeys.principalExplain"),
-                      example: t("strategyLab.weightKeys.principalExample", { y: simDurationYears })
                     },
                     {
                       key: "refix",
@@ -2698,31 +2723,22 @@ export default function StrategyLab() {
                       example: t("strategyLab.weightKeys.flexExample")
                     },
                     {
-                      key: "resilience",
-                      label: t("strategyLab.weightKeys.resilience"),
-                      value: weights.resilience,
-                      minText: t("strategyLab.weightKeys.resilienceMin"),
-                      maxText: t("strategyLab.weightKeys.resilienceMax"),
-                      explanation: t("strategyLab.weightKeys.resilienceExplain"),
-                      example: t("strategyLab.weightKeys.resilienceExample")
+                      key: "balance",
+                      label: t("strategyLab.weightKeys.balance"),
+                      value: weights.balance,
+                      minText: t("strategyLab.weightKeys.balanceMin"),
+                      maxText: t("strategyLab.weightKeys.balanceMax"),
+                      explanation: t("strategyLab.weightKeys.balanceExplain"),
+                      example: t("strategyLab.weightKeys.balanceExample")
                     },
                     {
-                      key: "budget",
-                      label: t("strategyLab.weightKeys.budget"),
-                      value: weights.budget,
-                      minText: t("strategyLab.weightKeys.budgetMin"),
-                      maxText: t("strategyLab.weightKeys.budgetMax"),
-                      explanation: t("strategyLab.weightKeys.budgetExplain"),
-                      example: t("strategyLab.weightKeys.budgetExample")
-                    },
-                    {
-                      key: "smoothness",
-                      label: t("strategyLab.weightKeys.smoothness"),
-                      value: weights.smoothness,
-                      minText: t("strategyLab.weightKeys.smoothnessMin"),
-                      maxText: t("strategyLab.weightKeys.smoothnessMax"),
-                      explanation: t("strategyLab.weightKeys.smoothnessExplain"),
-                      example: t("strategyLab.weightKeys.smoothnessExample")
+                      key: "worstCaseDefense",
+                      label: t("strategyLab.weightKeys.worstCaseDefense"),
+                      value: weights.worstCaseDefense,
+                      minText: t("strategyLab.weightKeys.worstCaseDefenseMin"),
+                      maxText: t("strategyLab.weightKeys.worstCaseDefenseMax"),
+                      explanation: t("strategyLab.weightKeys.worstCaseDefenseExplain"),
+                      example: t("strategyLab.weightKeys.worstCaseDefenseExample")
                     }
                   ].map((w) => (
                     <div key={w.key} className="form-group" style={{ marginBottom: "14px" }}>
@@ -2760,7 +2776,10 @@ export default function StrategyLab() {
             <div className="chart-explain-box">
               <div className="chart-explain-title">{t("strategyLab.step7.howToReadTitle")}</div>
               <div className="chart-explain-copy">
-                {t("strategyLab.step7.howToReadBody")}
+                {t("strategyLab.step7.howToReadBody1")}
+              </div>
+              <div className="chart-explain-copy" style={{ marginTop: "10px" }}>
+                {t("strategyLab.step7.howToReadBody2")}
               </div>
 
               <div className="chart-explain-title" style={{ marginTop: "12px" }}>{t("strategyLab.step7.termsTitle")}</div>
@@ -2838,28 +2857,27 @@ export default function StrategyLab() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "6px", fontSize: "13px" }}>
-                  ⚠️ Projected simulation count is high: <strong>{estimatedTotalSims.toLocaleString()}</strong>
-                  (currently {strategyCountEstimate.toLocaleString()} strategies × {(scenarios?.length || 3)} scenarios)
+                  {t("strategyLab.warnings.highSimTitle", { count: estimatedTotalSims.toLocaleString(), strategies: strategyCountEstimate.toLocaleString(), scenarios: (scenarios?.length || 3) })}
                 </div>
                 <div style={{ fontSize: "11.5px", color: "var(--text-muted)", marginBottom: "6px", lineHeight: "1.5" }}>
-                  Large simulation matrices significantly increase worker compute time (~{Math.round(estimatedTotalSims / 1000)}s+), and a dense Pareto set makes recommendations hard to distinguish. Consider simplifying one of the following:
+                  {t("strategyLab.warnings.highSimBody", { seconds: Math.round(estimatedTotalSims / 1000) })}
                 </div>
                 <ul style={{ fontSize: "11.5px", color: "var(--text-muted)", margin: "0 0 0 18px", padding: 0, lineHeight: "1.6" }}>
                   {maxSplits > 3 && (
-                    <li>Lower "Maximum splits": currently {maxSplits} → recommend ≤ 3 (saves ~{Math.round((1 - 3 / maxSplits) * 100)}% of candidates)</li>
+                    <li>{t("strategyLab.warnings.tipMaxSplits", { current: maxSplits, pct: Math.round((1 - 3 / maxSplits) * 100) })}</li>
                   )}
                   {percentageStep < 0.15 && (
-                    <li>Increase "Combination grid step": currently {(percentageStep * 100).toFixed(0)}% → recommend 15% (saves ~{Math.round((1 - percentageStep / 0.15) * 100)}% of candidates)</li>
+                    <li>{t("strategyLab.warnings.tipStep", { current: (percentageStep * 100).toFixed(0), pct: Math.round((1 - percentageStep / 0.15) * 100) })}</li>
                   )}
                   {simDurationYears > 5 && (
-                    <li>Shorten "Simulation horizon": currently {simDurationYears} yr → recommend ≤ 5 yr</li>
+                    <li>{t("strategyLab.warnings.tipHorizon", { current: simDurationYears })}</li>
                   )}
                   {maxFloatingPercentage > 30 && (
-                    <li>Tighten "Maximum floating / Offset share": currently {maxFloatingPercentage}% → recommend ≤ 30% (saves ~{Math.round((maxFloatingPercentage - 30) / maxFloatingPercentage * 100)}% of floating branches)</li>
+                    <li>{t("strategyLab.warnings.tipFloating", { current: maxFloatingPercentage, pct: Math.round((maxFloatingPercentage - 30) / maxFloatingPercentage * 100) })}</li>
                   )}
                   {(maxSplits <= 3 && percentageStep >= 0.15 && simDurationYears <= 5 && maxFloatingPercentage <= 30) && (
                     <li style={{ listStyle: "none", marginLeft: "-18px" }}>
-                      Constraints are already tight; if you need to keep them, click "Start simulation" and accept the ~{Math.round(estimatedTotalSims / 1000)}s+ compute time.
+                      {t("strategyLab.warnings.constraintsTight", { seconds: Math.round(estimatedTotalSims / 1000) })}
                     </li>
                   )}
                 </ul>
@@ -2881,10 +2899,10 @@ export default function StrategyLab() {
                     }}
                   >
                     <div style={{ fontWeight: 600, marginBottom: "4px", fontSize: "12.5px" }}>
-                      ⚠️ Large simulation in progress: <strong>{totalSims.toLocaleString()}</strong>
+                      {t("strategyLab.warnings.inProgressTitle", { count: totalSims.toLocaleString() })}
                     </div>
                     <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: "1.5" }}>
-                      Above the {SIM_COUNT_WARNING_THRESHOLD.toLocaleString()} warning threshold. Either wait for the current run to finish, or cancel and tighten splits, increase step, or shorten horizon.
+                      {t("strategyLab.warnings.inProgressBody", { threshold: SIM_COUNT_WARNING_THRESHOLD.toLocaleString() })}
                     </div>
                   </div>
                 )}
@@ -2902,15 +2920,15 @@ export default function StrategyLab() {
                 {currentSimulationInfo && (
                   <div className="simulation-current-grid">
                     <div>
-                      <span>t("strategyLab.progress.currentCombination")</span>
+                      <span>{t("strategyLab.progress.currentCombination")}</span>
                       <strong>{currentSimulationInfo.combination}</strong>
                     </div>
                     <div>
-                      <span>t("strategyLab.progress.currentFixTerms")</span>
+                      <span>{t("strategyLab.progress.currentFixTerms")}</span>
                       <strong>{currentSimulationInfo.fixTerms}</strong>
                     </div>
                     <div>
-                      <span>t("strategyLab.progress.currentScenario")</span>
+                      <span>{t("strategyLab.progress.currentScenario")}</span>
                       <strong>{currentSimulationInfo.scenarioPath}</strong>
                     </div>
                   </div>

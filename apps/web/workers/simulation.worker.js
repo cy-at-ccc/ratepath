@@ -149,6 +149,10 @@ function describeScenario(scenario, locale) {
   if (family === "low") return t(locale, "worker.scenario.low");
   if (family === "base") return t(locale, "worker.scenario.base");
   if (family === "high") return t(locale, "worker.scenario.high");
+  if (family === "p10") return t(locale, "worker.scenario.p10");
+  if (family === "p50") return t(locale, "worker.scenario.p50");
+  if (family === "p90") return t(locale, "worker.scenario.p90");
+  if (family === "expected") return t(locale, "strategyLab.path.expected.label");
   return scenario.name || scenario.id;
 }
 

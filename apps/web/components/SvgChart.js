@@ -611,7 +611,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
         <div className="chart-tooltip chart-tooltip-overlay glass-panel">
           <div className="tooltip-header">{formatTooltipMonth(hoverMonth)}</div>
           <div className="tooltip-grid">
-            {allSeries.map((d) => {
+            {allSeries.filter((s) => !s.legendHidden).map((d) => {
               const np = nearestPoint(d, hoverMonth);
               const inRange = np && np.deltaMonths <= 0.5;
               const c = resolveColor(d.color);
@@ -636,7 +636,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
       {/* Legend (interactive) */}
       <div className="chart-footer">
         <div className="chart-legend">
-          {allSeries.map((d) => {
+          {allSeries.filter((s) => !s.legendHidden).map((d) => {
             const isHidden = hiddenSeries.has(d.id);
             const c = resolveColor(d.color);
             return (

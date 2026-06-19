@@ -495,7 +495,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
               className="btn btn-secondary"
               onClick={onClose}
             >
-              关闭
+              {t("strategyDetail.close")}
             </button>
           </div>
         </div>
@@ -1232,7 +1232,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
             <tr key={`total-${row.key}`} className={`sdm-v2-total-row ${row.className || ""}`}>
               {rowIndex === 0 && (
                 <td className="sdm-v2-tranche-name sdm-v2-total-label" rowSpan={rows.length}>
-                  所有分片合计
+                  {t("strategyDetail.totalAllTranches")}
                 </td>
               )}
               <td className="sdm-v2-row-label">{row.label}</td>

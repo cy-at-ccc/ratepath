@@ -6,7 +6,15 @@
       "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab.js)",
       "Read(//c/Users/ChrisYang/AppData/Local/Temp/**)",
       "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab2.js)",
-      "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab3.js)"
+      "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab3.js)",
+      "Bash(git commit -m 'feat: v11 preferences — simplify to 5 keys + balance weight + slider sync *)",
+      "Bash(git push *)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('apps/web/messages/en-NZ.json'\\)\\)\")",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('apps/web/messages/zh-CN.json'\\)\\)\")",
+      "Bash(NEXT_PUBLIC_BUILD_ID=local-test npm run build)",
+      "Bash(NEXT_PUBLIC_BUILD_ID=local-test npm run build --workspace=@mortgage/web)",
+      "Bash(NEXT_PUBLIC_BUILD_ID=local-test npx next build)",
+      "Bash(git config *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\ChrisYang\\AppData\\Local\\Temp"
