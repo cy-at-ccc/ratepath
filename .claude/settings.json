@@ -14,7 +14,8 @@
       "Bash(NEXT_PUBLIC_BUILD_ID=local-test npm run build)",
       "Bash(NEXT_PUBLIC_BUILD_ID=local-test npm run build --workspace=@mortgage/web)",
       "Bash(NEXT_PUBLIC_BUILD_ID=local-test npx next build)",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(git commit -m 'feat: Monte Carlo P10/P50/P90 quantile scenarios + i18n audit + docs' -m '**Scenario engine: quantile aggregation** *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\ChrisYang\\AppData\\Local\\Temp"
