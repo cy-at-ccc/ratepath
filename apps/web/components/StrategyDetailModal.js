@@ -314,12 +314,17 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
               <div className="sdm-intro-section">
                 <h3 className="sdm-intro-title">{t("strategyDetail.tradeOff")}</h3>
                 <ul className="sdm-intro-list">
-                  {intro.tradeOff.map((/** @type {any} */ t, /** @type {number} */ i) => (
-                    <li key={i} className={`sdm-intro-row sdm-intro-row-${t.status === t("strategyDetail.statusTop") || t.status === "优异" || t.status === "Top" ? "top" : t.status === t("strategyDetail.statusBottom") || t.status === "较弱" || t.status === "Bottom" ? "bottom" : "mid"}`}>
-                      <span className="sdm-intro-label">{t.label}</span>
-                      <span className={`sdm-intro-status sdm-intro-status-${t.status === t("strategyDetail.statusTop") || t.status === "优异" || t.status === "Top" ? "top" : t.status === t("strategyDetail.statusBottom") || t.status === "较弱" || t.status === "Bottom" ? "bottom" : "mid"}`}>{t.status}</span>
-                    </li>
-                  ))}
+                  {intro.tradeOff.map((/** @type {any} */ item, /** @type {number} */ i) => {
+                    const isTop = item.status === t("strategyDetail.statusTop") || item.status === "优异" || item.status === "Top";
+                    const isBottom = item.status === t("strategyDetail.statusBottom") || item.status === "较弱" || item.status === "Bottom";
+                    const statusClass = isTop ? "top" : isBottom ? "bottom" : "mid";
+                    return (
+                      <li key={i} className={`sdm-intro-row sdm-intro-row-${statusClass}`}>
+                        <span className="sdm-intro-label">{item.label}</span>
+                        <span className={`sdm-intro-status sdm-intro-status-${statusClass}`}>{item.status}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -969,6 +974,7 @@ function MetricTile(/** @type {any} */ props) {
  * balance / refix events at every 6-month snapshot.
  */
 function InlineTimeline(/** @type {any} */ props) {
+  const { t } = useI18n();
   const { data } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) {
@@ -1130,6 +1136,7 @@ function InlineTimeline(/** @type {any} */ props) {
 }
 
 function InlineTimelineV2(/** @type {any} */ props) {
+  const { t } = useI18n();
   const { data } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) {
@@ -1348,6 +1355,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
  * chart" uses. Renders a single line + shaded area beneath it.
  */
 function BalanceLinechart(/** @type {any} */ props) {
+  const { t } = useI18n();
   const { data } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) return null;

@@ -224,7 +224,7 @@ export default function StrategyLab() {
     preferences: false
   });
   const [showOnlyBestPerMix, setShowOnlyBestPerMix] = useState(true);
-  const [showOnlyPareto, setShowOnlyPareto] = useState(false);
+  const [showOnlyPareto, setShowOnlyPareto] = useState(true);
   // Filter the exhausted-report table by number of allocations per strategy.
   // `null` means "all split counts"; otherwise the value is the exact count
   // to keep (1, 2, 3, ...). Stacks on top of `showOnlyBestPerMix`.
@@ -576,7 +576,7 @@ export default function StrategyLab() {
   const [recLowestCost, setRecLowestCost] = useState(/** @type {any} */(null));
   const [recMostStable, setRecMostStable] = useState(/** @type {any} */(null));
   // V9: 4th recommendation card — worst-case defense composite optimum.
-  const [recWorstCaseDefense, setRecWorstCaseDefense] = useState(/** @type {any} */(null));
+  const [recWorstCaseDefense, setRecWorstCaseDefense] = useState(/** @type {any} */(null)); // kept for back-compat — UI no longer renders this card
   // V6 legacy state vars retained for cross-references inside the page
   // (e.g. cleanup on simulation reset). No new cards read from them.
   const [recLowestWorstCaseCost, setRecLowestWorstCaseCost] = useState(/** @type {any} */(null));
@@ -660,7 +660,6 @@ export default function StrategyLab() {
     setRecPreference(null);
     setRecLowestCost(null);
     setRecMostStable(null);
-    setRecWorstCaseDefense(null);
     setProgress(0);
     setCompletedSims(0);
     setTotalSims(0);
@@ -1065,7 +1064,9 @@ export default function StrategyLab() {
         setRecPreference(opt.recommendations.preference || null);
         setRecLowestCost(opt.recommendations.lowestCost || null);
         setRecMostStable(opt.recommendations.mostStable || null);
-        setRecWorstCaseDefense(opt.recommendations.worstCaseDefense || null);
+        // worstCaseDefense still computed by the optimiser (drives the
+        // preference card's worst-case composite contribution) but no
+        // longer surfaced as a 4th baseline card.
         // Legacy V6 state slots kept around for the Pareto table's "what
         // benchmark picked this row" tag map. They still read from the
         // (now empty) V6 slots, so the tag map just shows nothing — which
@@ -1803,19 +1804,19 @@ export default function StrategyLab() {
     // current Pareto set and marks each as "优异" (top 20%) or "较弱" (bottom
     // 20%). The exact axis label is in `label` and rendered in the modal.
     const tradeOffAxes = [
-      { key: "expectedInterest", label: t("strategyLab.intro.interestLabel"), direction: "min" },
-      { key: "worstCaseInterest", label: "Worst-case interest", direction: "min" },
-      { key: "worstCasePayment", label: "Worst-case payment", direction: "min" },
-      { key: "expectedMaxPayment", label: `Expected max ${freqLabel}`, direction: "min" },
-      { key: "expectedMaxConcurrentRefixPercentage", label: "Refix concentration", direction: "min" },
-      { key: "expectedAffordabilityBreaches", label: "Budget overage", direction: "min" },
-      { key: "worstCaseAffordabilityBreaches", label: "Worst-case overage", direction: "min" },
-      { key: "expectedRefixEventCount", label: "Refix event count", direction: "min" },
-      { key: "expectedPaymentVolatility", label: "Payment volatility", direction: "min" },
-      { key: "expectedEndingBalance", label: "Ending principal", direction: "min" },
-      { key: "expectedFloatingExposure", label: "Floating share", direction: "max" },
-      { key: "flexibilityPenalty", label: "Flexibility penalty", direction: "min" },
-      { key: "concentration", label: "Concentration (largest single share)", direction: "min" }
+      { key: "expectedInterest", label: t("strategyDetail.axis.interest"), direction: "min" },
+      { key: "worstCaseInterest", label: t("strategyDetail.axis.worstCaseInterest"), direction: "min" },
+      { key: "worstCasePayment", label: t("strategyDetail.axis.worstCasePayment"), direction: "min" },
+      { key: "expectedMaxPayment", label: t("strategyLab.rec.metric.expectedMaxPayment", { freq: getRepaymentFrequencyLabel() }), direction: "min" },
+      { key: "expectedMaxConcurrentRefixPercentage", label: t("strategyDetail.axis.refix"), direction: "min" },
+      { key: "expectedAffordabilityBreaches", label: t("strategyDetail.axis.budget"), direction: "min" },
+      { key: "worstCaseAffordabilityBreaches", label: t("strategyDetail.axis.worstCaseBreaches"), direction: "min" },
+      { key: "expectedRefixEventCount", label: t("strategyDetail.axis.refixEventCount"), direction: "min" },
+      { key: "expectedPaymentVolatility", label: t("strategyDetail.axis.volatility"), direction: "min" },
+      { key: "expectedEndingBalance", label: t("strategyDetail.axis.endingPrincipal"), direction: "min" },
+      { key: "expectedFloatingExposure", label: t("strategyDetail.axis.floating"), direction: "max" },
+      { key: "flexibilityPenalty", label: t("strategyDetail.axis.flexibilityPenalty"), direction: "min" },
+      { key: "concentration", label: t("strategyDetail.axis.concentration"), direction: "min" }
     ];
     const boundsFor = (key) => {
       const values = allStrategies.map((s) => s[key]).filter((v) => typeof v === "number");
@@ -3128,58 +3129,6 @@ export default function StrategyLab() {
                     {renderTileFooter(recMostStable.strategyId, "mostStable", "benchmark")}
                   </div>
                 )}
-              {/* 4. Worst-Case Defense Card (v9) — replaces 6 v6 benchmark cards. */}
-                {recWorstCaseDefense && (
-                  <div
-                    className={`rec-card glass-panel clickable-card accent-rose ${selectedRecType === "worstCaseDefense" ? "selected-rec-card" : ""}`}
-                    onClick={() => {
-                      const fullDetails = optimisedData.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === recWorstCaseDefense.strategyId);
-                      if (fullDetails) {
-                        setSelectedRecType("worstCaseDefense");
-                      }
-                    }}
-                  >
-                    <div className="badge badge-rose">{t("strategyLab.rec.worstCase.badge")}</div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      {t("strategyLab.rec.worstCase.subtitle")}
-                    </div>
-                    <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
-                      {renderStrategySplit(recWorstCaseDefense.strategyId)}
-                    </h3>
-                    <p className="rec-desc">
-                      {t("strategyLab.rec.worstCase.desc")}
-                      {recPreference && recLowestCost && recMostStable && (
-                        <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
-                          {t("strategyLab.rec.worstCase.mutexSuffix", {
-                            pref: renderStrategySplit(recPreference.strategyId),
-                            cost: renderStrategySplit(recLowestCost.strategyId),
-                            stable: renderStrategySplit(recMostStable.strategyId)
-                          })}
-                        </span>
-                      )}
-                    </p>
-                    {renderCardMetrics(recWorstCaseDefense.strategyId)}
-                    <div className="pros-cons">
-                      <div className="pro-list">
-                        {recWorstCaseDefense.pros.map((/** @type {any} */ p, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item pro-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
-                            <span>{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="con-list">
-                        {recWorstCaseDefense.cons.map((/** @type {any} */ c, /** @type {number} */ i) => (
-                          <div key={i} className="pro-con-item con-text">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            <span>{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {renderTileFooter(recWorstCaseDefense.strategyId, "worstCaseDefense", "benchmark")}
-                  </div>
-                )}
               </div>
             </section>
           )}
@@ -3248,45 +3197,45 @@ export default function StrategyLab() {
                   dangerouslySetInnerHTML={{ __html: t("strategyLab.report.intro") }}
                 />
 
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <p className="text-muted" style={{ fontSize: "12px", margin: 0, maxWidth: "60%" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginBottom: "16px", gap: "12px" }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", justifyContent: "flex-end" }}>
+                    <div className="segmented-control" style={{ width: "auto", display: "inline-flex", marginTop: 0 }}>
+                      <button
+                        type="button"
+                        className={`segmented-btn ${showOnlyBestPerMix ? "active" : ""}`}
+                        style={{ padding: "6px 14px", borderRadius: "8px 0 0 8px", fontSize: "11px", height: "32px", display: "flex", alignItems: "center" }}
+                        onClick={() => {
+                          setShowOnlyBestPerMix(true);
+                          setShowAllRows(false);
+                        }}
+                      >
+                        {t("strategyLab.segment.bestPerMix")}
+                      </button>
+                      <button
+                        type="button"
+                        className={`segmented-btn ${!showOnlyBestPerMix ? "active" : ""}`}
+                        style={{ padding: "6px 14px", borderRadius: "0 8px 8px 0", fontSize: "11px", height: "32px", display: "flex", alignItems: "center" }}
+                        onClick={() => setShowOnlyBestPerMix(false)}
+                      >
+                        {t("strategyLab.segment.allCombos")}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className={`segmented-btn ${showOnlyPareto ? "active" : ""}`}
+                      style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "11px", height: "32px", display: "flex", alignItems: "center", whiteSpace: "nowrap" }}
+                      onClick={() => { setShowOnlyPareto(!showOnlyPareto); setShowAllRows(false); }}
+                      title={t("strategyLab.toggle.paretoOnlyTitle")}
+                    >
+                      {showOnlyPareto ? t("strategyLab.toggle.paretoOnlyActive") : t("strategyLab.toggle.paretoOnly")}
+                    </button>
+                  </div>
+                  <p className="text-muted" style={{ fontSize: "12px", margin: 0, textAlign: "right", whiteSpace: "nowrap" }}>
                     {showOnlyBestPerMix
                       ? t("strategyLab.report.summaryBestPerMix", { total: optimisedData.rankedStrategies.length, n: getBestStrategiesPerMix().length })
                       : t("strategyLab.report.summaryAll", { total: optimisedData.rankedStrategies.length })
                     }
                   </p>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                  <div className="segmented-control" style={{ width: "auto", display: "inline-flex", marginTop: 0 }}>
-                    <button
-                      type="button"
-                      className={`segmented-btn ${showOnlyBestPerMix ? "active" : ""}`}
-                      style={{ padding: "6px 14px", borderRadius: "8px 0 0 8px", fontSize: "11px", height: "32px", display: "flex", alignItems: "center" }}
-                      onClick={() => {
-                        setShowOnlyBestPerMix(true);
-                        setShowAllRows(false);
-                      }}
-                    >
-                      {t("strategyLab.segment.bestPerMix")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`segmented-btn ${!showOnlyBestPerMix ? "active" : ""}`}
-                      style={{ padding: "6px 14px", borderRadius: "0 8px 8px 0", fontSize: "11px", height: "32px", display: "flex", alignItems: "center" }}
-                      onClick={() => setShowOnlyBestPerMix(false)}
-                    >
-                      {t("strategyLab.segment.allCombos")}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${showOnlyPareto ? "active" : ""}`}
-                    style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "11px", height: "32px", display: "flex", alignItems: "center", whiteSpace: "nowrap" }}
-                    onClick={() => { setShowOnlyPareto(!showOnlyPareto); setShowAllRows(false); }}
-                    title={t("strategyLab.toggle.paretoOnlyTitle")}
-                  >
-                    {showOnlyPareto ? t("strategyLab.toggle.paretoOnlyActive") : t("strategyLab.toggle.paretoOnly")}
-                  </button>
-                  </div>
                 </div>
 
                 {/* Split-count filter pills — stacks on top of the per-mix toggle. */}
