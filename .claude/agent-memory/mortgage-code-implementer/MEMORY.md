@@ -17,3 +17,22 @@ Implemented the v9 plan from `mortgage-algorithm-architect-agent-app-dazzling-to
 **Why:** Plan v9 fixes 4 v6 problems — (A) single-product benchmarks showing up in `lowestCost` etc. (now fixed by `recommendationMinAllocationCount` filtering all 4 cards, plus 25% hard cap forcing 4 dimensions to remain active), (B) `worstCaseInterest` / `worstCaseAffordabilityBreaches` / `expectedRefixEventCount` not first-class Pareto axes (now first-class with `expectedRefixEventCount: 1` tolerance), (C) `percentageStep=0.10` pruning 33-33-33 / 40-30-30 candidates (now 0.05), (D) `isConstraintsModified` and `handleResetConstraints` calling out of sync with `useState` defaults.
 
 **How to apply:** When the user adds another dimension to `DEFAULT_WEIGHTS`, the PreferenceWeightsModal's aria-live hint count is hardcoded as `TOTAL_KEYS = 8` — update both the page's DEFAULT_WEIGHTS and this hardcoded count in lockstep. The optimiser's `getTermObjectives` now contains duplicate keys (12 entries with 2 dups) — this is a deliberate consequence of the plan listing 3 keys to add when 2 already existed. If asked to "remove duplicates", be aware that the dominance check tolerates duplicates fine but the test `expect(objectives.length).toBe(12)` is what enforces the count.
+
+---
+
+## v10 review-fix session (2026-06-19)
+
+Implemented all v10 review findings. Pre-existing C1/C2/C3/C4 in the review spec were already in place from prior v10 work; the actual delta was H1 (JSDoc), H2 (tighten assertion), H3 (new fallback test), M1 (full-width punctuation), M2 (separator).
+
+**Key changes:**
+- `packages/optimiser/src/index.js`: added small-pool-fallback contract JSDoc to `pickMin` (lines ~736) and `pickExcluding` (lines ~749) — explains why the fallback re-picks an already-excluded strategy when the filtered pool is empty.
+- `packages/optimiser/tests/optimiser.test.js`: tightened T1 assertion `>= 3` → `>= 4` distinct (fixture has 4 candidates A/B/C/D); added new test "v10: small-pool fallback returns global min when filtering empties" — single-row fixture asserting all 4 cards return `"only"`. Optimiser test count: 34 → 35.
+- `apps/web/app/strategy-lab/page.js`: line 3196 tooltip `;` → `；` (full-width); line 3017 worstCaseDefense parenthetical separators `/` → `、`.
+
+**Why:** Per the v10 review spec — tighten the test that pins the 4-card distinct-pick invariant, document the small-pool fallback so it isn't mistaken for a bug, normalize Chinese typography across the UI.
+
+**How to apply:** When adding more pickers (5th, 6th cards in some future v11), each new `pickExcluding*` should reference the small-pool-fallback contract on `pickMin`. The "≥ 4 distinct" T1 assertion may need to be relaxed (back to ≥3) if the 5th card is added and it is allowed to re-pick when the pool is exhausted.
+
+**Verification:** Optimiser 35/35 pass. Per-package run (1+35+13+8+18+7+4+35 = 121 tests) all green. `npm run lint` clean. `npm run check` only emits pre-existing errors in `StrategyDetailModal.js` (file has `@ts-nocheck` but tsc still scans arrow callbacks without annotations — same caveat as v9).
+
+**Caveat for future sessions:** `npm test` at the repo root fails all 8 packages with `Cannot read properties of undefined (reading 'config')` — see [[feedback-vitest-root-run]]. Always run per-package.

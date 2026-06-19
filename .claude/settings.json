@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(node /tmp/translate-strategylab.js)",
+      "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab.js)",
+      "Read(//c/Users/ChrisYang/AppData/Local/Temp/**)",
+      "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab2.js)",
+      "Bash(node /c/Users/ChrisYang/AppData/Local/Temp/translate-strategylab3.js)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\ChrisYang\\AppData\\Local\\Temp"
+    ]
+  }
+}

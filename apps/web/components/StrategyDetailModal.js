@@ -4,6 +4,7 @@
 
 import { useEffect, useRef } from "react";
 import SvgChart from "./SvgChart.js";
+import { useI18n } from "../lib/i18n/useI18n.js";
 
 /**
  * StrategyDetailModal — full-detail popup for any benchmark / preference /
@@ -41,9 +42,15 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
     detailTimelineData = null,
     detailScenarioLabel = null,
     isDetailLoading = false,
-    formatMoney = (/** @type {number} */ n) => `$${Math.round(n).toLocaleString()}`,
+    formatMoney: formatMoneyProp,
     intro = null
   } = props;
+
+  const { t, formatMoney: formatMoneyCtx, productDisplayName } = useI18n();
+  // Caller-supplied formatter wins so the page can keep its existing
+  // money-formatting pipeline; otherwise fall back to the i18n context's
+  // locale-aware formatter.
+  const formatMoney = formatMoneyProp || formatMoneyCtx;
 
   const closeBtnRef = useRef(/** @type {any} */ (null));
   const lastFocusedRef = useRef(/** @type {any} */ (null));
@@ -124,16 +131,16 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
   const fmtPct = (/** @type {number} */ n) => `${(n * 100).toFixed(1)}%`;
   const fmtMoney = formatMoney;
   const allocationCount = strategy.allocationCount || 1;
-  const splitCountLabel = allocationCount === 1 ? "1 拆分" : `${allocationCount} 拆分`;
+  const splitCountLabel = allocationCount === 1 ? t("common.splitCountOne") : t("common.splitCountN", { n: allocationCount });
   const pros = Array.isArray(strategy.pros) ? strategy.pros : [];
   const cons = Array.isArray(strategy.cons) ? strategy.cons : [];
-  const badgeLabel = recommendation?.badgeLabel || (recommendation?.type === "preference" ? "偏好匹配推荐" : "策略详情");
+  const badgeLabel = recommendation?.badgeLabel || (recommendation?.type === "preference" ? t("strategyDetail.badgePreference") : t("strategyDetail.badgeStrategyDetail"));
   // Use friendly Chinese label from caller (page passes a label map) before
   // falling back to the rec type. Avoid leaking internal keys like
   // "lowestEndingBalance" to the user.
   const friendlyRecLabel = recommendation?.label
     || (recommendation?.type && recommendation.type !== "row" ? null : null);
-  const description = recommendation?.description || "查看该策略在所有 Pareto 维度的完整指标、优劣势与时间线。";
+  const description = recommendation?.description || t("strategyDetail.description");
 
   // Allocation list — page enriches strategy.allocations with displayName,
   // percentage, amount, isFloating and fixedMonths. Fall back to [] when
@@ -152,13 +159,13 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
     if (allocations.length === 0) return null;
     if (allocations.length === 1) {
       const a = allocations[0];
-      const fixed = a.fixedMonths ? `${a.fixedMonths} 个月固定` : (a.isFloating ? "浮动" : "锁定");
-      return `100% ${fixed}单一方案（${a.displayName}）`;
+      const fixed = a.fixedMonths ? t("common.productFixedMonths", { n: a.fixedMonths }) : (a.isFloating ? t("common.productFloating") : t("common.productLocked"));
+      return t("common.portfolioSingle", { fixed, name: a.displayName });
     }
     const parts = [];
-    if (floatingTotal > 0.001) parts.push(`${(floatingTotal * 100).toFixed(0)}% 浮动`);
-    if (fixedTotal > 0.001) parts.push(`${(fixedTotal * 100).toFixed(0)}% 固定`);
-    return `组合方案：${parts.join(" + ")}，共 ${allocations.length} 个分片`;
+    if (floatingTotal > 0.001) parts.push(t("common.partFloating", { pct: (floatingTotal * 100).toFixed(0) }));
+    if (fixedTotal > 0.001) parts.push(t("common.partFixed", { pct: (fixedTotal * 100).toFixed(0) }));
+    return t("common.portfolioMulti", { parts: parts.join(" + "), n: allocations.length });
   })();
 
   const detailTranches = detailTimelineData?.tranches || [];
@@ -208,7 +215,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             type="button"
             className="sdm-close"
             onClick={onClose}
-            aria-label="关闭详情弹窗"
+            aria-label={t("strategyDetail.closeAria")}
           >
             ×
           </button>
@@ -231,7 +238,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             </h2>
           ) : (
             <h2 id="sdm-title" className="sdm-strategy-title">
-              {strategy.strategyId || "(unknown strategy)"}
+              {strategy.strategyId || t("common.unknownStrategy")}
             </h2>
           )}
 
@@ -239,9 +246,9 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             <div
               className="sdm-ratio-bar"
               role="img"
-              aria-label={`投资组合比例：${allocations
+              aria-label={t("strategyDetail.portfolioAllocation", { parts: allocations
                 .map((a) => `${a.displayName} ${((a.percentage || 0) * 100).toFixed(0)}%`)
-                .join("，")}`}
+                .join("；")})}
             >
               {allocations.map((a, i) => {
                 const segClass = a.isFloating
@@ -281,7 +288,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
               {allocations.length > 1 && (
                 <div className="sdm-portfolio-chip sdm-chip-total">
                   <span className="sdm-chip-dot" aria-hidden="true" />
-                  <span className="sdm-chip-name">合计</span>
+                  <span className="sdm-chip-name">{t("strategyDetail.totalLabel")}</span>
                   <span className="sdm-chip-amount">${totalAllocationAmount.toLocaleString()}</span>
                   <span className="sdm-chip-pct">100%</span>
                 </div>
@@ -299,18 +306,18 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           <div className="sdm-intro" data-testid="sdm-intro">
             {intro.whyThisOne && (
               <div className="sdm-intro-section">
-                <h3 className="sdm-intro-title">为什么是它</h3>
+                <h3 className="sdm-intro-title">{t("strategyDetail.whyThisOne")}</h3>
                 <p className="sdm-intro-body">{intro.whyThisOne}</p>
               </div>
             )}
             {Array.isArray(intro.tradeOff) && intro.tradeOff.length > 0 && (
               <div className="sdm-intro-section">
-                <h3 className="sdm-intro-title">12 维度对标</h3>
+                <h3 className="sdm-intro-title">{t("strategyDetail.tradeOff")}</h3>
                 <ul className="sdm-intro-list">
                   {intro.tradeOff.map((/** @type {any} */ t, /** @type {number} */ i) => (
-                    <li key={i} className={`sdm-intro-row sdm-intro-row-${t.status === "优异" ? "top" : t.status === "较弱" ? "bottom" : "mid"}`}>
+                    <li key={i} className={`sdm-intro-row sdm-intro-row-${t.status === t("strategyDetail.statusTop") || t.status === "优异" || t.status === "Top" ? "top" : t.status === t("strategyDetail.statusBottom") || t.status === "较弱" || t.status === "Bottom" ? "bottom" : "mid"}`}>
                       <span className="sdm-intro-label">{t.label}</span>
-                      <span className={`sdm-intro-status sdm-intro-status-${t.status === "优异" ? "top" : t.status === "较弱" ? "bottom" : "mid"}`}>{t.status}</span>
+                      <span className={`sdm-intro-status sdm-intro-status-${t.status === t("strategyDetail.statusTop") || t.status === "优异" || t.status === "Top" ? "top" : t.status === t("strategyDetail.statusBottom") || t.status === "较弱" || t.status === "Bottom" ? "bottom" : "mid"}`}>{t.status}</span>
                     </li>
                   ))}
                 </ul>
@@ -318,7 +325,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             )}
             {Array.isArray(intro.suitableFor) && intro.suitableFor.length > 0 && (
               <div className="sdm-intro-section">
-                <h3 className="sdm-intro-title">适合人群</h3>
+                <h3 className="sdm-intro-title">{t("strategyDetail.suitableFor")}</h3>
                 <div className="sdm-intro-tags">
                   {intro.suitableFor.map((/** @type {any} */ tag, /** @type {number} */ i) => (
                     <span key={i} className="sdm-intro-tag">{tag}</span>
@@ -328,13 +335,13 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             )}
             {Array.isArray(intro.comparison) && intro.comparison.length > 0 && (
               <div className="sdm-intro-section">
-                <h3 className="sdm-intro-title">相似方案对照</h3>
+                <h3 className="sdm-intro-title">{t("strategyDetail.comparison")}</h3>
                 <ul className="sdm-intro-list">
                   {intro.comparison.map((/** @type {any} */ c, /** @type {number} */ i) => (
                     <li key={i} className="sdm-intro-row">
                       <span className="sdm-intro-label">{c.label}</span>
                       <span className="sdm-intro-diff">
-                        利息 {c.interestDelta >= 0 ? "+" : ""}{c.interestDelta.toLocaleString()} · 峰值 {c.stabilityDelta >= 0 ? "+" : ""}{c.stabilityDelta.toLocaleString()}
+                        {t("strategyDetail.diffLine", { interest: (c.interestDelta >= 0 ? "+" : "") + c.interestDelta.toLocaleString(), peak: (c.stabilityDelta >= 0 ? "+" : "") + c.stabilityDelta.toLocaleString() })}
                       </span>
                     </li>
                   ))}
@@ -348,82 +355,75 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         <div className="sdm-metrics">
           {detailSummary && (
             <>
-              <MetricTile label="加权平均利率" value={fmtPct(detailSummary.weightedRate)} tone="indigo" />
-              <MetricTile label="总还款" value={fmtMoney(detailSummary.totalPayment)} tone="indigo" />
-              <MetricTile label="总利息" value={fmtMoney(detailSummary.totalInterest)} tone="emerald" />
-              <MetricTile label="期末总本金余额" value={fmtMoney(detailSummary.endingBalance)} tone="emerald" />
+              <MetricTile label={t("strategyDetail.metricWeightedRate")} value={fmtPct(detailSummary.weightedRate)} tone="indigo" />
+              <MetricTile label={t("strategyDetail.metricTotalPayment")} value={fmtMoney(detailSummary.totalPayment)} tone="indigo" />
+              <MetricTile label={t("strategyDetail.metricTotalInterest")} value={fmtMoney(detailSummary.totalInterest)} tone="emerald" />
+              <MetricTile label={t("strategyDetail.metricEndingBalance")} value={fmtMoney(detailSummary.endingBalance)} tone="emerald" />
+              {strategy.concentration !== undefined && strategy.concentration !== null && (
+                <MetricTile label={t("strategyDetail.metricConcentration")} value={`${Math.round((strategy.concentration || 0) * 100)}%`} tone="indigo" />
+              )}
             </>
           )}
           {!detailSummary && strategy.expectedInterest !== undefined && (
-            <MetricTile label="期望总利息" value={fmtMoney(strategy.expectedInterest)} tone="emerald" />
+            <MetricTile label={t("strategyDetail.metricExpectedInterest")} value={fmtMoney(strategy.expectedInterest)} tone="emerald" />
           )}
           {!detailSummary && strategy.expectedMaxPayment !== undefined && (
-            <MetricTile label="期望最高双周供" value={fmtMoney(strategy.expectedMaxPayment)} />
+            <MetricTile label={t("strategyDetail.metricExpectedMaxPayment", { freq: t("common.fortnightly") })} value={fmtMoney(strategy.expectedMaxPayment)} />
           )}
           {!detailSummary && strategy.expectedEndingBalance !== undefined && (
-            <MetricTile label="期望剩余本金" value={fmtMoney(strategy.expectedEndingBalance)} tone="emerald" />
+            <MetricTile label={t("strategyDetail.metricExpectedEndingBalance")} value={fmtMoney(strategy.expectedEndingBalance)} tone="emerald" />
           )}
           {!detailSummary && strategy.expectedPaymentVolatility !== undefined && (
-            <MetricTile label="还款波动 (stddev)" value={`±${fmtMoney(strategy.expectedPaymentVolatility)}`} />
+            <MetricTile label={t("strategyDetail.metricPaymentVolatility")} value={`±${fmtMoney(strategy.expectedPaymentVolatility)}`} />
           )}
           {!detailSummary && strategy.worstCaseInterest !== undefined && strategy.worstCaseInterest !== null && (
-            <MetricTile label="最坏情景总利息" value={fmtMoney(strategy.worstCaseInterest)} tone="rose" />
+            <MetricTile label={t("strategyDetail.metricWorstCaseInterest")} value={fmtMoney(strategy.worstCaseInterest)} tone="rose" />
           )}
           {!detailSummary && strategy.worstCasePayment !== undefined && strategy.worstCasePayment !== null && (
-            <MetricTile label="最坏月供峰值" value={fmtMoney(strategy.worstCasePayment)} tone="rose" />
-          )}
-          {/* v10: dispersion metric — max single allocation share. Surfaced
-              only when the optimiser populated it (i.e. the page passed the
-              strategies generator output). */}
-          {!detailSummary && strategy.concentration !== undefined && strategy.concentration !== null && (
-            <MetricTile
-              label="分散度 (最大单笔占比)"
-              value={`${Math.round((strategy.concentration || 0) * 100)}%`}
-              tone="indigo"
-            />
+            <MetricTile label={t("strategyDetail.metricWorstCasePayment")} value={fmtMoney(strategy.worstCasePayment)} tone="rose" />
           )}
           {!detailSummary && strategy.expectedMaxConcurrentRefixPercentage !== undefined && (
             <MetricTile
-              label="单月同时到期占比"
+              label={t("strategyDetail.metricRefixPct")}
               value={fmtPct(strategy.expectedMaxConcurrentRefixPercentage)}
               tone="amber"
             />
           )}
           {!detailSummary && strategy.expectedFloatingExposure !== undefined && (
             <MetricTile
-              label="浮动 / Offset 占比"
+              label={t("strategyDetail.metricFloatingPct")}
               value={fmtPct(strategy.expectedFloatingExposure)}
               tone="cyan"
             />
           )}
           {!detailSummary && strategy.expectedAffordabilityBreaches !== undefined && (
             <MetricTile
-              label="超预算次数"
-              value={`${strategy.expectedAffordabilityBreaches} 次`}
+              label={t("strategyDetail.metricAffordabilityBreaches")}
+              value={t("common.budgetBreachesCount", { n: strategy.expectedAffordabilityBreaches })}
               tone={strategy.expectedAffordabilityBreaches > 0 ? "amber" : "emerald"}
             />
           )}
           {!detailSummary && strategy.expectedPayoffTime !== undefined && strategy.expectedPayoffTime !== null && strategy.expectedPayoffTime !== 0 && (
-            <MetricTile label="预计偿清月数" value={`${strategy.expectedPayoffTime} 月`} />
+            <MetricTile label={t("strategyDetail.metricPayoffMonths")} value={`${strategy.expectedPayoffTime} mo`} />
           )}
           {!detailSummary && strategy.isParetoOptimal !== undefined && (
             <MetricTile
-              label="帕累托前沿"
-              value={strategy.isParetoOptimal ? "是" : "否 (被支配)"}
+              label={t("strategyDetail.metricPareto")}
+              value={strategy.isParetoOptimal ? t("common.fallbackYes") : t("common.fallbackNo")}
               tone={strategy.isParetoOptimal ? "emerald" : "rose"}
             />
           )}
           {!detailSummary && strategy.score !== undefined && (
-            <MetricTile label="综合评分" value={strategy.score.toFixed(3)} tone="indigo" />
+            <MetricTile label={t("strategyDetail.metricScore")} value={strategy.score.toFixed(3)} tone="indigo" />
           )}
         </div>
 
         {/* PROS / CONS */}
         <div className="sdm-pros-cons">
           <div className="sdm-pros">
-            <h3 className="sdm-section-title">✓ 优势</h3>
+            <h3 className="sdm-section-title">{t("strategyDetail.prosHeader")}</h3>
             {pros.length === 0 ? (
-              <div className="sdm-muted">无明显优势标签</div>
+              <div className="sdm-muted">{t("strategyDetail.prosEmpty")}</div>
             ) : (
               <ul>
                 {pros.map((/** @type {string} */ p, /** @type {number} */ i) => (
@@ -436,9 +436,9 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
             )}
           </div>
           <div className="sdm-cons">
-            <h3 className="sdm-section-title">✗ 不足</h3>
+            <h3 className="sdm-section-title">{t("strategyDetail.consHeader")}</h3>
             {cons.length === 0 ? (
-              <div className="sdm-muted">无明显不足标签</div>
+              <div className="sdm-muted">{t("strategyDetail.consEmpty")}</div>
             ) : (
               <ul>
                 {cons.map((/** @type {string} */ c, /** @type {number} */ i) => (
@@ -456,23 +456,23 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         {showInlineTimeline && (
           <div className="sdm-timeline">
             <h3 className="sdm-section-title">
-              本金余额路径 {detailScenarioLabel ? `· ${detailScenarioLabel}` : ""}
+              {t("strategyDetail.timelineHeader")}{detailScenarioLabel ? ` · ${detailScenarioLabel}` : ""}
             </h3>
             {isDetailLoading ? (
-              <div className="sdm-muted">正在按当前选定策略即时生成详细 timeline。为避免内存峰值,系统不会再为所有策略预先保存整包明细。</div>
+              <div className="sdm-muted">{t("strategyDetail.timelineLoading")}</div>
             ) : detailTimelineData && detailTimelineData.tranches && detailTimelineData.tranches.length > 0 ? (
               <BalanceLinechart data={detailTimelineData} />
             ) : null}
 
             <h3 className="sdm-section-title" style={{ marginTop: "16px" }}>
-              明细项 {detailScenarioLabel ? `· ${detailScenarioLabel}` : ""}
+              {t("strategyDetail.timelineDetailHeader")}{detailScenarioLabel ? ` · ${detailScenarioLabel}` : ""}
             </h3>
             {isDetailLoading ? (
-              <div className="sdm-muted">正在按当前选定策略即时生成详细 timeline...</div>
+              <div className="sdm-muted">{t("strategyDetail.timelineLoadingShort")}</div>
             ) : detailTimelineData && detailTimelineData.tranches && detailTimelineData.tranches.length > 0 ? (
               <InlineTimelineV2 data={detailTimelineData} />
             ) : (
-              <div className="sdm-muted">时间线数据未生成,可点击底部"设为当前对比策略"按钮触发即时计算。</div>
+              <div className="sdm-muted">{t("strategyDetail.timelineMissing")}</div>
             )}
           </div>
         )}
@@ -481,7 +481,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         <div className="sdm-footer">
           <div className="sdm-footer-meta">
             {strategy.strategyId && (
-              <span className="sdm-footer-meta-item">策略 ID: {strategy.strategyId}</span>
+              <span className="sdm-footer-meta-item">{t("common.strategyId", { id: strategy.strategyId })}</span>
             )}
           </div>
           <div className="sdm-footer-actions">
@@ -767,6 +767,11 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           grid-template-columns: repeat(2, 1fr);
           gap: 6px 14px;
         }
+        @media (max-width: 768px) {
+          .sdm-intro-list {
+            grid-template-columns: 1fr;
+          }
+        }
         .sdm-intro-row {
           display: flex;
           align-items: center;
@@ -967,7 +972,7 @@ function InlineTimeline(/** @type {any} */ props) {
   const { data } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) {
-    return <div className="sdm-muted">无时间线数据</div>;
+    return <div className="sdm-muted">{t("strategyDetail.noTimeline")}</div>;
   }
 
   /** @type {(n: number) => string} */
@@ -978,7 +983,7 @@ function InlineTimeline(/** @type {any} */ props) {
   const labelFor = (m) => {
     const years = Math.floor(m / 12);
     const months = m % 12;
-    return `Y${years}M${months}`;
+    return t("common.yearMonthLabel", { y: years, mo: months });
   };
 
   return (
@@ -986,23 +991,23 @@ function InlineTimeline(/** @type {any} */ props) {
       <table className="sdm-timeline-table">
         <thead>
           <tr>
-            <th rowSpan={2}>明细项</th>
-            <th rowSpan={2}>初始本金</th>
+            <th rowSpan={2}>{t("strategyDetail.rowInitialBalance")}</th>
+            <th rowSpan={2}>{t("strategyDetail.rowInitialBalance")}</th>
             {snapshotMonths.map((/** @type {number} */ m) => (
               <th key={m} colSpan={4}>{labelFor(m)}</th>
             ))}
           </tr>
           <tr>
             {snapshotMonths.map((/** @type {number} */ m) => (
-              <th key={`sub-${m}`} className="sdm-subhead">利率</th>
+              <th key={`sub-${m}`} className="sdm-subhead">{t("strategyDetail.colRate")}</th>
             )).flatMap((_t, idx) => {
               // For each snapshot month emit 4 sub-headers (利率 / 续约 / 利息 / 本金)
               const out = [];
               for (let i = 0; i < snapshotMonths.length; i++) {
-                out.push(<th key={`sub-${snapshotMonths[i]}-rate`} className="sdm-subhead">利率</th>);
-                out.push(<th key={`sub-${snapshotMonths[i]}-ev`} className="sdm-subhead">续约</th>);
-                out.push(<th key={`sub-${snapshotMonths[i]}-int`} className="sdm-subhead">利息</th>);
-                out.push(<th key={`sub-${snapshotMonths[i]}-pr`} className="sdm-subhead">本金</th>);
+                out.push(<th key={`sub-${snapshotMonths[i]}-rate`} className="sdm-subhead">{t("strategyDetail.colRate")}</th>);
+                out.push(<th key={`sub-${snapshotMonths[i]}-ev`} className="sdm-subhead">{t("strategyDetail.colRefix")}</th>);
+                out.push(<th key={`sub-${snapshotMonths[i]}-int`} className="sdm-subhead">{t("strategyDetail.colInterest")}</th>);
+                out.push(<th key={`sub-${snapshotMonths[i]}-pr`} className="sdm-subhead">{t("strategyDetail.colPrincipal")}</th>);
               }
               return out;
             })}
@@ -1041,7 +1046,7 @@ function InlineTimeline(/** @type {any} */ props) {
             // Totals row: sum interestPaid and principalRepaid across tranches per snapshot.
             return (
               <tr className="sdm-total-row">
-                <td className="sdm-row-label" colSpan={2}>合计</td>
+                <td className="sdm-row-label" colSpan={2}>{t("strategyDetail.totalLabel")}</td>
                 {snapshotMonths.map((/** @type {number} */ _m, /** @type {number} */ i) => {
                   let totalInterest = 0;
                   let totalPrincipal = 0;
@@ -1128,7 +1133,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
   const { data } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) {
-    return <div className="sdm-muted">无时间线数据</div>;
+    return <div className="sdm-muted">{t("strategyDetail.noTimeline")}</div>;
   }
 
   const money = (n) => `$${Math.round(n).toLocaleString()}`;
@@ -1136,7 +1141,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
   const labelFor = (m) => {
     const years = Math.floor(m / 12);
     const months = m % 12;
-    return `Y${years}M${months}`;
+    return t("common.yearMonthLabel", { y: years, mo: months });
   };
   const sumBy = (list, pick) => list.reduce((sum, item) => sum + (pick(item) || 0), 0);
 
@@ -1170,12 +1175,12 @@ function InlineTimelineV2(/** @type {any} */ props) {
         </colgroup>
         <thead>
           <tr>
-            <th className="sdm-v2-head-sticky-1">贷款分片</th>
-            <th className="sdm-v2-head-sticky-2">明细项</th>
+            <th className="sdm-v2-head-sticky-1">{t("strategyDetail.rowLabel")}</th>
+            <th className="sdm-v2-head-sticky-2">{t("strategyDetail.rowInitialBalance")}</th>
             {snapshotMonths.map((/** @type {number} */ m) => (
               <th key={m}>{labelFor(m)}</th>
             ))}
-            <th>期末/累计总计</th>
+            <th>{t("common.totalAccumulated")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1186,10 +1191,10 @@ function InlineTimelineV2(/** @type {any} */ props) {
             const finalBalance = snaps[snaps.length - 1]?.balance || tranche.initialBalance;
 
             const rows = [
-              { key: "rate", label: "预测利率", valueFor: (snap) => ratePct(snap.rate), finalValue: "—" },
-              { key: "payment", label: "预测还款额", valueFor: (snap) => money(snap.totalPayment), finalValue: money(totalPayment), className: "sdm-tone-indigo" },
-              { key: "interest", label: "预测支付利息", valueFor: (snap) => money(snap.interestPaid), finalValue: money(totalInterest), className: "sdm-tone-indigo" },
-              { key: "balance", label: "预测本金余额", valueFor: (snap) => money(snap.balance), finalValue: money(finalBalance), className: "sdm-tone-emerald" }
+              { key: "rate", label: t("strategyDetail.predictedRate"), valueFor: (snap) => ratePct(snap.rate), finalValue: "—" },
+              { key: "payment", label: t("strategyDetail.predictedPayment"), valueFor: (snap) => money(snap.totalPayment), finalValue: money(totalPayment), className: "sdm-tone-indigo" },
+              { key: "interest", label: t("strategyDetail.predictedInterest"), valueFor: (snap) => money(snap.interestPaid), finalValue: money(totalInterest), className: "sdm-tone-indigo" },
+              { key: "balance", label: t("strategyDetail.predictedBalance"), valueFor: (snap) => money(snap.balance), finalValue: money(finalBalance), className: "sdm-tone-emerald" }
             ];
 
             return rows.map((row, rowIndex) => (
@@ -1212,10 +1217,10 @@ function InlineTimelineV2(/** @type {any} */ props) {
           })}
 
           {[
-            { key: "rate", label: "预测利率", valueFor: (col) => ratePct(col.weightedRate), finalValue: ratePct(finalTotalRate) },
-            { key: "payment", label: "预测还款额", valueFor: (col) => money(col.totalPayment), finalValue: money(sumBy(totalColumns, (col) => col.totalPayment)), className: "sdm-tone-indigo" },
-            { key: "interest", label: "预测支付利息", valueFor: (col) => money(col.totalInterest), finalValue: money(sumBy(totalColumns, (col) => col.totalInterest)), className: "sdm-tone-indigo" },
-            { key: "balance", label: "预测本金余额", valueFor: (col) => money(col.totalBalance), finalValue: money(totalColumns[totalColumns.length - 1]?.totalBalance || 0), className: "sdm-tone-emerald" }
+            { key: "rate", label: t("strategyDetail.predictedRate"), valueFor: (col) => ratePct(col.weightedRate), finalValue: ratePct(finalTotalRate) },
+            { key: "payment", label: t("strategyDetail.predictedPayment"), valueFor: (col) => money(col.totalPayment), finalValue: money(sumBy(totalColumns, (col) => col.totalPayment)), className: "sdm-tone-indigo" },
+            { key: "interest", label: t("strategyDetail.predictedInterest"), valueFor: (col) => money(col.totalInterest), finalValue: money(sumBy(totalColumns, (col) => col.totalInterest)), className: "sdm-tone-indigo" },
+            { key: "balance", label: t("strategyDetail.predictedBalance"), valueFor: (col) => money(col.totalBalance), finalValue: money(totalColumns[totalColumns.length - 1]?.totalBalance || 0), className: "sdm-tone-emerald" }
           ].map((row, rowIndex, rows) => (
             <tr key={`total-${row.key}`} className={`sdm-v2-total-row ${row.className || ""}`}>
               {rowIndex === 0 && (
@@ -1373,7 +1378,7 @@ function BalanceLinechart(/** @type {any} */ props) {
         data={[
           {
             id: "balance-path",
-            label: "本金余额",
+            label: t("strategyDetail.balancePath"),
             color: "var(--color-primary)",
             fill: true,
             points: chartPoints

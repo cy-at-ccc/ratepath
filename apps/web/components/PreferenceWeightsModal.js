@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useI18n } from "../lib/i18n/useI18n.js";
 
 function applySliderFill(/** @type {HTMLInputElement | null} */ el) {
   if (!el) return;
@@ -34,7 +35,7 @@ const KEY_COMMIT_KEYS = new Set([
 ]);
 
 function WeightSliderItem(/** @type {any} */ props) {
-  const { item, value, onCommit, minText, maxText, explanation, ariaLabel } = props;
+  const { item, value, onCommit, minText, maxText, explanation, ariaLabel, t } = props;
   const sliderRef = useRef(/** @type {HTMLInputElement | null} */ (null));
   const displayRef = useRef(/** @type {HTMLSpanElement | null} */ (null));
   const draggingRef = useRef(false);
@@ -100,7 +101,7 @@ function WeightSliderItem(/** @type {any} */ props) {
             if (KEY_COMMIT_KEYS.has(e.key)) commit();
           }}
           aria-label={ariaLabel}
-          aria-valuetext={`${value}%`}
+          aria-valuetext={t ? t("common.weightAria", { label: ariaLabel }) : `${value}%`}
           className="slider-input"
         />
         <div className="pwm-range">
@@ -128,6 +129,7 @@ function WeightSliderItem(/** @type {any} */ props) {
  *   pass the canonical value to avoid drift if a key is hidden in items[].
  */
 export default function PreferenceWeightsModal(/** @type {any} */ props) {
+  const { t } = useI18n();
   const {
     isOpen,
     onClose,
@@ -199,13 +201,13 @@ export default function PreferenceWeightsModal(/** @type {any} */ props) {
       <div ref={cardRef} className="pwm-card glass-panel">
         <div className="pwm-header">
           <div>
-            <div className="pwm-eyebrow">偏好推荐专用</div>
-            <h3 id="pwm-title" className="pwm-title">个人还款偏好</h3>
+            <div className="pwm-eyebrow">{t("preferenceWeights.eyebrow")}</div>
+            <h3 id="pwm-title" className="pwm-title">{t("preferenceWeights.title")}</h3>
             <p className="pwm-copy">
-              这里只影响“偏好匹配推荐”这张卡。所有权重之和固定为 100%，调高某一项时，其余项会按比例自动缩放。
+              {t("preferenceWeights.copy")}
             </p>
             <p className="pwm-copy" style={{ marginTop: "6px", color: "var(--text-muted)", fontSize: "12px" }}>
-              每项权重上限 25%。至少 4 个维度需同时考虑。
+              {t("preferenceWeights.copy2")}
             </p>
           </div>
           <button
@@ -213,9 +215,9 @@ export default function PreferenceWeightsModal(/** @type {any} */ props) {
             type="button"
             className="pwm-close"
             onClick={onClose}
-            aria-label="关闭偏好设置"
+            aria-label={t("preferenceWeights.closeAria")}
           >
-            x
+            ×
           </button>
         </div>
 
@@ -229,7 +231,8 @@ export default function PreferenceWeightsModal(/** @type {any} */ props) {
               minText={item.minText}
               maxText={item.maxText}
               explanation={item.explanation}
-              ariaLabel={`${item.label}权重`}
+              ariaLabel={`${item.label} ${t("common.weightAria", { label: "" }).trim() || ""}`.trim()}
+              t={t}
             />
           ))}
         </div>
@@ -262,21 +265,21 @@ export default function PreferenceWeightsModal(/** @type {any} */ props) {
               role="status"
               aria-live="polite"
             >
-              已分配 {total}% ({activeKeys}/{TOTAL_KEYS} 维度); 剩余 {zeroKeys} 维度权重为 0
+              {t("common.allocate", { total, active: activeKeys, totalKeys: TOTAL_KEYS, zero: zeroKeys })}
             </div>
           );
         })()}
 
         <div className="pwm-footer">
-          <div className="pwm-total">当前总和: 100%</div>
+          <div className="pwm-total">{t("common.totalSum")}</div>
           <div className="pwm-actions">
             {isModified && (
               <button type="button" className="btn btn-secondary" onClick={onReset}>
-                重置默认
+                {t("preferenceWeights.resetBtn")}
               </button>
             )}
             <button type="button" className="btn btn-primary" onClick={onClose}>
-              完成
+              {t("preferenceWeights.confirmBtn")}
             </button>
           </div>
         </div>

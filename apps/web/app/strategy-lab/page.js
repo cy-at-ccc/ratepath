@@ -17,6 +17,7 @@ import { calculateScheduledPayment } from "@mortgage/mortgage-engine";
 import SvgChart from "../../components/SvgChart.js";
 import StrategyDetailModal from "../../components/StrategyDetailModal.js";
 import { NumberInput } from "../../components/index.js";
+import { useI18n } from "../../lib/i18n/useI18n.js";
 
 /**
  * Compute the percentage of the slider's value between min/max and apply it as
@@ -79,26 +80,29 @@ function Slider(/** @type {any} */ props) {
   );
 }
 
-// Friendly Chinese label for each recommendation key. Used by the strategy
-// detail modal so users see a meaningful subtitle (e.g. "偏好匹配推荐")
-// instead of the internal key (e.g. "preference"). v9 collapsed 10 v6
-// benchmarks into 4 cards; the legacy keys are kept as fallbacks but are
-// never populated by the optimiser any more.
-const RECOMMENDATION_LABEL_MAP = {
-  preference: "偏好匹配推荐",
-  lowestCost: "最低期望成本",
-  mostStable: "最稳供款数",
-  worstCaseDefense: "最坏情景抗压",
-  lowestWorstCaseCost: "最坏利息最优",
-  lowestWorstCasePayment: "峰值供款最优",
-  lowestRefixConcentration: "到期分散最优",
-  lowestBudgetBreaches: "预算最稳",
-  lowestVolatility: "还款波动最小",
-  lowestEndingBalance: "本金压缩最快",
-  mostFloating: "浮动头寸最高"
-};
-
 export default function StrategyLab() {
+  const { t, formatMoney: formatMoneyCtx, productDisplayName } = useI18n();
+  const formatMoney = formatMoneyCtx;
+
+  // Friendly label for each recommendation key. Used by the strategy
+  // detail modal so users see a meaningful subtitle (e.g. "偏好匹配推荐")
+  // instead of the internal key (e.g. "preference"). v9 collapsed 10 v6
+  // benchmarks into 4 cards; the legacy keys are kept as fallbacks but are
+  // never populated by the optimiser any more. Computed via useMemo so
+  // translations are looked up once per locale switch.
+  const RECOMMENDATION_LABEL_MAP = useMemo(() => ({
+    preference: t("strategyLab.recCard.preference.title"),
+    lowestCost: t("strategyLab.recCard.lowestCost.title"),
+    mostStable: t("strategyLab.recCard.mostStable.title"),
+    worstCaseDefense: t("strategyLab.recCard.worstCase.title"),
+    lowestWorstCaseCost: t("strategyLab.recCard.lowestCost.title"),
+    lowestWorstCasePayment: t("strategyLab.recCard.mostStable.title"),
+    lowestRefixConcentration: t("strategyLab.recCard.lowestRefixConcentration"),
+    lowestBudgetBreaches: t("strategyLab.recCard.lowestBudgetBreaches"),
+    lowestVolatility: t("strategyLab.recCard.lowestVolatility"),
+    lowestEndingBalance: t("strategyLab.recCard.lowestEndingBalance"),
+    mostFloating: t("strategyLab.recCard.mostFloating")
+  }), [t]);
   const [mortgage, setMortgage] = useState(/** @type {any} */(null));
   const [loading, setLoading] = useState(true);
 
@@ -109,7 +113,7 @@ export default function StrategyLab() {
   const [uncertainty, setUncertainty] = useState(0.01); // 0 to 2%
   const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 15, base: 70, high: 15 });
   const [longTermCycleYears, setLongTermCycleYears] = useState(2);
-  const [longTermReversalBias, setLongTermReversalBias] = useState(0.7);
+  const [longTermReversalBias, setLongTermReversalBias] = useState(0.5);
   const [simDurationYears, setSimDurationYears] = useState(5); // default 5 years (60 months)
 
   // Sim-horizon upper bound:
@@ -330,11 +334,11 @@ export default function StrategyLab() {
   };
 
   const isLongTermModified = longTermCycleYears !== 2 ||
-    longTermReversalBias !== 0.7;
+    longTermReversalBias !== 0.5;
 
   const handleResetLongTerm = () => {
     setLongTermCycleYears(2);
-    setLongTermReversalBias(0.7);
+    setLongTermReversalBias(0.5);
   };
 
   const isHorizonModified = simDurationYears !== defaultSimDurationYears;
@@ -825,11 +829,10 @@ export default function StrategyLab() {
       const familyScenario = activeScenarios.find((/** @type {any} */ s) => (s.assumptions?.scenarioFamily || s.id) === familyId);
       return {
         id: familyId,
-        name: familyId === "low"
-          ? `低利率情景 (${scenarioProbabilities.low}%)`
-          : familyId === "base"
-            ? `基准情景 (${scenarioProbabilities.base}%)`
-            : `高利率情景 (${scenarioProbabilities.high}%)`,
+        name: t(
+          familyId === "low" ? "strategyLab.scenarioFamily.low" : familyId === "base" ? "strategyLab.scenarioFamily.base" : "strategyLab.scenarioFamily.high",
+          { pct: familyId === "low" ? scenarioProbabilities.low : familyId === "base" ? scenarioProbabilities.base : scenarioProbabilities.high }
+        ),
         color: familyId === "low" ? "var(--color-emerald)" : familyId === "base" ? "var(--color-primary)" : "var(--color-rose)",
         points: (familyScenario?.policyRatePath || [])
           .filter((/** @type {any} */ p) => p.month <= deterministicHorizonMonths)
@@ -847,53 +850,53 @@ export default function StrategyLab() {
       ? [
           {
             id: "expected",
-            label: "概率加权期望路径",
+            label: t("strategyLab.path.expected.label"),
             type: "expected",
             color: "#f8fafc",
             strokeDasharray: "6 6",
-            description: "按低 / 基准 / 高情景权重加权后的平均 OCR 路径，适合作为默认综合推荐依据。",
+            description: t("strategyLab.path.expected.desc"),
             targetStats: expectedPathStats
           },
           {
             id: "optimistic",
-            label: "长期乐观路径",
+            label: t("strategyLab.path.optimistic.label"),
             type: "scenario",
             scenarioId: optimisticScenario?.id,
             color: "var(--chart-optimistic)",
             strokeDasharray: "2 6",
-            description: "长期 OCR 偏低的代表路径，适合查看降息或低利率延续时的 split 表现。",
+            description: t("strategyLab.path.optimistic.desc"),
             targetStats: scenarioPathStats(optimisticScenario)
           },
           {
             id: "median",
-            label: "长期中性路径",
+            label: t("strategyLab.path.median.label"),
             type: "scenario",
             scenarioId: medianScenario?.id,
             color: "var(--chart-median)",
             strokeDasharray: "6 4",
-            description: "长期 OCR 处在样本中间位置的代表路径，适合作为中性长期判断。",
+            description: t("strategyLab.path.median.desc"),
             targetStats: scenarioPathStats(medianScenario)
           },
           {
             id: "stress",
-            label: "长期压力路径",
+            label: t("strategyLab.path.stress.label"),
             type: "scenario",
             scenarioId: stressScenario?.id,
             color: "var(--color-rose)",
             strokeDasharray: "10 6",
-            description: "长期 OCR 偏高的代表路径，适合观察高息压力下的供款峰值和剩余本金。",
+            description: t("strategyLab.path.stress.desc"),
             targetStats: scenarioPathStats(stressScenario)
           }
         ]
       : [
           {
             id: "base",
-            label: "基准情景",
+            label: "Base scenario",
             type: "scenario",
             scenarioId: "base",
             color: "var(--color-primary)",
             strokeDasharray: undefined,
-            description: "36 个月以内使用基准 OCR 情景作为推荐和明细依据。",
+            description: t("strategyLab.scenarioDescBase"),
             targetStats: scenarioPathStats(activeScenarios.find((/** @type {any} */ s) => s.id === "base"))
           }
         ];
@@ -949,7 +952,7 @@ export default function StrategyLab() {
     if (!simResults) return;
     const activeOption = detailScenarioOptions.find((/** @type {any} */ opt) => opt.id === selectedDetailScenario)
       || detailScenarioOptions[0]
-      || { id: "expected", label: "概率加权期望路径", type: "expected" };
+      || { id: "expected", label: t("common.expected"), type: "expected" };
     const selectedScenarioId = activeOption.type === "scenario" ? activeOption.scenarioId : null;
     const activeSimulationResults = selectedScenarioId
       ? simResults.filter((/** @type {any} */ r) => r.scenarioId === selectedScenarioId)
@@ -1123,7 +1126,7 @@ export default function StrategyLab() {
     if (strategies.length === 0) {
       simulationInFlightRef.current = false;
       setSimulationRunning(false);
-      setError("当前拆分约束下没有可行方案。请提高最大 split 数、放宽浮动比例上限，或检查贷款总额与最小分包金额。");
+      setError(t("strategyLab.noResults"));
       return;
     }
 
@@ -1201,7 +1204,7 @@ export default function StrategyLab() {
         });
       } else if (msg.type === "error") {
         console.error("Worker error:", msg.error);
-        setError("模拟运行失败: " + msg.error);
+        setError(t("common.workerError", { message: msg.error }));
         simulationInFlightRef.current = false;
         setSimulationRunning(false);
       }
@@ -1254,11 +1257,11 @@ export default function StrategyLab() {
   };
 
   const getRepaymentFrequencyLabel = () => {
-    if (!mortgage) return "月供";
+    if (!mortgage) return t("common.monthly");
     const freq = mortgage.repaymentFrequency;
-    if (freq === "weekly") return "周供";
-    if (freq === "fortnightly") return "双周供";
-    return "月供";
+    if (freq === "weekly") return t("common.weekly");
+    if (freq === "fortnightly") return t("common.fortnightly");
+    return t("common.monthly");
   };
 
   const getActiveDetailScenarioOption = () =>
@@ -1284,9 +1287,9 @@ export default function StrategyLab() {
           type="button"
           className="btn btn-secondary rec-card-cta"
           onClick={(e) => openStrategyDetailModal(e, strategyId, recKey, origin)}
-          aria-label={`查看 ${recKey} 策略 ${renderStrategySplit(strategyId)} 的完整明细`}
+          aria-label={t("common.splitBadgeAria", { rec: recKey, split: renderStrategySplit(strategyId) })}
         >
-          查看详情
+          {t("common.viewDetails")}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 18l6-6-6-6" />
           </svg>
@@ -1298,59 +1301,59 @@ export default function StrategyLab() {
   const preferenceWeightItems = [
     {
       key: "cost",
-      label: "利息成本 (Interest Cost)",
-      minText: "成本低优先",
-      maxText: "忽略成本",
-      explanation: "调高后会更偏向总利息更低的方案。"
+      label: t("strategyLab.weightKeys.cost"),
+      minText: t("strategyLab.weightKeys.costMin"),
+      maxText: t("strategyLab.weightKeys.costMax"),
+      explanation: t("strategyLab.weightKeys.costExplain"),
     },
     {
       key: "principal",
-      label: "本金还款速度 (Principal Paydown)",
-      minText: "慢速还本",
-      maxText: "快速还本优先",
-      explanation: `调高后会更偏向在 ${simDurationYears} 年窗口内更快压低剩余本金。`
+      label: t("strategyLab.weightKeys.principal"),
+      minText: t("strategyLab.weightKeys.principalMin"),
+      maxText: t("strategyLab.weightKeys.principalMax"),
+      explanation: t("strategyLab.weightKeys.principalExplain", { y: simDurationYears }),
     },
     {
       key: "refix",
-      label: "利率重定价风险 (Refix Risk)",
-      minText: "忽略风险",
-      maxText: "分散到期优先",
-      explanation: "调高后会更偏向分散不同 tranche 的到期月份。"
+      label: t("strategyLab.weightKeys.refix"),
+      minText: t("strategyLab.weightKeys.refixMin"),
+      maxText: t("strategyLab.weightKeys.refixMax"),
+      explanation: t("strategyLab.weightKeys.refixExplain"),
     },
     {
       key: "flex",
-      label: "资金流灵活性 (Floating Flex)",
-      minText: "不重要",
-      maxText: "高比例浮动优先",
-      explanation: "调高后会尽量把允许的浮动 / Offset 额度用满。"
+      label: t("strategyLab.weightKeys.flex"),
+      minText: t("strategyLab.weightKeys.flexMin"),
+      maxText: t("strategyLab.weightKeys.flexMax"),
+      explanation: t("strategyLab.weightKeys.flexExplain"),
     },
     {
       key: "resilience",
-      label: "极端高息抗压性 (Stress Resistance)",
-      minText: "不考虑极端",
-      maxText: "低最高供款优先",
-      explanation: "调高后会更偏向压低最坏情景下的供款峰值。"
+      label: t("strategyLab.weightKeys.resilience"),
+      minText: t("strategyLab.weightKeys.resilienceMin"),
+      maxText: t("strategyLab.weightKeys.resilienceMax"),
+      explanation: t("strategyLab.weightKeys.resilienceExplain"),
     },
     {
       key: "budget",
-      label: "预算超限控制 (Budget Safety)",
-      minText: "不考虑预算",
-      maxText: "少超预算优先",
-      explanation: "调高后会更偏向减少模拟期内超出预算上限的次数。"
+      label: t("strategyLab.weightKeys.budget"),
+      minText: t("strategyLab.weightKeys.budgetMin"),
+      maxText: t("strategyLab.weightKeys.budgetMax"),
+      explanation: t("strategyLab.weightKeys.budgetExplain"),
     },
     {
       key: "smoothness",
-      label: "供款平稳度 (Payment Smoothness)",
-      minText: "容忍波动",
-      maxText: "平稳供款优先",
-      explanation: "调高后会更偏向减少每次 refix 带来的月供跳变。"
+      label: t("strategyLab.weightKeys.smoothness"),
+      minText: t("strategyLab.weightKeys.smoothnessMin"),
+      maxText: t("strategyLab.weightKeys.smoothnessMax"),
+      explanation: t("strategyLab.weightKeys.smoothnessExplain"),
     },
     {
       key: "worstCaseDefense",
-      label: "最坏情况抗压性 (Worst-Case Defense)",
-      minText: "不在乎最坏",
-      maxText: "抗压优先",
-      explanation: "综合最坏情景防御(最坏利息 + 违约 + 月供)。拖高此滑块会同时影响 ①preference 和 ④worstCaseDefense 两张卡。"
+      label: t("strategyLab.weightKeys.worstCaseDefense"),
+      minText: t("strategyLab.weightKeys.worstCaseDefenseMin"),
+      maxText: t("strategyLab.weightKeys.worstCaseDefenseMax"),
+      explanation: t("strategyLab.weightKeys.worstCaseDefenseExplain"),
     }
   ];
 
@@ -1362,26 +1365,26 @@ export default function StrategyLab() {
     const activeOption = getActiveDetailScenarioOption();
     if (!activeOption) return null;
     const stats = activeOption.targetStats;
-    const pathLabel = activeOption.label || "当前 OCR 路径";
+    const pathLabel = activeOption.label || t("common.expected");
 
     return (
       <div className="recommendation-path-explain">
         <div className="path-explain-copy">
           <span className="path-dot" style={{ background: activeOption.color || "var(--text-secondary)" }} />
-          <span>当前推荐按 <strong>{pathLabel}</strong> 计算；下方数字是这条 OCR 路径在模拟末段的关键读数。</span>
+          <span>{t("strategyLab.pathExplain.current", { path: pathLabel })}</span>
         </div>
         {stats && (
           <div className="path-target-grid">
             <div>
-              <span>末年均值</span>
+              <span>{t("strategyLab.pathExplain.avg")}</span>
               <strong>{formatRatePercent(stats.averageRate)}</strong>
             </div>
             <div>
-              <span>末年区间</span>
+              <span>{t("strategyLab.pathExplain.range")}</span>
               <strong>{formatRatePercent(stats.minRate)} - {formatRatePercent(stats.maxRate)}</strong>
             </div>
             <div>
-              <span>期末 OCR</span>
+              <span>{t("strategyLab.pathExplain.final")}</span>
               <strong>{formatRatePercent(stats.finalRate)}</strong>
             </div>
           </div>
@@ -1455,7 +1458,7 @@ export default function StrategyLab() {
       maxPayment: scenarioResult ? scenarioResult.maximumPayment : strategySummary.expectedMaxPayment,
       endingBalance,
       principalRepaid: getTotalBalance() - endingBalance,
-      label: activeOption?.label || "概率加权期望路径",
+      label: activeOption?.label || t("common.expected"),
       isScenarioSpecific: Boolean(scenarioResult)
     };
   };
@@ -1464,35 +1467,35 @@ export default function StrategyLab() {
     const metrics = getStrategyDisplayMetrics(strategyId);
     if (!metrics) return null;
     const freqLabel = getRepaymentFrequencyLabel();
-    const metricLabelPrefix = metrics.isScenarioSpecific ? metrics.label : "期望";
+    const metricLabelPrefix = metrics.isScenarioSpecific ? metrics.label : t("strategyLab.metricLabelPrefix.expected");
 
     return (
       <div className="rec-metrics">
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            {metricLabelPrefix}总利息
+            {metricLabelPrefix}{t("strategyLab.rec.metric.expectedTotalInterest")}
           </span>
           <span className="stat-tile-val">${Math.round(metrics.interest).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-            {metricLabelPrefix}最高{freqLabel}
+            {metricLabelPrefix}{t("strategyLab.rec.metric.expectedMaxPayment", { freq: freqLabel })}
           </span>
           <span className="stat-tile-val text-rose">${Math.round(metrics.maxPayment).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" /></svg>
-            {metricLabelPrefix}已还本金
+            {metricLabelPrefix}{t("strategyLab.rec.metric.principalRepaid")}
           </span>
           <span className="stat-tile-val text-emerald">${Math.round(metrics.principalRepaid).toLocaleString()}</span>
         </div>
         <div className="rec-metric stat-tile">
           <span className="stat-tile-lbl">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
-            {metricLabelPrefix}剩余本金
+            {metricLabelPrefix}{t("strategyLab.rec.metric.endingBalance")}
           </span>
           <span className="stat-tile-val">${Math.round(metrics.endingBalance).toLocaleString()}</span>
         </div>
@@ -1687,19 +1690,19 @@ export default function StrategyLab() {
     // current Pareto set and marks each as "优异" (top 20%) or "较弱" (bottom
     // 20%). The exact axis label is in `label` and rendered in the modal.
     const tradeOffAxes = [
-      { key: "expectedInterest", label: "期望利息", direction: "min" },
-      { key: "worstCaseInterest", label: "最坏利息", direction: "min" },
-      { key: "worstCasePayment", label: "最坏月供", direction: "min" },
-      { key: "expectedMaxPayment", label: "期望最高供款", direction: "min" },
-      { key: "expectedMaxConcurrentRefixPercentage", label: "到期集中度", direction: "min" },
-      { key: "expectedAffordabilityBreaches", label: "预算超限", direction: "min" },
-      { key: "worstCaseAffordabilityBreaches", label: "最坏违约", direction: "min" },
-      { key: "expectedRefixEventCount", label: "refix 事件数", direction: "min" },
-      { key: "expectedPaymentVolatility", label: "供款波动", direction: "min" },
-      { key: "expectedEndingBalance", label: "期末本金", direction: "min" },
-      { key: "expectedFloatingExposure", label: "浮动比例", direction: "max" },
-      { key: "flexibilityPenalty", label: "灵活度惩罚", direction: "min" },
-      { key: "concentration", label: "分散度 (最大单笔占比)", direction: "min" }
+      { key: "expectedInterest", label: t("strategyLab.intro.interestLabel"), direction: "min" },
+      { key: "worstCaseInterest", label: "Worst-case interest", direction: "min" },
+      { key: "worstCasePayment", label: "Worst-case payment", direction: "min" },
+      { key: "expectedMaxPayment", label: `Expected max ${freqLabel}`, direction: "min" },
+      { key: "expectedMaxConcurrentRefixPercentage", label: "Refix concentration", direction: "min" },
+      { key: "expectedAffordabilityBreaches", label: "Budget overage", direction: "min" },
+      { key: "worstCaseAffordabilityBreaches", label: "Worst-case overage", direction: "min" },
+      { key: "expectedRefixEventCount", label: "Refix event count", direction: "min" },
+      { key: "expectedPaymentVolatility", label: "Payment volatility", direction: "min" },
+      { key: "expectedEndingBalance", label: "Ending principal", direction: "min" },
+      { key: "expectedFloatingExposure", label: "Floating share", direction: "max" },
+      { key: "flexibilityPenalty", label: "Flexibility penalty", direction: "min" },
+      { key: "concentration", label: "Concentration (largest single share)", direction: "min" }
     ];
     const boundsFor = (key) => {
       const values = allStrategies.map((s) => s[key]).filter((v) => typeof v === "number");
@@ -1712,17 +1715,17 @@ export default function StrategyLab() {
       const b = boundsFor(axis.key);
       const v = strategy[axis.key];
       if (typeof v !== "number") {
-        return { label: axis.label, status: "中位" };
+        return { label: axis.label, status: t("strategyLab.intro.statusMid") };
       }
       const normalized = (v - b.min) / b.diff;
       if (axis.direction === "max") {
-        if (normalized >= 0.8) return { label: axis.label, status: "优异" };
-        if (normalized <= 0.2) return { label: axis.label, status: "较弱" };
-        return { label: axis.label, status: "中位" };
+        if (normalized >= 0.8) return { label: axis.label, status: t("strategyLab.intro.statusTop") };
+        if (normalized <= 0.2) return { label: axis.label, status: t("strategyLab.intro.statusBottom") };
+        return { label: axis.label, status: t("strategyLab.intro.statusMid") };
       }
-      if (normalized <= 0.2) return { label: axis.label, status: "优异" };
-      if (normalized >= 0.8) return { label: axis.label, status: "较弱" };
-      return { label: axis.label, status: "中位" };
+      if (normalized <= 0.2) return { label: axis.label, status: t("strategyLab.intro.statusTop") };
+      if (normalized >= 0.8) return { label: axis.label, status: t("strategyLab.intro.statusBottom") };
+      return { label: axis.label, status: t("strategyLab.intro.statusMid") };
     });
 
     // whyThisOne: short narrative per card type. Falls back to a generic
@@ -1730,27 +1733,27 @@ export default function StrategyLab() {
     let whyThisOne = "";
     const recIds = ctx?.recIds || {};
     if (originCard === "preference") {
-      whyThisOne = `按照您当前的 8 维偏好权重综合评分，此方案在「期望成本 / 本金压缩 / 浮动灵活 / 抗压 / 预算 / 平稳 / refix」之间的综合表现排名第 1。`;
+      whyThisOne = t("strategyLab.intro.whyThisOnePersonal", { rank: 1 });
     } else if (originCard === "lowestCost") {
-      whyThisOne = `在所有未来利率走势下，数学期望的总利息支出最低（与权重无关，仅作为客观基准）。`;
+      whyThisOne = t("strategyLab.intro.whyThisOneCost");
       if (recIds.preference && recIds.preference !== strategy.strategyId) {
-        whyThisOne += `（本卡已避开偏好卡选中的方案，仅作为客观基准。）`;
+        whyThisOne += " " + t("strategyLab.intro.whyThisOneAvoid", { other: t("strategyLab.recCard.preference.title"), focus: "lowest-cost" });
       }
     } else if (originCard === "mostStable") {
-      whyThisOne = `最坏情景下的月供峰值最小，还款流最稳定（与权重无关，仅作为客观基准）。`;
+      whyThisOne = t("strategyLab.intro.whyThisOneStable");
       if (recIds.preference && recIds.lowestCost && strategy.strategyId !== recIds.preference && strategy.strategyId !== recIds.lowestCost) {
-        whyThisOne += `（本卡已避开偏好卡与最低成本卡选中的方案，仅作为客观基准。）`;
+        whyThisOne += " " + t("strategyLab.intro.whyThisOneAvoidTwo", { a: t("strategyLab.recCard.preference.title"), b: t("strategyLab.recCard.lowestCost.title"), focus: "stable payment" });
       }
     } else if (originCard === "worstCaseDefense") {
-      whyThisOne = `综合最坏总利息 + 违约次数 + 月供峰值的客观最优（0.5/0.3/0.2 加权），是极端尾部防御的代表组合。`;
+      whyThisOne = t("strategyLab.intro.whyThisOneWorst");
       if (recIds.preference && recIds.lowestCost && recIds.mostStable &&
           strategy.strategyId !== recIds.preference &&
           strategy.strategyId !== recIds.lowestCost &&
           strategy.strategyId !== recIds.mostStable) {
-        whyThisOne += `（本卡已避开前 3 张卡选中的方案，仅作为客观基准。）`;
+        whyThisOne += " " + t("strategyLab.intro.whyThisOneAvoidThree", { a: t("strategyLab.recCard.preference.title"), b: t("strategyLab.recCard.lowestCost.title"), c: t("strategyLab.recCard.mostStable.title"), focus: "worst-case" });
       }
     } else {
-      whyThisOne = `该方案在 Pareto 表中按综合评分排名 #${(strategy.score ?? 0).toFixed(2)}。`;
+      whyThisOne = t("strategyLab.intro.whyThisOneRow") + ` #${(strategy.score ?? 0).toFixed(2)}.`;
     }
 
     // suitableFor: scan the strategy's allocation shape for trait tags.
@@ -1759,13 +1762,13 @@ export default function StrategyLab() {
     const floatingExposure = strategy.expectedFloatingExposure || 0;
     const refixCount = strategy.expectedRefixEventCount || 0;
     const breaches = strategy.expectedAffordabilityBreaches || 0;
-    if (floatingExposure >= 0.6) suitableFor.push("高浮动偏好");
-    if (floatingExposure <= 0.1) suitableFor.push("全固定锁死");
-    if (refixCount === 0) suitableFor.push("零 refix");
-    if (breaches === 0) suitableFor.push("预算安全");
-    if ((strategy.expectedEndingBalance || 0) <= boundsFor("expectedEndingBalance").min) suitableFor.push("本金压缩最快");
-    if ((strategy.worstCasePayment || 0) <= boundsFor("worstCasePayment").min) suitableFor.push("极端月供最低");
-    if (suitableFor.length === 0) suitableFor.push("均衡型组合");
+    if (floatingExposure >= 0.6) suitableFor.push(t("strategyLab.intro.suitable.flexHeavy"));
+    if (floatingExposure <= 0.1) suitableFor.push(t("strategyLab.intro.suitable.fixedHeavy"));
+    if (refixCount === 0) suitableFor.push(t("strategyLab.intro.suitable.refixAverse"));
+    if (breaches === 0) suitableFor.push(t("strategyLab.intro.suitable.budgetConstrained"));
+    if ((strategy.expectedEndingBalance || 0) <= boundsFor("expectedEndingBalance").min) suitableFor.push(t("strategyLab.intro.suitable.fastPayoff"));
+    if ((strategy.worstCasePayment || 0) <= boundsFor("worstCasePayment").min) suitableFor.push(t("strategyLab.intro.suitable.stablePayment"));
+    if (suitableFor.length === 0) suitableFor.push("Balanced mix");
 
     // comparison: find 2 nearest strategies by score distance and show
     // interest / stability deltas so the user sees what they gain/lose.
@@ -1780,7 +1783,7 @@ export default function StrategyLab() {
       .sort((a, b) => a.dist - b.dist)
       .slice(0, 2);
     sortedByDist.forEach(({ s }, idx) => {
-      const label = idx === 0 ? "近邻 #1 (相似评分)" : "近邻 #2 (相似评分)";
+      const label = idx === 0 ? t("strategyLab.intro.nearNeighbor1") : t("strategyLab.intro.nearNeighbor2");
       comparison.push({
         label,
         interestDelta: Math.round(((s.expectedInterest || 0) - myInterest)),
@@ -1794,7 +1797,7 @@ export default function StrategyLab() {
   if (loading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "80vh" }}>
-        <div>加载中...</div>
+        <div>{t("common.loading")}</div>
       </div>
     );
   }
@@ -1803,8 +1806,8 @@ export default function StrategyLab() {
     <div className="lab-container">
       <header className="lab-header">
         <div className="header-copy">
-          <h1 className="title">策略仿真实验室</h1>
-          <p className="subtitle">模拟不同未来利率情景，智能优化您的贷款拆分方案。</p>
+          <h1 className="title">{t("strategyLab.title")}</h1>
+          <p className="subtitle">{t("strategyLab.subtitle")}</p>
         </div>
         <div className="header-actions">
           <button
@@ -1812,18 +1815,18 @@ export default function StrategyLab() {
             onClick={() => setHideParameterPanel((prev) => !prev)}
             className="btn btn-secondary top-reset-btn"
             disabled={simulationRunning}
-            title={shouldHideParameterPanel ? "重新显示左侧 input 参数，调整后可再次仿真" : "隐藏左侧 input 参数，专注查看右侧 OCR 曲线和结果"}
+            title={shouldHideParameterPanel ? t("strategyLab.showInputTitle") : t("strategyLab.hideInputTitle")}
           >
-            {shouldHideParameterPanel ? "显示 input 参数" : "隐藏 input 参数"}
+            {shouldHideParameterPanel ? t("strategyLab.showInputBtn") : t("strategyLab.hideInputBtn")}
           </button>
           <button
             type="button"
             onClick={handleClearSimulationOutput}
             className="btn btn-secondary top-reset-btn"
             disabled={simulationRunning || (!simResults && !optimisedData && allStrategies.length === 0)}
-            title="只清空仿真输出、缓存结果和推荐，不重置左侧输入参数"
+            title={t("strategyLab.clearResultsTitle")}
           >
-            清空仿真结果
+            {t("strategyLab.clearResultsBtn")}
           </button>
         </div>
       </header>
@@ -1832,15 +1835,15 @@ export default function StrategyLab() {
         <div className="left-controls-col">
           <section className="glass-panel control-section">
             <h2 className="section-title parameter-section-title">
-              <span>1. 参数分组</span>
+              <span>1. {t("strategyLab.parameters")}</span>
               <button
                 type="button"
                 className="weights-reset-btn parameter-reset-all-btn"
                 onClick={handleResetAllParameters}
                 disabled={!isAnyParameterModified}
-                title="重置全部参数分组到默认值"
+                title={t("strategyLab.resetAllTitle")}
               >
-                重置全部
+                {t("strategyLab.resetAll")}
               </button>
             </h2>
 
@@ -1860,8 +1863,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">1</span>
                   <span>
-                    <span className="control-group-title">短中期 OCR 走势</span>
-                    <span className="control-group-subtitle">影响未来 1-36 个月的确定性路径骨架</span>
+                    <span className="control-group-title">{t("strategyLab.group1.title")}</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group1.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -1882,65 +1885,65 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.trend ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.trend ? t("strategyLab.collapse") + " ▴" : t("strategyLab.expand") + " ▾"}</span>
                 </span>
               </div>
               {openControlGroups.trend && (
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">未来 12 个月利率变化 (Short Term)</span>
+                      <span className="form-label">{t("strategyLab.shortTermChange.label")}</span>
                       <span className="slider-value">{(shortTermChange * 100).toFixed(2)}%</span>
                     </div>
-                    <Slider min={-0.02} max={0.02} step={0.0025} value={shortTermChange} onChange={(e) => setShortTermChange(parseFloat(e.target.value))} aria-label="未来 12 个月利率变化" aria-valuetext={`${(shortTermChange * 100).toFixed(2)}%`} />
+                    <Slider min={-0.02} max={0.02} step={0.0025} value={shortTermChange} onChange={(e) => setShortTermChange(parseFloat(e.target.value))} aria-label={t("strategyLab.shortTermChange.label")} aria-valuetext={`${(shortTermChange * 100).toFixed(2)}%`} />
                     <div className="slider-range-desc">
-                      <span>快速降息 (-2.00%)</span>
-                      <span>不调整</span>
-                      <span>重新加息 (+2.00%)</span>
+                      <span>{t("strategyLab.shortTermChange.range0")}</span>
+                      <span>{t("strategyLab.shortTermChange.range1")}</span>
+                      <span>{t("strategyLab.shortTermChange.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      新西兰央行（RBNZ）在未来 12 个月内对 OCR 官方贴现率的预测累计变化幅度。第 1 至 12 个月将平滑递变（如考虑了第 6 个月的过渡变化）。
-                      <div className="param-example">👉 例子：若当前 OCR 为 2.25%，设置为 -2.00%，代表第 12 个月时 OCR 将跌至 0.25%；在第 6 个月时则约跌至 1.25%。</div>
-                      <div className="param-example">说明：1 年固定、2 年固定等固定期限产品不会在锁定期内逐月跟随此滑杆变化，而是在到期续约（refix）时，按续约当月 OCR 相对当前 OCR 的变化重新定价。</div>
+                      {t("strategyLab.shortTermChange.explanation")}
+                      <div className="param-example">{t("strategyLab.shortTermChange.example1")}</div>
+                      <div className="param-example">{t("strategyLab.shortTermChange.example2")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">中期利率走向趋势 (Medium Term)</span>
+                      <span className="form-label">{t("strategyLab.mediumTermDirection.label")}</span>
                       <span className="slider-value">
-                        {mediumTermDirection < -0.1 ? "继续大幅降息" : mediumTermDirection > 0.1 ? "重定价趋升" : "走势平稳"}
+                        {mediumTermDirection < -0.1 ? t("strategyLab.mediumTermDirection.textNeg") : mediumTermDirection > 0.1 ? t("strategyLab.mediumTermDirection.textPos") : t("strategyLab.mediumTermDirection.textMid")}
                       </span>
                     </div>
-                    <Slider min={-1.0} max={1.0} step={0.1} value={mediumTermDirection} onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))} aria-label="中期利率走向趋势" aria-valuetext={mediumTermDirection < -0.1 ? "继续大幅降息" : mediumTermDirection > 0.1 ? "重定价趋升" : "走势平稳"} />
+                    <Slider min={-1.0} max={1.0} step={0.1} value={mediumTermDirection} onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))} aria-label={t("strategyLab.mediumTermDirection.label")} aria-valuetext={mediumTermDirection < -0.1 ? t("strategyLab.mediumTermDirection.textNeg") : mediumTermDirection > 0.1 ? t("strategyLab.mediumTermDirection.textPos") : t("strategyLab.mediumTermDirection.textMid")} />
                     <div className="slider-range-desc">
-                      <span>继续降息 (-1.0)</span>
-                      <span>走平</span>
-                      <span>明显回升 (+1.0)</span>
+                      <span>{t("strategyLab.mediumTermDirection.range0")}</span>
+                      <span>{t("strategyLab.mediumTermDirection.range1")}</span>
+                      <span>{t("strategyLab.mediumTermDirection.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      第 13 至第 {Math.min(simDurationYears * 12, 36)} 个月之间，政策利率按该滑杆设定的中期趋势变化。1.0 个单位的变动代表利率每年变化 0.50%。
-                      <div className="param-example">👉 例子：若设置为 -1.0，代表从第 13 个月起到第 36 个月止，利率每年以 -0.50% 的速度下降；设置为 0.0 则从第 13 个月起保持平稳。</div>
+                      {t("strategyLab.mediumTermDirection.explanation", { n: Math.min(simDurationYears * 12, 36) })}
+                      <div className="param-example">{t("strategyLab.mediumTermDirection.example")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">政策调整速度 (Speed)</span>
+                      <span className="form-label">{t("strategyLab.changeSpeed.label")}</span>
                       <span className="slider-value">{(changeSpeed * 100).toFixed(0)}%</span>
                     </div>
-                    <Slider min={0.0} max={1.0} step={0.05} value={changeSpeed} onChange={(e) => setChangeSpeed(parseFloat(e.target.value))} aria-label="政策调整速度" aria-valuetext={`${(changeSpeed * 100).toFixed(0)}%`} />
+                    <Slider min={0.0} max={1.0} step={0.05} value={changeSpeed} onChange={(e) => setChangeSpeed(parseFloat(e.target.value))} aria-label={t("strategyLab.changeSpeed.label")} aria-valuetext={`${(changeSpeed * 100).toFixed(0)}%`} />
                     <div className="slider-range-desc">
-                      <span>缓慢延迟 (0.0)</span>
-                      <span>均衡</span>
-                      <span>瞬时调整 (1.0)</span>
+                      <span>{t("strategyLab.changeSpeed.range0")}</span>
+                      <span>{t("strategyLab.changeSpeed.range1")}</span>
+                      <span>{t("strategyLab.changeSpeed.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      利率变动在未来 12 个月内发生的时间分布曲线（即变动的发生速度分布）。
-                      <div className="param-example">👉 例子：100% 代表变动瞬间集中在第 1 个月发生；50% 代表 12 个月内线性递变；0% 代表前期缓慢、在临近第 12 个月时才加速。</div>
+                      {t("strategyLab.changeSpeed.explanation")}
+                      <div className="param-example">{t("strategyLab.changeSpeed.example")}</div>
                     </div>
                   </div>
                 </div>
@@ -1963,8 +1966,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">2</span>
                   <span>
-                    <span className="control-group-title">情景分布与风险幅度</span>
-                    <span className="control-group-subtitle">影响低 / 基准 / 高三条中期情景及其权重</span>
+                    <span className="control-group-title">{t("strategyLab.group2.title")}</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group2.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -1985,40 +1988,40 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.risk ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.risk ? t("strategyLab.collapse") + " ▴" : t("strategyLab.expand") + " ▾"}</span>
                 </span>
               </div>
               {openControlGroups.risk && (
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">预测路径不确定性 (Uncertainty)</span>
+                      <span className="form-label">{t("strategyLab.uncertainty.label")}</span>
                       <span className="slider-value">+/- {(uncertainty * 100).toFixed(2)}%</span>
                     </div>
-                    <Slider min={0.0} max={0.02} step={0.001} value={uncertainty} onChange={(e) => setUncertainty(parseFloat(e.target.value))} aria-label="预测路径不确定性" aria-valuetext={`+/- ${(uncertainty * 100).toFixed(2)}%`} />
+                    <Slider min={0.0} max={0.02} step={0.001} value={uncertainty} onChange={(e) => setUncertainty(parseFloat(e.target.value))} aria-label={t("strategyLab.uncertainty.label")} aria-valuetext={`+/- ${(uncertainty * 100).toFixed(2)}%`} />
                     <div className="slider-range-desc">
-                      <span>较低 (0.0%)</span>
-                      <span>标准</span>
-                      <span>较高 (+/- 2.0%)</span>
+                      <span>{t("strategyLab.uncertainty.range0")}</span>
+                      <span>{t("strategyLab.uncertainty.range1")}</span>
+                      <span>{t("strategyLab.uncertainty.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      未来利率预测路径的发散广度。不确定性随时间推移逐渐扩大（第 3 个月生效 25%，第 6 个月生效 50%，第 12 个月后生效 100%）。
-                      <div className="param-example">👉 例子：若设置为 +/- 1.00%，代表在第 12 个月及以后，“高利率情景”会在基准路径基础上上浮 1.00%，“低利率情景”则下浮 1.00%。</div>
+                      {t("strategyLab.uncertainty.explanation")}
+                      <div className="param-example">{t("strategyLab.uncertainty.example")}</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">情景概率权重 (Scenario Weights)</span>
+                      <span className="form-label">{t("strategyLab.scenarioProb.label")}</span>
                       <span className="slider-value">{scenarioProbabilities.low}% / {scenarioProbabilities.base}% / {scenarioProbabilities.high}%</span>
                     </div>
                     {[
-                      { key: "low", label: "低利率情景权重" },
-                      { key: "base", label: "基准情景权重" },
-                      { key: "high", label: "高利率情景权重" }
+                      { key: "low", label: t("strategyLab.scenarioProb.lowLabel") },
+                      { key: "base", label: t("strategyLab.scenarioProb.baseLabel") },
+                      { key: "high", label: t("strategyLab.scenarioProb.highLabel") }
                     ].map((item) => (
                       <div key={item.key} style={{ marginTop: item.key === "low" ? "8px" : "14px" }}>
                         <div className="slider-label-row">
@@ -2031,20 +2034,20 @@ export default function StrategyLab() {
                           step={1}
                           value={scenarioProbabilities[item.key]}
                           onChange={(e) => handleScenarioProbabilityChange(/** @type {"low"|"base"|"high"} */ (item.key), parseInt(e.target.value, 10))}
-                          aria-label={`${item.label} 概率权重`}
+                          aria-label={`${item.label} weight`}
                           aria-valuetext={`${scenarioProbabilities[item.key]}%`}
                         />
                       </div>
                     ))}
                     <div className="slider-range-desc">
-                      <span>总和自动保持 100%</span>
-                      <span>默认 15 / 70 / 15</span>
+                      <span>Total auto-kept at 100%</span>
+                      <span>Default 15 / 70 / 15</span>
                     </div>
                     <div className="param-explanation">
-                      这三项不是利率涨跌幅，也不会直接改变低 / 基准 / 高三条 OCR 曲线的形状。它们是在模型汇总结果时使用的概率权重：系统会先分别模拟每条 OCR 路径，再按这里的比例计算“期望总利息”“期望最高供款”“期望剩余本金”等指标，并影响默认的概率加权推荐。
-                      <div className="param-example">👉 计算例子：某个 split 在低 / 基准 / 高情景下总利息分别为 $140,000 / $160,000 / $190,000，默认权重 15% / 70% / 15% 时，期望总利息 = 140,000 × 15% + 160,000 × 70% + 190,000 × 15% = $161,500。</div>
-                      <div className="param-example">👉 调整例子：若您更担心高息，把高利率权重调高，推荐会更重视高息情景下的供款压力和剩余本金；若您更相信降息，把低利率权重调高，推荐会更偏向低息环境下成本更低的方案。</div>
-                      <div className="param-example">说明：三项总和会自动保持 100%。默认设置为低 15% / 基准 70% / 高 15%。</div>
+                      These three are not rate moves, and they do not directly reshape the low / base / high OCR curves. They are the probability weights the model uses when aggregating results: the system simulates each OCR path independently, then combines them by these proportions to produce metrics like expected interest, expected max payment, and ending principal, and they steer the default probability-weighted recommendation.
+                      <div className="param-example">Worked example: a split with $140,000 / $160,000 / $190,000 of total interest under low / base / high scenarios, with the default 15% / 70% / 15% weights, gives expected interest = 140,000 × 15% + 160,000 × 70% + 190,000 × 15% = $161,500.</div>
+                      <div className="param-example">Adjustment example: if you are more worried about high rates, raise the high-rate weight and the recommendation will lean toward payment pressure and ending principal under high rates; if you expect cuts, raise the low-rate weight and the recommendation will favor lower-cost splits under low-rate environments.</div>
+                      <div className="param-example">Note: the three weights auto-balance to 100%. The default is low 15% / base 70% / high 15%.</div>
                     </div>
                   </div>
                 </div>
@@ -2067,8 +2070,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">3</span>
                   <span>
-                    <span className="control-group-title">长期 Monte Carlo</span>
-                    <span className="control-group-subtitle">影响 36 个月之后的长期波动方向与周期</span>
+                    <span className="control-group-title">Long-term Monte Carlo paths</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group3.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2089,43 +2092,43 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.longTerm ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.longTerm ? t("strategyLab.collapse") + " ▴" : t("strategyLab.expand") + " ▾"}</span>
                 </span>
               </div>
               {openControlGroups.longTerm && (
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">长期波动周期 (Long-Term Cycle)</span>
-                      <span className="slider-value">{longTermCycleYears} 年</span>
+                      <span className="form-label">Long-term cycle length</span>
+                      <span className="slider-value">{longTermCycleYears} yr</span>
                     </div>
-                    <Slider min={1} max={3} step={1} value={longTermCycleYears} onChange={(e) => setLongTermCycleYears(parseInt(e.target.value, 10))} aria-label="长期周期年数" aria-valuetext={`${longTermCycleYears} 年`} />
+                    <Slider min={1} max={3} step={1} value={longTermCycleYears} onChange={(e) => setLongTermCycleYears(parseInt(e.target.value, 10))} aria-label="Long-term cycle years" aria-valuetext={`${longTermCycleYears} yr`} />
                     <div className="slider-range-desc">
-                      <span>1 年</span>
-                      <span>2 年</span>
-                      <span>3 年</span>
+                      <span>1 yr</span>
+                      <span>2 yr</span>
+                      <span>3 yr</span>
                     </div>
                     <div className="param-explanation">
-                      该参数决定第 36 个月之后长期蒙特卡洛路径的主导波动周期。以 2 年周期为例，若 13-36 个月总体向上，则 37-60 个月大概率先转为下行，61-84 个月再大概率切回上行。
+                      Determines the dominant wave period of the long-term Monte Carlo path beyond month 36. With a 2-year cycle: if months 13-36 trend up, months 37-60 are more likely to turn down, then months 61-84 likely turn up again.
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">长期反转概率 (Reversal Bias)</span>
+                      <span className="form-label">Long-term reversal probability</span>
                       <span className="slider-value">{Math.round(longTermReversalBias * 100)}%</span>
                     </div>
-                    <Slider min={0.6} max={0.8} step={0.1} value={longTermReversalBias} onChange={(e) => setLongTermReversalBias(parseFloat(e.target.value))} aria-label="长期反转概率偏向" aria-valuetext={`${Math.round(longTermReversalBias * 100)}%`} />
+                    <Slider min={0.2} max={1.0} step={0.1} value={longTermReversalBias} onChange={(e) => setLongTermReversalBias(parseFloat(e.target.value))} aria-label="Long-term reversal bias" aria-valuetext={`${Math.round(longTermReversalBias * 100)}%`} />
                     <div className="slider-range-desc">
+                      <span>20%</span>
                       <span>60%</span>
-                      <span>70%</span>
-                      <span>80%</span>
+                      <span>100%</span>
                     </div>
                     <div className="param-explanation">
-                      若 13-36 个月的中期趋势向上，则长期第一个周期会以该概率优先转为下行；若中期趋势向下，则长期第一个周期会以同样概率优先转为上行。其余概率下，模型保留同向波动的可能性。
+                      If the medium-term trend over months 13-36 is upward, the first long-term cycle preferentially turns down with this probability; if downward, it preferentially turns up with the same probability. Otherwise the model keeps same-direction volatility possible.
                     </div>
                   </div>
                 </div>
@@ -2148,8 +2151,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">4</span>
                   <span>
-                    <span className="control-group-title">模拟范围</span>
-                    <span className="control-group-subtitle">控制本次分析覆盖的未来时长</span>
+                    <span className="control-group-title">Simulation scope</span>
+                    <span className="control-group-subtitle">Drives the future horizon this analysis covers</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2170,7 +2173,7 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
                   <span className="control-group-toggle">{openControlGroups.horizon ? "收起 ▴" : "展开 ▾"}</span>
@@ -2180,8 +2183,8 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>模拟期限选择 (Simulation Horizon)</span>
-                      <span className="slider-value" style={{ color: "var(--chart-info)" }}>{simDurationYears} 年 ({simDurationYears * 12} 个月)</span>
+                      <span className="form-label" style={{ fontWeight: "600", color: "var(--text-primary)" }}>Simulation horizon</span>
+                      <span className="slider-value" style={{ color: "var(--chart-info)" }}>{simDurationYears} yr ({simDurationYears * 12} mo)</span>
                     </div>
                     <Slider
                       min={1}
@@ -2190,25 +2193,25 @@ export default function StrategyLab() {
                       value={simDurationYears}
                       onChange={(/** @type {any} */ e) => setSimDurationYears(parseInt(e.target.value, 10))}
                       className="slider-input"
-                      aria-label="模拟期限（年）"
+                      aria-label="Simulation horizon (years)"
                       aria-valuemin={1}
                       aria-valuemax={simMaxYears}
                       aria-valuenow={simDurationYears}
-                      aria-valuetext={`${simDurationYears} 年 (${simDurationYears * 12} 个月)`}
+                      aria-valuetext={`${simDurationYears} yr (${simDurationYears * 12} mo)`}
                     />
                     <div className="slider-range-desc">
-                      <span>1 年</span>
-                      <span>{Math.max(1, Math.round(simMaxYears / 2))} 年</span>
-                      <span>最长 {simMaxYears} 年</span>
+                      <span>1 yr</span>
+                      <span>{Math.max(1, Math.round(simMaxYears / 2))} yr</span>
+                      <span>Max {simMaxYears} yr</span>
                     </div>
                     <div className="param-explanation" style={{ marginTop: "10px" }}>
-                      设定房贷策略情景模拟覆盖的未来期数范围。利率变化和还款折算将完全适配此周期。
+                      Sets the future horizon that the strategy simulation covers. Rate changes and repayment calculations are calibrated to this period.
                       {simCappedByMortgage ? (
                         <div className="param-example">
-                          👉 您在房贷配置中设定的期望还清期限为约 {simTargetYears.toFixed(1)} 年（{mortgage?.originalTermMonths} 个月），系统已自动将拖拽上限锁定到 {simMaxYears} 年（覆盖到目标年年末）。如需调整，可返回【房贷配置】修改。
+                          👉 Your mortgage-setup "expected payoff years" is about {simTargetYears.toFixed(1)} yr ({mortgage?.originalTermMonths} mo). The system has auto-clamped the slider's upper bound to {simMaxYears} yr (covering through the end of the target year). To adjust, return to the Mortgage Setup page.
                         </div>
                       ) : (
-                        <div className="param-example">👉 例子：若拖到 3 年，则只分析未来 36 个月内的还款表现，并计算第 36 个月末的期望剩余本金。</div>
+                        <div className="param-example">Example: drag to 3 yr and the analysis covers only the next 36 months, computing ending principal at month 36.</div>
                       )}
                     </div>
                   </div>
@@ -2232,8 +2235,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">5</span>
                   <span>
-                    <span className="control-group-title">拆分与预算约束</span>
-                    <span className="control-group-subtitle">控制候选策略空间与风险边界</span>
+                    <span className="control-group-title">Split and budget constraints</span>
+                    <span className="control-group-subtitle">Drives the candidate strategy space and risk boundary</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2254,7 +2257,7 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
                   <span className="control-group-toggle">{openControlGroups.constraints ? "收起 ▴" : "展开 ▾"}</span>
@@ -2264,14 +2267,14 @@ export default function StrategyLab() {
                 <div className="control-group-body">
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">分散化预设 (Diversification Preset)</span>
-                      <span className="slider-value">{diversificationPreset === "default" ? "默认" : diversificationPreset === "diversification" ? "分散化" : "最大分散化"}</span>
+                      <span className="form-label">Diversification preset</span>
+                      <span className="slider-value">{diversificationPreset === "default" ? "Default" : diversificationPreset === "diversification" ? "Diversification" : "Max diversification"}</span>
                     </div>
                     <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                       {[
-                        { value: "default", label: "默认 (3 拆 / 5%)", tip: "保守推荐：3 拆 5% 步长 10% 浮动上限，候选方案 ~58 个" },
-                        { value: "diversification", label: "分散化 (4 拆 / 5%)", tip: "暴露更多 60/20/20 跨期分散方案，候选方案 ~500 个，自动展开穷举报告" },
-                        { value: "max", label: "最大分散化 (5 拆 / 5%)", tip: "允许 50% 浮动和 5 拆，候选方案 ~2000 个，自动展开穷举报告" }
+                        { value: "default", label: "Default (3 splits / 5%)", tip: "Conservative: 3 splits, 5% step, 10% floating cap, ~58 candidates" },
+                        { value: "diversification", label: "Diversification (4 splits / 5%)", tip: "Surfaces more 60/20/20 cross-term splits, ~500 candidates, auto-expands the report" },
+                        { value: "max", label: "Max diversification (5 splits / 5%)", tip: "Allows 50% floating and 5 splits, ~2000 candidates, auto-expands the report" }
                       ].map((opt) => (
                         <button
                           key={opt.value}
@@ -2285,15 +2288,15 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      一键切换方案搜索范围。"默认"模式保持当前推荐行为；"分散化"和"最大分散化"会放宽浮动上限和步长，自动展开穷举评估报告，并调整评分权重使跨期分散方案能赢得推荐卡片。手动修改下方任一参数会自动退出预设回到自定义状态。
-                      <div className="param-example">👉 例子：想看 60% 固定-2y + 20% 固定-1y + 20% 浮动这种跨期分散方案？切到"分散化"即可。</div>
+                      One-click toggle for the candidate search space. "Default" preserves the current recommendation behaviour; "Diversification" and "Max diversification" widen the floating cap and step, auto-expand the exhaustive report, and adjust scoring weights so cross-term splits can win recommendation cards. Manually editing any parameter below auto-exits the preset and returns to a custom state.
+                      <div className="param-example">Example: want to see a 60% fixed-2y + 20% fixed-1y + 20% floating cross-term split? Switch to "Diversification".</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">最大 Split / Tranche 数</span>
-                      <span className="slider-value">{maxSplits} 个</span>
+                      <span className="form-label">Maximum splits / loan tranches</span>
+                      <span className="slider-value">{maxSplits}</span>
                     </div>
                     <div className="segmented-control">
                       {[1, 2, 3, 4, 5].map((n) => (
@@ -2303,21 +2306,21 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      限制您的贷款最多可以被拆分成几笔不同期限和额度的子贷款分包。设置为 1 时等同于不进行任何拆分，仅比较单一期限锁定方案。
-                      <div className="param-example">👉 例子：设置为 3，表示系统将在“不拆分（1笔）”、“拆分为2笔”和“拆分为3笔”的所有合法方案中寻找最优策略。</div>
+                      Caps the number of sub-loan tranches your loan can be split into. Setting to 1 disables splitting entirely and only compares single-term lock strategies.
+                      <div className="param-example">Example: set to 3 and the system will search the optimal strategy across all valid 1-, 2-, and 3-tranche splits.</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">组合网格步长</span>
+                      <span className="form-label">Combination grid step</span>
                       <span className="slider-value">{(percentageStep * 100).toFixed(0)}%</span>
                     </div>
                     <div className="segmented-control" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                       {[
-                        { value: 0.15, label: "15% (粗)", tip: "最少组合,模拟最快" },
-                        { value: 0.10, label: "10% (适中)", tip: "组合适中,推荐日常使用" },
-                        { value: 0.05, label: "5% (细)", tip: "组合丰富,模拟较慢" }
+                        { value: 0.15, label: "15% (coarse)", tip: "Fewest combinations, fastest simulation" },
+                        { value: 0.10, label: "10% (default)", tip: "Balanced combinations, recommended daily use" },
+                        { value: 0.05, label: "5% (fine)", tip: "Rich combinations, slower simulation" }
                       ].map((opt) => (
                         <button key={opt.value} type="button" title={opt.tip} className={`segmented-btn ${percentageStep === opt.value ? "active" : ""}`} onClick={() => setPercentageStep(opt.value)}>
                           {opt.label}
@@ -2325,35 +2328,35 @@ export default function StrategyLab() {
                       ))}
                     </div>
                     <div className="param-explanation">
-                      贷款额度在不同期限之间的分配步长。步长越粗，组合数越少，模拟越快。默认 10% 在组合丰富度和性能之间取得平衡。
-                      <div className="param-example">👉 例子：步长 10% 时，1 笔分配可选 10%/20%/30%/.../100%（共 10 档）。</div>
+                      Allocation grid step across terms. Coarser step = fewer combinations = faster simulation. The default 10% balances richness and performance.
+                      <div className="param-example">Example: with a 10% step, a single-tranche split has 10 options: 10%, 20%, 30%, ..., 100%.</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">浮动/Offset 最高占比</span>
+                      <span className="form-label">Maximum floating / Offset share</span>
                       <span className="slider-value">{maxFloatingPercentage}%</span>
                     </div>
-                    <Slider min={0} max={80} step={10} value={maxFloatingPercentage} onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value, 10))} aria-label="浮动/Offset 最高占比" aria-valuetext={`${maxFloatingPercentage}%`} />
+                    <Slider min={0} max={80} step={10} value={maxFloatingPercentage} onChange={(e) => setMaxFloatingPercentage(parseInt(e.target.value, 10))} aria-label="Maximum floating / Offset share" aria-valuetext={`${maxFloatingPercentage}%`} />
                     <div className="slider-range-desc">
-                      <span>全固定</span>
-                      <span>保守浮动</span>
-                      <span>高灵活性</span>
+                      <span>{t("strategyLab.maxFloatingPct.range0")}</span>
+                      <span>{t("strategyLab.maxFloatingPct.range1")}</span>
+                      <span>{t("strategyLab.maxFloatingPct.range2")}</span>
                     </div>
                     <div className="param-explanation">
-                      限制贷款中浮动利率（Floating/Offset/Revolving）部分的最高额度占比。系统会同时保证最低固定比例为 {100 - maxFloatingPercentage}%（即 1 - 浮动比例），并由策略生成器内部派生该约束。
-                      <div className="param-example">👉 例子：若拉到 10%，代表贷款中最多只能有 10% 采用浮动利率，其余 90% 必须锁定在固定期限上。</div>
+                      Caps the floating-rate (Floating / Offset / Revolving Credit) share of the loan. The system also guarantees a minimum fixed share of {100 - maxFloatingPercentage}% (i.e. 1 − floating share); the strategy generator derives that constraint internally.
+                      <div className="param-example">Example: at 10%, the loan can have at most 10% floating; the other 90% must be locked to a fixed term.</div>
                     </div>
                   </div>
 
                   <div className="form-group">
                     <div className="slider-label-row">
-                      <span className="form-label">每期供款预算上限</span>
+                      <span className="form-label">Per-period payment budget cap</span>
                       <span className="slider-value">${maxAffordablePayment.toLocaleString()}</span>
                     </div>
                     <NumberInput
-                      ariaLabel="每期供款预算上限"
+                      ariaLabel="Per-period payment budget cap"
                       min={0}
                       step={100}
                       prefix="$"
@@ -2362,8 +2365,8 @@ export default function StrategyLab() {
                       onChange={(/** @type {any} */e) => setMaxAffordablePayment(Math.max(0, parseInt(e.target.value || "0", 10)))}
                     />
                     <div className="param-explanation">
-                      您每期可承受的最大还款金额上限。用于统计极端高利息情景下的“预算超限次数”，并参与综合评分。
-                      <div className="param-example">👉 例子：若设定为 5000 且还款频率为双周，在某高息周期下若双周供款达到 5200，系统会记录 1 次超限。</div>
+                      The maximum per-period payment you can afford. Used to count "budget overage" instances under high-rate scenarios and feeds the composite score.
+                      <div className="param-example">Example: set to 5000 with fortnightly frequency; if a high-rate fortnightly payment hits 5200 the system records one overage.</div>
                     </div>
                   </div>
                 </div>
@@ -2386,8 +2389,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">6</span>
                   <span>
-                    <span className="control-group-title">个人还款偏好</span>
-                    <span className="control-group-subtitle">只影响“偏好匹配推荐”，不改变利率路径和其它推荐卡</span>
+                    <span className="control-group-title">Personal repayment preferences</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group6.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2408,16 +2411,16 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.preferences ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.preferences ? t("strategyLab.collapse") + " ▴" : t("strategyLab.expand") + " ▾"}</span>
                 </span>
               </div>
               {openControlGroups.preferences && (
                 <div className="control-group-body">
                   <div className="param-explanation" style={{ marginTop: 0, marginBottom: "var(--sp-3)" }}>
-                    以下 {preferenceWeightItems.length} 项权重之和固定为 100%。调高任一项时，其它项会按比例自动缩放。仅影响"偏好匹配推荐"，不会改变利率模拟参数与其它推荐卡。
+                    The {preferenceWeightItems.length} weights below always sum to 100%. Raising one rescales the others proportionally. Affects only the "Preference-matched" card; rate-simulation parameters and other cards are unchanged.
                   </div>
 
                   {preferenceWeightItems.map((item) => (
@@ -2433,7 +2436,7 @@ export default function StrategyLab() {
                         max={25}
                         step={1}
                         defaultValue={weights[item.key] ?? 0}
-                        aria-label={`${item.label}权重`}
+                        aria-label={`${item.label} weight`}
                         aria-valuemin={0}
                         aria-valuemax={25}
                         onInput={(e) => {
@@ -2477,7 +2480,7 @@ export default function StrategyLab() {
                         role="status"
                         aria-live="polite"
                       >
-                        已分配 {total}% ({activeKeys}/{TOTAL_KEYS} 维度); 剩余 {zeroKeys} 维度权重为 0
+                        {t("common.allocate", { total, active: activeKeys, totalKeys: TOTAL_KEYS, zero: zeroKeys })}
                       </div>
                     );
                   })()}
@@ -2489,7 +2492,7 @@ export default function StrategyLab() {
                         className="weights-reset-btn preference-action-btn"
                         onClick={handleResetWeights}
                       >
-                        恢复默认权重
+                        {t("strategyLab.resetWeights")}
                       </button>
                     </div>
                   )}
@@ -2499,8 +2502,8 @@ export default function StrategyLab() {
             {/*
                 <span className="control-group-title-wrap">
                   <span>
-                    <span className="control-group-title">个人还款偏好</span>
-                    <span className="control-group-subtitle">只影响推荐打分，不改变利率路径本身</span>
+                    <span className="control-group-title">Personal repayment preferences</span>
+                    <span className="control-group-subtitle">Affects recommendation scoring only; rate paths are unchanged</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2521,88 +2524,88 @@ export default function StrategyLab() {
                       }}
                       className="weights-reset-btn"
                     >
-                      重置默认
+                      {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.preferences ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.preferences ? t("strategyLab.collapse") + " ▴" : t("strategyLab.expand") + " ▾"}</span>
                 </span>
               </div>
               {openControlGroups.preferences && (
                 <div className="control-group-body">
                   <p className="text-muted" style={{ fontSize: "11px", lineHeight: "1.5", margin: "0 0 14px" }}>
-                    自定义以下 7 项指标的权重比。<strong>所有权重之和锁定为 100%</strong>。当您拖动任意滑块增加其比例时，其他滑块将按比例自动减少，反之亦然。
+                    Customise the weight mix across these 7 metrics. <strong>All weights sum to 100%</strong>. When you raise any slider, the others rescale proportionally.
                   </p>
                   {[
                     {
                       key: "cost",
-                      label: "利息成本 (Interest Cost)",
+                      label: t("strategyLab.weightKeys.cost"),
                       value: weights.cost,
-                      minText: "成本低优先",
-                      maxText: "忽略成本",
-                      explanation: `您是否希望尽量少付利息？提高此项权重后，系统会优先推荐“模拟期内总利息支出最低”的拆分方案。`,
-                      example: `👉 例子：如果您最在意省钱，可以把此项调高，系统会优先选利息最低的方案，即使这意味着每月还款额波动较大，或者多笔贷款集中在同一时期到期。`
+                      minText: t("strategyLab.weightKeys.costMin"),
+                      maxText: t("strategyLab.weightKeys.costMax"),
+                      explanation: t("strategyLab.weightKeys.costExplain"),
+                      example: t("strategyLab.weightKeys.costExample")
                     },
                     {
                       key: "principal",
-                      label: "本金还款速度 (Principal Paydown)",
+                      label: t("strategyLab.weightKeys.principal"),
                       value: weights.principal,
-                      minText: "慢速还本",
-                      maxText: "快速还本优先",
-                      explanation: `您是否希望尽快还清本金？提高此项权重后，系统会优先推荐“模拟期末剩余本金最少”的方案。`,
-                      example: `👉 例子：如果您希望在 ${simDurationYears} 年内尽量多还本金、早降负债，可以调高此项，系统会倾向于选每月还本更快的方案。`
+                      minText: t("strategyLab.weightKeys.principalMin"),
+                      maxText: t("strategyLab.weightKeys.principalMax"),
+                      explanation: t("strategyLab.weightKeys.principalExplain"),
+                      example: t("strategyLab.weightKeys.principalExample", { y: simDurationYears })
                     },
                     {
                       key: "refix",
-                      label: "利率重定价风险 (Refix Risk)",
+                      label: t("strategyLab.weightKeys.refix"),
                       value: weights.refix,
-                      minText: "忽略风险",
-                      maxText: "分散到期优先",
-                      explanation: `您是否担心多笔贷款集中在同一个月到期续约（万一那时利率很高）？提高此项权重后，系统会优先分散各笔贷款的到期月份。`,
-                      example: `👉 例子：如果您不想所有贷款同时到期（比如不想某年某月被迫一起面对高利率），可以调高此项，系统会让不同 tranche 分散在不同月份到期。`
+                      minText: t("strategyLab.weightKeys.refixMin"),
+                      maxText: t("strategyLab.weightKeys.refixMax"),
+                      explanation: t("strategyLab.weightKeys.refixExplain"),
+                      example: t("strategyLab.weightKeys.refixExample")
                     },
                     {
                       key: "flex",
-                      label: "资金流灵活性 (Floating Flex)",
+                      label: t("strategyLab.weightKeys.flex"),
                       value: weights.flex,
-                      minText: "不重要",
-                      maxText: "高比例浮动优先",
-                      explanation: `您是否希望留出一部分浮动/Offset 资金，方便随时提前还款或应对日常开销？提高此项权重后，系统会尽量多用浮动额度。`,
-                      example: `👉 例子：如果您手头现金充裕，希望保留灵活还款能力，可以调高此项，系统会把上面“拆分与预算约束”中设定的浮动上限尽量用满。`
+                      minText: t("strategyLab.weightKeys.flexMin"),
+                      maxText: t("strategyLab.weightKeys.flexMax"),
+                      explanation: t("strategyLab.weightKeys.flexExplain"),
+                      example: t("strategyLab.weightKeys.flexExample")
                     },
                     {
                       key: "resilience",
-                      label: "极端高息抗压性 (Stress Resistance)",
+                      label: t("strategyLab.weightKeys.resilience"),
                       value: weights.resilience,
-                      minText: "不考虑极端",
-                      maxText: "低最高供款优先",
-                      explanation: `您是否担心未来利率飙升、月供暴涨？提高此项权重后，系统会优先选择“在最坏利率情景下每月还款峰值最低”的方案。`,
-                      example: `👉 例子：如果您预算紧张、扛不住月供大涨，可以调高此项，系统会更倾向于把大部分贷款锁在长期固定利率上，防止最坏情况下的供款冲击。`
+                      minText: t("strategyLab.weightKeys.resilienceMin"),
+                      maxText: t("strategyLab.weightKeys.resilienceMax"),
+                      explanation: t("strategyLab.weightKeys.resilienceExplain"),
+                      example: t("strategyLab.weightKeys.resilienceExample")
                     },
                     {
                       key: "budget",
-                      label: "预算超限控制 (Budget Safety)",
+                      label: t("strategyLab.weightKeys.budget"),
                       value: weights.budget,
-                      minText: "不考虑预算",
-                      maxText: "少超预算优先",
-                      explanation: `您有明确的每月还款预算上限吗？提高此项权重后，系统会优先选择“模拟期内超出您设定预算的次数最少”的方案。`,
-                      example: `👉 例子：如果您设定了每期最多还 $5,000，调高此项后，系统会尽量不让任何情景下的月供超出 $5,000，减少预算被突破的风险。`
+                      minText: t("strategyLab.weightKeys.budgetMin"),
+                      maxText: t("strategyLab.weightKeys.budgetMax"),
+                      explanation: t("strategyLab.weightKeys.budgetExplain"),
+                      example: t("strategyLab.weightKeys.budgetExample")
                     },
                     {
                       key: "smoothness",
-                      label: "供款平稳度 (Payment Smoothness)",
+                      label: t("strategyLab.weightKeys.smoothness"),
                       value: weights.smoothness,
-                      minText: "容忍波动",
-                      maxText: "平稳供款优先",
-                      explanation: `您是否希望每月还款金额尽量稳定，不希望时高时低？提高此项权重后，系统会优先选“每月还款额波动最小”的方案。`,
-                      example: `👉 例子：如果您希望家庭现金流稳定、不喜欢月供忽高忽低，可以调高此项，系统会更偏好长期固定利率，减少每一次续约时的还款跳变。`
+                      minText: t("strategyLab.weightKeys.smoothnessMin"),
+                      maxText: t("strategyLab.weightKeys.smoothnessMax"),
+                      explanation: t("strategyLab.weightKeys.smoothnessExplain"),
+                      example: t("strategyLab.weightKeys.smoothnessExample")
                     }
                   ].map((w) => (
                     <div key={w.key} className="form-group" style={{ marginBottom: "14px" }}>
                       <div className="slider-label-row">
                         <span className="form-label" style={{ fontSize: "12px", fontWeight: "600" }}>{w.label}</span>
-                        <span className="slider-value" style={{ color: "var(--chart-info)", fontSize: "13px" }}>权重: {w.value}%</span>
+                        <span className="slider-value" style={{ color: "var(--chart-info)", fontSize: "13px" }}>Weight: {w.value}%</span>
                       </div>
-                      <Slider min={0} max={25} step={1} value={w.value ?? 0} onChange={(e) => handleWeightChange(w.key, parseInt(e.target.value, 10))} aria-label={`${w.label}权重`} aria-valuetext={`${w.value}%`} />
+                      <Slider min={0} max={25} step={1} value={w.value ?? 0} onChange={(e) => handleWeightChange(w.key, parseInt(e.target.value, 10))} aria-label={`${w.label} weight`} aria-valuetext={`${w.value}%`} />
                       <div className="slider-range-desc" style={{ marginTop: "2px" }}>
                         <span>{w.minText}</span>
                         <span>{w.maxText}</span>
@@ -2623,60 +2626,60 @@ export default function StrategyLab() {
 
           {/* Scenario Rates Chart */}
           <section className="glass-panel chart-section accent-cyan">
-            <h2 className="section-title"><span className="step-num">7</span>OCR 预测情景曲线</h2>
+            <h2 className="section-title"><span className="step-num">7</span>OCR forecast scenario curves</h2>
             <div style={{ marginTop: "16px" }}>
               <SvgChart data={chartScenarioPaths} yAxisType="rate" height={220} />
             </div>
             <div className="chart-explain-box">
-              <div className="chart-explain-title">如何读这张图</div>
+              <div className="chart-explain-title">How to read this chart</div>
               <div className="chart-explain-copy">
-                这张图会随着左侧 input 实时变化，不需要先运行策略仿真。前 36 个月显示低 / 基准 / 高三条确定性 OCR 情景线，反映您对中期利率走势的主观判断。第 37 个月开始，系统不再只延长单一路径，而是按您设置的长期周期与反转概率生成长期 Monte Carlo 样本，用来表达长期不确定性。
+                This chart updates live with the left-side input — no need to run a simulation first. The first 36 months show the low / base / high deterministic OCR scenario lines, reflecting your subjective read on the medium-term rate path. From month 37, the system stops extrapolating a single path and instead draws long-term Monte Carlo samples governed by your long-term cycle length and reversal probability, expressing the long-term uncertainty.
               </div>
 
-              <div className="chart-explain-title" style={{ marginTop: "12px" }}>术语解释</div>
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>Term explanations</div>
               <div className="chart-glossary-grid">
                 <div className="chart-glossary-item">
                   <strong>OCR</strong>
-                  <span>新西兰官方现金利率。它不是房贷利率本身，但会影响浮动利率和固定利率续约定价。</span>
+                  <span>New Zealand's Official Cash Rate. Not a mortgage rate itself, but it drives floating rates and fixed-rate refix pricing.</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>概率加权期望路径</strong>
-                  <span>白色虚线。把低 / 基准 / 高情景按您设定的权重逐月加权后的平均路径，用于期望利息和期望余额计算。</span>
+                  <strong>Probability-weighted expected path</strong>
+                  <span>White dashed line. Month-by-month weighted average of the low / base / high paths using your weights; drives expected interest and expected balance.</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>长期乐观路径</strong>
-                  <span>利率偏低的长期代表路径。专业上接近 P10 概念，也就是样本里偏乐观的一侧。</span>
+                  <strong>Long-term optimistic path</strong>
+                  <span>Long-term representative path with low rates. Conceptually close to the 10th-percentile (P10) sample — the optimistic side.</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>长期中性路径</strong>
-                  <span>利率处在中间位置的长期代表路径。专业上接近 P50，也就是中位样本。</span>
+                  <strong>Long-term median path</strong>
+                  <span>Long-term representative path with median rates. Conceptually close to the 50th-percentile (P50) sample — the median.</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>长期压力路径</strong>
-                  <span>利率偏高的长期代表路径。专业上接近 P90，用来观察压力测试下的供款和余额。</span>
+                  <strong>Long-term stress path</strong>
+                  <span>Long-term representative path with high rates. Conceptually close to the 90th-percentile (P90) sample — the stress side.</span>
                 </div>
                 <div className="chart-glossary-item">
                   <strong>Monte Carlo</strong>
-                  <span>不是再猜一条唯一未来线，而是生成多条可能路径，再从中提取代表样本和统计结果。</span>
+                  <span>Rather than guessing a single future line, we generate many possible paths and extract representative samples plus statistics.</span>
                 </div>
               </div>
 
-              <div className="chart-explain-title" style={{ marginTop: "12px" }}>例子</div>
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>Examples</div>
               <div className="chart-example-list">
                 <div className="chart-example-item">
-                  如果权重是低 50% / 基准 30% / 高 20%，那么白色虚线会更靠近低利率路径，因为它代表的是三条中期情景的加权平均，而不是单独某一条情景。
+                  If the weights are low 50% / base 30% / high 20%, the white dashed line sits closer to the low-rate path because it represents the weighted average of the three medium-term scenarios, not any one of them.
                 </div>
                 <div className="chart-example-item">
-                  如果 13-36 个月整体向上，且长期反转概率设为 70%，那么第 37 个月后的第一段长期样本更大概率先向下波动，但不会变成死板直线，仍会保留上下扰动。
+                  If months 13-36 trend up overall and the long-term reversal probability is 70%, the first long-term sample after month 37 is more likely to dip first, but it won't be a rigid line — up/down noise is preserved.
                 </div>
                 <div className="chart-example-item">
-                  长期乐观 / 中性 / 压力不是固定涨跌幅，也不是用户设置的概率权重，而是从长期样本里挑出来的三类代表路径。
+                  Long-term optimistic / median / stress are not fixed percentage moves and not user-set probability weights; they are three representative paths picked from the long-term samples.
                 </div>
                 <div className="chart-example-item">
-                  如果第 36 个月低利率情景停在较低位置，但长期乐观路径从更高位置开始，看起来会有“跳空”。这是因为它是长期样本中的代表路径，不一定是低利率绿线本身的直接延长。
+                  If the month-36 low-rate scenario sits at a low level but the long-term optimistic path starts from a higher position, you'll see a "gap". That's because the optimistic path is a representative sample, not a direct extension of the low-rate green line.
                 </div>
                 <div className="chart-example-item">
-                  下方细节表与图是一一对应的。切换到“长期中性路径”时，表格里的利息、最高供款和剩余本金都会改成这条路径对应的结果。
+                  The detail table below is in 1:1 correspondence with the chart. Switch to the "Long-term median path" and the table's interest, max payment, and ending principal all change to that path's results.
                 </div>
               </div>
             </div>
@@ -2687,9 +2690,9 @@ export default function StrategyLab() {
 
           {/* Run Button & Progress panel */}
           <section className="glass-panel run-section accent-emerald">
-            <h2 className="section-title"><span className="step-num">8</span>策略仿真模拟</h2>
+            <h2 className="section-title"><span className="step-num">8</span>Strategy simulation</h2>
             <p className="text-muted" style={{ fontSize: "12px", margin: "8px 0 16px" }}>
-              系统将按最多 {maxSplits} 个 split、最高 {maxFloatingPercentage}% 浮动/Offset 占比生成合法方案，并在三个未来预测利率路径情景下进行 {simDurationYears * 12} 个月的还款流分析。
+              The system will generate valid strategies under at most {maxSplits} splits and at most {maxFloatingPercentage}% floating / Offset share, and run a {simDurationYears * 12}-month cash-flow analysis under three future rate scenarios.
             </p>
 
             {error && <div className="error-banner">{error}</div>}
@@ -2711,29 +2714,28 @@ export default function StrategyLab() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "6px", fontSize: "13px" }}>
-                  ⚠️ 预计仿真次数过高: <strong>{estimatedTotalSims.toLocaleString()}</strong> 次
-                  (当前 {strategyCountEstimate.toLocaleString()} 个策略 × {(scenarios?.length || 3)} 个情景)
+                  ⚠️ Projected simulation count is high: <strong>{estimatedTotalSims.toLocaleString()}</strong>
+                  (currently {strategyCountEstimate.toLocaleString()} strategies × {(scenarios?.length || 3)} scenarios)
                 </div>
                 <div style={{ fontSize: "11.5px", color: "var(--text-muted)", marginBottom: "6px", lineHeight: "1.5" }}>
-                  仿真矩阵过大会导致 worker 计算时间显著延长(经验值 ~{Math.round(estimatedTotalSims / 1000)}s+),
-                  且帕累托集合过于密集,推荐结果难以分辨。建议从以下任一项简化:
+                  Large simulation matrices significantly increase worker compute time (~{Math.round(estimatedTotalSims / 1000)}s+), and a dense Pareto set makes recommendations hard to distinguish. Consider simplifying one of the following:
                 </div>
                 <ul style={{ fontSize: "11.5px", color: "var(--text-muted)", margin: "0 0 0 18px", padding: 0, lineHeight: "1.6" }}>
                   {maxSplits > 3 && (
-                    <li>降低"最大 split 数": 当前 {maxSplits} → 建议 ≤ 3(可减少 {Math.round((1 - 3 / maxSplits) * 100)}% 候选)</li>
+                    <li>Lower "Maximum splits": currently {maxSplits} → recommend ≤ 3 (saves ~{Math.round((1 - 3 / maxSplits) * 100)}% of candidates)</li>
                   )}
                   {percentageStep < 0.15 && (
-                    <li>提高"组合网格步长": 当前 {(percentageStep * 100).toFixed(0)}% → 建议 15%(粗网格可减少候选数 ~{Math.round((1 - percentageStep / 0.15) * 100)}%)</li>
+                    <li>Increase "Combination grid step": currently {(percentageStep * 100).toFixed(0)}% → recommend 15% (saves ~{Math.round((1 - percentageStep / 0.15) * 100)}% of candidates)</li>
                   )}
                   {simDurationYears > 5 && (
-                    <li>缩短"模拟期限": 当前 {simDurationYears} 年 → 建议 ≤ 5 年</li>
+                    <li>Shorten "Simulation horizon": currently {simDurationYears} yr → recommend ≤ 5 yr</li>
                   )}
                   {maxFloatingPercentage > 30 && (
-                    <li>收紧"浮动/Offset 占比": 当前 {maxFloatingPercentage}% → 建议 ≤ 30%(可减少 {Math.round((maxFloatingPercentage - 30) / maxFloatingPercentage * 100)}% 浮动分支)</li>
+                    <li>Tighten "Maximum floating / Offset share": currently {maxFloatingPercentage}% → recommend ≤ 30% (saves ~{Math.round((maxFloatingPercentage - 30) / maxFloatingPercentage * 100)}% of floating branches)</li>
                   )}
                   {(maxSplits <= 3 && percentageStep >= 0.15 && simDurationYears <= 5 && maxFloatingPercentage <= 30) && (
                     <li style={{ listStyle: "none", marginLeft: "-18px" }}>
-                      当前约束已较紧,如确需保留,请直接点击"开始仿真"接受 ~{Math.round(estimatedTotalSims / 1000)}s+ 的计算时长。
+                      Constraints are already tight; if you need to keep them, click "Start simulation" and accept the ~{Math.round(estimatedTotalSims / 1000)}s+ compute time.
                     </li>
                   )}
                 </ul>
@@ -2755,11 +2757,10 @@ export default function StrategyLab() {
                     }}
                   >
                     <div style={{ fontWeight: 600, marginBottom: "4px", fontSize: "12.5px" }}>
-                      ⚠️ 当前正在执行大规模仿真: <strong>{totalSims.toLocaleString()}</strong> 次
+                      ⚠️ Large simulation in progress: <strong>{totalSims.toLocaleString()}</strong>
                     </div>
                     <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: "1.5" }}>
-                      该规模高于 {SIM_COUNT_WARNING_THRESHOLD.toLocaleString()} 次警戒线，预计耗时会更长。可等待当前结果完成，
-                      或取消后收紧 split 数、增大步长、缩短模拟期限再重试。
+                      Above the {SIM_COUNT_WARNING_THRESHOLD.toLocaleString()} warning threshold. Either wait for the current run to finish, or cancel and tighten splits, increase step, or shorten horizon.
                     </div>
                   </div>
                 )}
@@ -2767,9 +2768,9 @@ export default function StrategyLab() {
                   <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
                 </div>
                 <div className="progress-text-row">
-                  <span>仿真模拟中... {Math.round(progress)}%</span>
+                  <span>Simulating... {Math.round(progress)}%</span>
                   <span>
-                    已完成 {completedSims.toLocaleString()} / 共 {totalSims.toLocaleString()} 次模拟
+                    Completed {completedSims.toLocaleString()} / {totalSims.toLocaleString()} simulations
                     {currentSimulationInfo?.scenarioTotal > 1 &&
                       ` · 当前情景 ${(currentSimulationInfo?.scenarioIndex ?? 0) + 1}/${currentSimulationInfo.scenarioTotal}`}
                   </span>
@@ -2777,15 +2778,15 @@ export default function StrategyLab() {
                 {currentSimulationInfo && (
                   <div className="simulation-current-grid">
                     <div>
-                      <span>当前组合</span>
+                      <span>t("strategyLab.progress.currentCombination")</span>
                       <strong>{currentSimulationInfo.combination}</strong>
                     </div>
                     <div>
-                      <span>Fix 年限构成</span>
+                      <span>t("strategyLab.progress.currentFixTerms")</span>
                       <strong>{currentSimulationInfo.fixTerms}</strong>
                     </div>
                     <div>
-                      <span>OCR 情景路线</span>
+                      <span>t("strategyLab.progress.currentScenario")</span>
                       <strong>{currentSimulationInfo.scenarioPath}</strong>
                     </div>
                   </div>
@@ -2796,7 +2797,7 @@ export default function StrategyLab() {
                   className="btn btn-secondary"
                   style={{ marginTop: "12px", width: "100%" }}
                 >
-                  取消仿真
+                  {t("common.cancelSimulation")}
                 </button>
               </div>
             ) : (
@@ -2808,7 +2809,7 @@ export default function StrategyLab() {
                 disabled={!mortgage}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5" /><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
-                {simResults ? "重新仿真" : "开始仿真模拟"}
+                {simResults ? t("common.rerunCta") : t("common.runCta")}
               </button>
             )}
           </section>
@@ -2816,12 +2817,11 @@ export default function StrategyLab() {
           {/* Recommendations Cards */}
           {optimisedData && (
             <section className="recommendations-section accent-amber">
-              <h2 className="section-title"><span className="step-num">9</span>帕累托推荐 — 每个维度的最优策略</h2>
+              <h2 className="section-title"><span className="step-num">9</span>Pareto recommendations — optimal strategy per axis</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
-                系统对每个 Pareto 目标维度独立挑出数学最优策略(不受偏好权重影响),让您清楚看到不同维度的 trade-off。
-                顶部 3 张 benchmark 卡分别是:最低期望成本 / 最稳妥供款 / 最坏情景抗压。
-                <strong>底部那张"综合偏好"卡</strong>根据您拖动上方 <strong>8</strong> 个权重滑块实时调整。所有权重之和固定为 100%，单项上限 25%(强制至少 4 个维度同时考虑),调高某一项时其他项会按比例自动让出权重。
-                {maxSplits > 1 ? " 推荐卡默认只从 2 笔及以上的真实拆分方案中选择；100% 单一产品会保留在下方表格和传统对照里，作为 benchmark 参考。" : " 当前设置为 1 个 split，因此只比较单一期限锁定方案。"}<strong>点击任意卡片可打开详情弹窗查看完整时间线与对比分析。</strong>
+                The system independently picks the mathematical optimum for each Pareto axis (weights-independent), so you can see the trade-offs across dimensions. The top 3 benchmark cards are: Lowest expected cost / Most stable payment / Worst-case defense.
+                <strong>The "Composite preference" card at the bottom</strong> responds live to the <strong>8</strong> weight sliders above. All weights sum to 100%, each capped at 25% (forcing at least 4 dimensions to be considered). When you raise one, the others rescale proportionally.
+                {maxSplits > 1 ? " Recommendation cards by default only pick from real split strategies with ≥ 2 tranches; 100% single-product strategies stay in the table below as a benchmark." : " Current setting is 1 split, so only single-term-locked strategies are compared."} <strong>Click any card to open the detail modal and view the full timeline and comparison analysis.</strong>
               </p>
 
               {detailScenarioOptions.length > 1 && (
@@ -2953,7 +2953,7 @@ export default function StrategyLab() {
                       }
                     }}
                   >
-                    <div className="badge badge-amber">最稳妥供款</div>
+                    <div className="badge badge-amber">{t("strategyLab.rec.mostStable.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
                       单月最坏供款最小的方案（与权重无关）
                     </div>
@@ -3003,7 +3003,7 @@ export default function StrategyLab() {
                       }
                     }}
                   >
-                    <div className="badge badge-rose">最坏情景抗压</div>
+                    <div className="badge badge-rose">{t("strategyLab.rec.worstCase.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
                       综合最坏利息 + 违约 + 月供的客观最优（与权重无关）
                     </div>

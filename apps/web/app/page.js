@@ -5,8 +5,10 @@ import Link from "next/link";
 import { dbGetAll } from "../features/storage.js";
 import { nzProfile } from "@mortgage/country-adapters";
 import { NumberInput } from "../components/index.js";
+import { useI18n } from "../lib/i18n/useI18n.js";
 
 export default function Dashboard() {
+  const { t, formatMoney, productDisplayName, locale } = useI18n();
   const [mortgage, setMortgage] = useState(/** @type {any} */ (null));
   const [loading, setLoading] = useState(true);
 
@@ -149,7 +151,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "80vh" }}>
-        <div className="loading-spinner">加载中...</div>
+        <div className="loading-spinner">{t("common.loading")}</div>
       </div>
     );
   }
@@ -158,67 +160,67 @@ export default function Dashboard() {
     <div className="dashboard-container">
       <header className="dashboard-header">
         <div>
-          <h1 className="page-title gradient-text-primary">房贷控制面板</h1>
-          <p className="welcome-desc">分析您的贷款配置并进行未来情景演练。</p>
+          <h1 className="page-title gradient-text-primary">{t("common.dashboard.title")}</h1>
+          <p className="welcome-desc">{t("dashboard.welcomeDesc")}</p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
           <div className={`badge ${Date.now() - new Date(marketPolicyRateDate).getTime() > 365 * 24 * 60 * 60 * 1000 ? "badge-amber" : "badge-emerald"}`}>
-            数据源: RBNZ MPS (更新于 {marketPolicyRateDate})
+            {t("dashboard.dataSource", { date: marketPolicyRateDate })}
           </div>
         </div>
       </header>
 
       {/* Main Grid */}
       <div className="dashboard-grid">
-        
+
         {/* Left Side: Personal Mortgage Overview */}
         <section className="glass-panel summary-card accent-primary">
-          <h2 className="card-header"><span className="card-header-accent" />贷款总览</h2>
+          <h2 className="card-header"><span className="card-header-accent" />{t("dashboard.summaryHeader")}</h2>
           {mortgage ? (
             <div className="mortgage-details">
               <div className="metric-row">
-                <span className="metric-lbl">贷款总额</span>
-                <span className="metric-val metric-val-lg gradient-text-primary">${calculateTotalBalance().toLocaleString()}</span>
+                <span className="metric-lbl">{t("dashboard.totalBalance")}</span>
+                <span className="metric-val metric-val-lg gradient-text-primary">{formatMoney(calculateTotalBalance())}</span>
               </div>
               <div className="metric-row">
-                <span className="metric-lbl">还款频率</span>
-                <span className="metric-val">{mortgage.repaymentFrequency === "weekly" ? "每周" : mortgage.repaymentFrequency === "fortnightly" ? "每两周" : "每月"}</span>
+                <span className="metric-lbl">{t("dashboard.repaymentFrequency")}</span>
+                <span className="metric-val">{mortgage.repaymentFrequency === "weekly" ? t("common.weekly") : mortgage.repaymentFrequency === "fortnightly" ? t("common.fortnightly") : t("common.monthly")}</span>
               </div>
               <div className="metric-row">
                 <span className="metric-lbl">
-                  {mortgage.repaymentFrequency === "weekly" ? "分期还款额 (每周)" : mortgage.repaymentFrequency === "fortnightly" ? "分期还款额 (每两周)" : "分期还款额 (每月)"}
+                  {t("dashboard.repaymentAmount", { freq: mortgage.repaymentFrequency === "weekly" ? t("common.weekly") : mortgage.repaymentFrequency === "fortnightly" ? t("common.fortnightly") : t("common.monthly") })}
                 </span>
-                <span className="metric-val text-emerald">${calculateScheduledRepayment().toLocaleString()}</span>
+                <span className="metric-val text-emerald">{formatMoney(calculateScheduledRepayment())}</span>
               </div>
               <div className="unsplit-details-box">
-                <h3 className="section-subtitle section-subtitle-rule">基础贷款参数</h3>
+                <h3 className="section-subtitle section-subtitle-rule">{t("dashboard.basicsHeader")}</h3>
 
                 <div className="details-list">
                   <div className="details-list-row">
-                    <span className="details-lbl">当前执行利率</span>
-                    <span className="details-val">{(marketRates.floating * 100).toFixed(2)}% <span className="details-tag">(浮动利率)</span></span>
+                    <span className="details-lbl">{t("dashboard.currentRate")}</span>
+                    <span className="details-val">{(marketRates.floating * 100).toFixed(2)}% <span className="details-tag">{t("dashboard.floatingTag")}</span></span>
                   </div>
                   <div className="details-list-row">
-                    <span className="details-lbl">还款期限目标</span>
+                    <span className="details-lbl">{t("dashboard.termTarget")}</span>
                     <span className="details-val">
-                      {Math.floor(mortgage.originalTermMonths / 12)}年
-                      {mortgage.originalTermMonths % 12 > 0 ? ` ${mortgage.originalTermMonths % 12}个月` : ""}
+                      {Math.floor(mortgage.originalTermMonths / 12)}{t("common.yearFmt", { y: Math.floor(mortgage.originalTermMonths / 12) }).replace(/^\d+\s/, '')}
+                      {mortgage.originalTermMonths % 12 > 0 ? ` ${t("common.monthFmt", { m: mortgage.originalTermMonths % 12 })}` : ""}
                     </span>
                   </div>
                   <div className="details-list-row">
-                    <span className="details-lbl">还款类型</span>
+                    <span className="details-lbl">{t("dashboard.repaymentType")}</span>
                     <span className="details-val">
-                      {mortgage.repaymentType === "principal-and-interest" ? "本金加利息 (P&I)" : "仅还利息 (Interest Only)"}
+                      {mortgage.repaymentType === "principal-and-interest" ? t("dashboard.repaymentTypePI") : t("dashboard.repaymentTypeIO")}
                     </span>
                   </div>
                 </div>
               </div>
               <div className="action-buttons">
                 <Link href="/strategy-lab" className="btn btn-primary" style={{ flex: 1 }}>
-                  进入策略实验室
+                  {t("dashboard.goToLab")}
                 </Link>
                 <Link href="/mortgage-setup" className="btn btn-secondary">
-                  重新配置
+                  {t("dashboard.reconfigure")}
                 </Link>
               </div>
             </div>
@@ -229,10 +231,10 @@ export default function Dashboard() {
                   <div className="prompt-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
                   </div>
-                  <h3>暂无贷款数据</h3>
-                  <p>请先添加您的贷款基本分包（Tranche）详情，以便对其进行未来的情景利息开销模拟。</p>
+                  <h3>{t("dashboard.emptyTitle")}</h3>
+                  <p>{t("dashboard.emptyDesc")}</p>
                   <Link href="/mortgage-setup" className="btn btn-primary" style={{ marginTop: "20px" }}>
-                    立即配置房贷
+                    {t("dashboard.emptyCta")}
                   </Link>
                 </div>
               </div>
@@ -244,7 +246,7 @@ export default function Dashboard() {
         {!isEditingRates ? (
           <section className="glass-panel market-card accent-cyan">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h2 className="card-header" style={{ margin: 0 }}><span className="card-header-accent" />新西兰当前市场数据</h2>
+              <h2 className="card-header" style={{ margin: 0 }}><span className="card-header-accent" />{t("dashboard.marketHeader")}</h2>
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -253,16 +255,16 @@ export default function Dashboard() {
                   setIsEditingRates(true);
                 }}
               >
-                <span aria-hidden="true">🖊️</span> 自定义利率
+                <span aria-hidden="true">🖊️</span> {t("dashboard.editMarket")}
               </button>
             </div>
 
             <div className="policy-rate-card">
               <div>
-                <div className="policy-lbl">{marketPolicyRateName} (新西兰央行官方现金利率)</div>
+                <div className="policy-lbl">{t("dashboard.policyOcr", { name: marketPolicyRateName })}</div>
                 <div className="policy-val gradient-text-primary">{(marketRates.ocr * 100).toFixed(2)}%</div>
                 <div className="policy-meta">
-                  <span>生效日 {marketPolicyRateDate}</span>
+                  <span>{t("dashboard.effective", { date: marketPolicyRateDate })}</span>
                 </div>
               </div>
               <div className="policy-gauge" aria-hidden="true">
@@ -289,19 +291,19 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <h3 className="section-subtitle">主要银行平均房贷报价</h3>
+            <h3 className="section-subtitle">{t("dashboard.bankAverage")}</h3>
             <div className="market-rates-list">
               {(() => {
                 // Compute the absolute max margin across all rows so the bar widths
                 // are visually comparable.
                 const items = [
-                  { key: "floating", label: "浮动利率 (Floating)", tone: "rose" },
-                  { key: "fixed-6m", label: "6 个月固定 (6 Months)", tone: "emerald" },
-                  { key: "fixed-1y", label: "1 年固定 (1 Year Fixed)", tone: "emerald" },
-                  { key: "fixed-18m", label: "18 个月固定 (18 Months Fixed)", tone: "cyan" },
-                  { key: "fixed-2y", label: "2 年固定 (2 Years Fixed)", tone: "cyan" },
-                  { key: "fixed-3y", label: "3 年固定 (3 Years Fixed)", tone: "amber" },
-                  { key: "fixed-5y", label: "5 年固定 (5 Years Fixed)", tone: "rose" }
+                  { key: "floating", tone: "rose" },
+                  { key: "fixed-6m", tone: "emerald" },
+                  { key: "fixed-1y", tone: "emerald" },
+                  { key: "fixed-18m", tone: "cyan" },
+                  { key: "fixed-2y", tone: "cyan" },
+                  { key: "fixed-3y", tone: "amber" },
+                  { key: "fixed-5y", tone: "rose" }
                 ];
                 const margins = items.map((item) => Math.abs((/** @type {any} */ (marketRates))[item.key] - marketRates.ocr));
                 const maxAbs = Math.max(...margins, 0.001);
@@ -314,7 +316,7 @@ export default function Dashboard() {
                   return (
                     <div key={item.key} className="market-rate-row">
                       <div className="market-rate-meta">
-                        <span className="rate-lbl">{item.label}</span>
+                        <span className="rate-lbl">{productDisplayName(item.key)}</span>
                         <div className="market-rate-bar">
                           <div
                             className={`market-rate-bar-fill ${toneClass}`}
@@ -342,37 +344,47 @@ export default function Dashboard() {
                   style={{ padding: "4px 8px", fontSize: "11px", borderColor: "rgba(244, 63, 94, 0.4)", color: "var(--color-rose)" }}
                   onClick={handleResetRates}
                 >
-                  恢复系统默认报价
+                  {t("dashboard.resetSystem")}
                 </button>
               </div>
             )}
           </section>
         ) : (
           <section className="glass-panel market-card accent-amber">
-            <h2 className="card-header" style={{ marginBottom: "16px" }}><span className="card-header-accent" />自定义当前市场利率</h2>
-            
-            <div className="glass-panel" style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "8px", padding: "12px", marginBottom: "20px" }}>
+            <h2 className="card-header" style={{ marginBottom: "16px" }}><span className="card-header-accent" />{t("dashboard.editMarketTitle")}</h2>
+
+            <div className="glass-panel" style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "8px", padding: "12px 14px", marginBottom: "20px" }}>
               <h4 style={{ margin: "0 0 6px 0", fontSize: "13px", fontWeight: "600", color: "#60a5fa", display: "flex", alignItems: "center", gap: "6px" }}>
-                💡 利率与 OCR 联动机制说明
+                💡 {t("dashboard.rateLinkTitle")}
               </h4>
-              <p style={{ margin: 0, fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
-                新西兰主要商业银行房贷报价由 <strong>官方现金利率 (OCR)</strong> 加上其 <strong>银行加点 (Margin)</strong> 构成。
-                <code style={{ display: "block", background: "rgba(0,0,0,0.3)", padding: "4px 8px", borderRadius: "4px", margin: "6px 0", fontFamily: "monospace", fontSize: "11px", color: "var(--text-primary)" }}>
-                  房贷利率 = OCR + 银行加点 (Margin)
-                </code>
-                当您在此处修改 <strong>OCR</strong> 时，系统将基于当前的加点水平<strong>自动推算并更新所有期限房贷利率</strong>。您也可以在下方微调具体期限利率或加点，修改任意一方均会双向实时同步。
-              </p>
+              <p style={{ margin: "0 0 6px 0", fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.5" }} dangerouslySetInnerHTML={{ __html: t("dashboard.rateLinkCopy1") }} />
+              <code style={{ display: "block", background: "rgba(0,0,0,0.30)", padding: "5px 9px", borderRadius: "4px", margin: "8px 0", fontFamily: "monospace", fontSize: "11px", color: "var(--chart-soft)" }}>
+                {t("dashboard.rateFormula")}
+              </code>
+              <ul style={{ margin: "6px 0 0 0", paddingLeft: "18px", fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.6" }}>
+                <li>
+                  <strong style={{ color: "var(--text-primary)" }}>{t("dashboard.changeOcr")}</strong>
+                  {t("dashboard.rateLinkChangeOcr")}
+                </li>
+                <li>
+                  <strong style={{ color: "var(--text-primary)" }}>{t("dashboard.changeMargin")}</strong>
+                  {t("dashboard.rateLinkChangeMargin")}
+                </li>
+                <li>
+                  <strong style={{ color: "var(--text-primary)" }} dangerouslySetInnerHTML={{ __html: t("dashboard.rateLinkReset") }} />
+                </li>
+              </ul>
             </div>
 
             <form onSubmit={handleSaveRates}>
               <div className="form-group" style={{ marginBottom: "20px" }}>
                 <label className="form-label" style={{ fontSize: "13px", fontWeight: "500", color: "var(--text-primary)", marginBottom: "6px", display: "block" }}>
-                  {marketPolicyRateName} (新西兰央行官方现金利率)
+                  {t("dashboard.policyOcr", { name: marketPolicyRateName })}
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <div style={{ width: "130px" }}>
                     <NumberInput
-                      ariaLabel={`${marketPolicyRateName} 百分比`}
+                      ariaLabel={t("dashboard.ocrPercent", { name: marketPolicyRateName })}
                       min={0}
                       max={20}
                       step={0.01}
@@ -385,48 +397,32 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <h3 className="section-subtitle" style={{ marginBottom: "12px", marginTop: "20px" }}>主要银行平均房贷报价</h3>
-              
+              <h3 className="section-subtitle" style={{ marginBottom: "12px", marginTop: "20px" }}>{t("dashboard.bankAverage")}</h3>
+
               <div className="edit-rates-grid" style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "24px" }}>
                 {[
-                  { key: "floating", label: "浮动利率 (Floating)" },
-                  { key: "fixed-6m", label: "6 个月固定 (6 Months)" },
-                  { key: "fixed-1y", label: "1 年固定 (1 Year Fixed)" },
-                  { key: "fixed-18m", label: "18 个月固定 (18 Months Fixed)" },
-                  { key: "fixed-2y", label: "2 年固定 (2 Years Fixed)" },
-                  { key: "fixed-3y", label: "3 年固定 (3 Years Fixed)" },
-                  { key: "fixed-5y", label: "5 年固定 (5 Years Fixed)" }
+                  { key: "floating" },
+                  { key: "fixed-6m" },
+                  { key: "fixed-1y" },
+                  { key: "fixed-18m" },
+                  { key: "fixed-2y" },
+                  { key: "fixed-3y" },
+                  { key: "fixed-5y" }
                 ].map((item) => {
                   const rateVal = editedRates[item.key] || 0;
                   const marginVal = rateVal - editedRates.ocr;
+                  const displayName = productDisplayName(item.key);
                   return (
                     <div key={item.key} style={{ padding: "12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", borderRadius: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-primary)" }}>{item.label}</span>
-                      
-                      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-                        {/* Rate Input */}
-                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "flex-end", gap: "8px" }}>
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>利率:</span>
-                          <div style={{ flex: 1 }}>
-                            <NumberInput
-                              ariaLabel={`${item.label} 利率`}
-                              min={0}
-                              max={20}
-                              step={0.01}
-                              suffix="%"
-                              size="sm"
-                              value={Math.round(rateVal * 10000) / 100}
-                              onChange={(/** @type {any} */e) => handleRateChange(item.key, parseFloat(e.target.value) / 100)}
-                            />
-                          </div>
-                        </div>
+                      <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-primary)" }}>{displayName}</span>
 
-                        {/* Margin Input */}
+                      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                        {/* 加点 (editable, LEFT) */}
                         <div style={{ flex: "1 1 120px", display: "flex", alignItems: "flex-end", gap: "8px" }}>
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>加点:</span>
+                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>{t("dashboard.marginLabel")}</span>
                           <div style={{ flex: 1 }}>
                             <NumberInput
-                              ariaLabel={`${item.label} 加点`}
+                              ariaLabel={`${displayName} ${t("dashboard.marginLabel")}`}
                               min={-10}
                               max={10}
                               step={0.01}
@@ -437,25 +433,62 @@ export default function Dashboard() {
                             />
                           </div>
                         </div>
+
+                        {/* 利率 (read-only, RIGHT) - derived as OCR + 加点 */}
+                        <div style={{ flex: "1 1 120px", display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", minWidth: "32px", paddingBottom: "10px" }}>{t("dashboard.rateLabel")}</span>
+                          <div
+                            aria-label={t("dashboard.rateAuto", { label: displayName })}
+                            title={t("dashboard.rateAutoTitle", { label: displayName })}
+                            style={{
+                              flex: 1,
+                              background: "rgba(99, 102, 241, 0.06)",
+                              border: "1px dashed rgba(99, 102, 241, 0.30)",
+                              borderRadius: "8px",
+                              padding: "8px 12px",
+                              fontSize: "13px",
+                              fontFamily: "var(--font-heading)",
+                              fontWeight: 600,
+                              color: "var(--chart-soft)",
+                              textAlign: "right",
+                              letterSpacing: "0.02em",
+                              minHeight: "34px",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "flex-end"
+                            }}
+                          >
+                            {(Math.round(rateVal * 10000) / 100).toFixed(2)}%
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  title={t("dashboard.rateAutoTitle", { label: "All" })}
+                  onClick={handleResetRates}
+                  style={{ marginRight: "auto" }}
+                >
+                  {t("dashboard.resetDefaults")}
+                </button>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={() => setIsEditingRates(false)}
                 >
-                  取消
+                  {t("dashboard.cancel")}
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary btn-sm"
                 >
-                  保存自定义利率
+                  {t("dashboard.save")}
                 </button>
               </div>
             </form>

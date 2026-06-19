@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { dbGetAll, dbPut } from "../../features/storage.js";
 import { NumberInput, Select } from "../../components/index.js";
+import { useI18n } from "../../lib/i18n/useI18n.js";
 
 export default function MortgageSetup() {
   const router = useRouter();
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -48,13 +50,13 @@ export default function MortgageSetup() {
       } catch (err) {
         console.error("Failed to load IndexedDB data", err);
         const errorVal = /** @type {any} */ (err);
-        setError("加载本地配置失败: " + (errorVal.message || String(errorVal)));
+        setError(t("mortgageSetup.errorLoad", { message: errorVal.message || String(errorVal) }));
       } finally {
         setLoading(false);
       }
     }
     loadData();
-  }, []);
+  }, [t]);
 
   /**
    * Calculates required amortization term in months from periodic repayment amount.
@@ -95,7 +97,7 @@ export default function MortgageSetup() {
     setError("");
 
     if (isNaN(totalAmount) || totalAmount <= 1000) {
-      setError("总贷款额必须为有效金额（不小于 $1,000 NZD）。");
+      setError(t("mortgageSetup.errorAmount"));
       return;
     }
 
@@ -120,12 +122,12 @@ export default function MortgageSetup() {
       const months = isNaN(termMonths) ? 0 : termMonths;
       calculatedMonths = years * 12 + months;
       if (calculatedMonths < 12 || calculatedMonths > 360) {
-        setError("还款目标年限必须在 1 年（12个月）至 30 年（360个月）之间。");
+        setError(t("mortgageSetup.errorTerm"));
         return;
       }
     } else {
       if (isNaN(periodicPayment) || periodicPayment <= 0) {
-        setError("每次还款金额必须为大于 0 的有效数值。");
+        setError(t("mortgageSetup.errorPayment"));
         return;
       }
       calculatedMonths = calculateTermFromPayment(
@@ -171,26 +173,26 @@ export default function MortgageSetup() {
       router.push("/");
     } catch (err) {
       const errorVal = /** @type {any} */ (err);
-      setError("保存配置失败: " + errorVal.message);
+      setError(t("mortgageSetup.errorSave", { message: errorVal.message }));
     }
   };
 
   const getFrequencyText = () => {
     switch (repaymentFrequency) {
       case "weekly":
-        return "每周";
+        return t("mortgageSetup.freqWeekly");
       case "fortnightly":
-        return "每两周";
+        return t("mortgageSetup.freqFortnightly");
       case "monthly":
       default:
-        return "每月";
+        return t("mortgageSetup.freqMonthly");
     }
   };
 
   if (loading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "80vh" }}>
-        <div>加载配置中...</div>
+        <div>{t("mortgageSetup.loading")}</div>
       </div>
     );
   }
@@ -198,8 +200,8 @@ export default function MortgageSetup() {
   return (
     <div className="setup-container">
       <header className="setup-header">
-        <h1 className="page-title gradient-text-primary">房贷信息配置</h1>
-        <p className="subtitle">录入您的房贷全局参数，系统将在此基础上计算出最优的贷款拆包（Split）方案。</p>
+        <h1 className="page-title gradient-text-primary">{t("mortgageSetup.title")}</h1>
+        <p className="subtitle">{t("mortgageSetup.subtitle")}</p>
       </header>
 
       <form onSubmit={handleSave} className="setup-form">
@@ -207,13 +209,13 @@ export default function MortgageSetup() {
 
         {/* Global Mortgage Settings Card */}
         <section className="glass-panel form-section accent-primary">
-          <h2 className="section-title"><span className="step-num">1</span>房贷基础信息设定</h2>
-          
+          <h2 className="section-title"><span className="step-num">1</span>{t("mortgageSetup.section1")}</h2>
+
           <div className="form-row">
             <div className="form-group flex-1">
               <NumberInput
-                label="总贷款金额 (NZD)"
-                ariaLabel="总贷款金额（新西兰元）"
+                label={t("mortgageSetup.totalAmount")}
+                ariaLabel={t("mortgageSetup.totalAmountAria")}
                 min={1000}
                 step={1}
                 prefix="$"
@@ -224,41 +226,48 @@ export default function MortgageSetup() {
                   setTotalAmount(isNaN(val) ? NaN : val);
                 }}
               />
+              <span className="input-tip">{t("mortgageSetup.hintTotalAmount")}</span>
             </div>
 
             <div className="form-group flex-1">
-              <label className="form-label">贷款还款频率</label>
+              <label className="form-label">{t("mortgageSetup.frequencyLabel")}</label>
               <Select
-                ariaLabel="贷款还款频率"
+                ariaLabel={t("mortgageSetup.frequencyAria")}
                 value={repaymentFrequency}
                 onChange={(/** @type {any} */v) => setRepaymentFrequency(v)}
                 options={[
-                  { value: "weekly", label: "每周 (Weekly)" },
-                  { value: "fortnightly", label: "每两周 (Fortnightly)" },
-                  { value: "monthly", label: "每月 (Monthly)" }
+                  { value: "weekly", label: t("mortgageSetup.freqWeekly") },
+                  { value: "fortnightly", label: t("mortgageSetup.freqFortnightly") },
+                  { value: "monthly", label: t("mortgageSetup.freqMonthly") }
                 ]}
               />
+              <span className="input-tip">{t("mortgageSetup.hintFrequency")}</span>
             </div>
 
             <div className="form-group flex-1">
-              <label className="form-label">默认还款类型</label>
+              <label className="form-label">{t("mortgageSetup.typeLabel")}</label>
               <Select
-                ariaLabel="默认还款类型"
+                ariaLabel={t("mortgageSetup.typeAria")}
                 value={repaymentType}
                 onChange={(/** @type {any} */v) => setRepaymentType(v)}
                 options={[
-                  { value: "principal-and-interest", label: "本金加利息 (P&I)" },
-                  { value: "interest-only", label: "仅还利息 (Interest Only)" }
+                  { value: "principal-and-interest", label: t("mortgageSetup.typePI") },
+                  { value: "interest-only", label: t("mortgageSetup.typeIO") }
                 ]}
               />
+              <span className="input-tip">{t("mortgageSetup.hintRepaymentType")}</span>
             </div>
           </div>
         </section>
 
         {/* Repayment Target Settings Card */}
         <section className="glass-panel form-section accent-cyan">
-          <h2 className="section-title"><span className="step-num">2</span>还款目标设定方式</h2>
-          
+          <h2 className="section-title"><span className="step-num">2</span>{t("mortgageSetup.section2")}</h2>
+
+          <div className="hint-box">
+            <p>{t("mortgageSetup.hintTermMode")}</p>
+          </div>
+
           {/* Target Mode Selector Tabs */}
           <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
             <button
@@ -267,7 +276,7 @@ export default function MortgageSetup() {
               style={{ flex: 1, padding: "12px" }}
               onClick={() => setTargetMode("term")}
             >
-              按期望还清年限设定
+              {t("mortgageSetup.targetTerm")}
             </button>
             <button
               type="button"
@@ -275,9 +284,9 @@ export default function MortgageSetup() {
               style={{ flex: 1, padding: "12px" }}
               onClick={() => setTargetMode("payment")}
               disabled={repaymentType === "interest-only"}
-              title={repaymentType === "interest-only" ? "仅还利息（Interest Only）无法使用供款额反推年限" : ""}
+              title={repaymentType === "interest-only" ? t("mortgageSetup.targetTermDisabledTitle") : ""}
             >
-              按期望每次还款额设定
+              {t("mortgageSetup.targetPayment")}
             </button>
           </div>
 
@@ -285,12 +294,12 @@ export default function MortgageSetup() {
             <div className="form-row" style={{ marginTop: "8px" }}>
               <div className="form-group flex-1">
                 <NumberInput
-                  label="期望还清期限 (年)"
-                  ariaLabel="期望还清期限年数"
+                  label={t("mortgageSetup.termYears")}
+                  ariaLabel={t("mortgageSetup.termYearsAria")}
                   min={1}
                   max={30}
                   step={1}
-                  suffix="年"
+                  suffix="yr"
                   size="md"
                   value={isNaN(termYears) ? "" : termYears}
                   onChange={(/** @type {any} */e) => {
@@ -298,16 +307,16 @@ export default function MortgageSetup() {
                     setTermYears(isNaN(val) ? NaN : val);
                   }}
                 />
-                <span className="input-tip">通常房贷的最长摊销年限为 25 或 30 年。</span>
+                <span className="input-tip">{t("mortgageSetup.tipMaxTerm")}</span>
               </div>
               <div className="form-group flex-1">
                 <NumberInput
-                  label="期望还清期限 (月 - 选填)"
-                  ariaLabel="期望还清期限月份"
+                  label={t("mortgageSetup.termMonths")}
+                  ariaLabel={t("mortgageSetup.termMonthsAria")}
                   min={0}
                   max={11}
                   step={1}
-                  suffix="月"
+                  suffix="mo"
                   size="md"
                   value={isNaN(termMonths) ? "" : termMonths}
                   onChange={(/** @type {any} */e) => {
@@ -321,8 +330,8 @@ export default function MortgageSetup() {
             <div style={{ marginTop: "8px" }}>
               <div className="form-group" style={{ maxWidth: "400px" }}>
                 <NumberInput
-                  label={`期望每次还款金额 (NZD) - ${getFrequencyText()}供款额`}
-                  ariaLabel="期望每次还款金额"
+                  label={t("mortgageSetup.periodicPayment", { freq: getFrequencyText() })}
+                  ariaLabel={t("mortgageSetup.periodicPaymentAria")}
                   min={10}
                   step={10}
                   prefix="$"
@@ -333,19 +342,23 @@ export default function MortgageSetup() {
                     setPeriodicPayment(isNaN(val) ? NaN : val);
                   }}
                 />
-                <span className="input-tip">输入您每期期望扣划的金额，系统将基于当前的基准浮动利率，自动换算出与之对应的合理摊销年限。</span>
+                <span className="input-tip">{t("mortgageSetup.tipPayment")}</span>
               </div>
             </div>
           )}
         </section>
 
         {/* Action Button Bar */}
+        <div className="hint-box hint-box--info">
+          <p>{t("mortgageSetup.hintStep2")}</p>
+        </div>
+
         <div className="submit-bar">
           <button type="submit" className="btn btn-primary btn-lg" style={{ padding: "14px 28px" }}>
-            保存配置，返回仪表盘
+            {t("mortgageSetup.save")}
           </button>
           <button type="button" onClick={() => router.push("/")} className="btn btn-secondary btn-lg" style={{ padding: "14px 28px" }}>
-            取消
+            {t("mortgageSetup.cancel")}
           </button>
         </div>
       </form>
@@ -429,6 +442,21 @@ export default function MortgageSetup() {
           color: var(--text-muted);
           margin-top: 6px;
           display: block;
+          line-height: 1.5;
+        }
+
+        .hint-box {
+          background: rgba(96, 165, 250, 0.08);
+          border: 1px solid rgba(96, 165, 250, 0.2);
+          border-radius: 10px;
+          padding: 14px 16px;
+        }
+
+        .hint-box p {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.65;
+          margin: 0;
         }
 
         .submit-bar {

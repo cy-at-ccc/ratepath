@@ -1257,10 +1257,12 @@ describe("Plan v10: concentration axis + picker mutex", () => {
       opt.recommendations.mostStable.strategyId,
       opt.recommendations.worstCaseDefense.strategyId
     ];
-    // At least 3 distinct cards out of 4 (preference may coincide with
-    // one of the others when scores tie, but mutex forces the other 3
-    // cards to be distinct in most cases).
-    expect(new Set(ids).size).toBeGreaterThanOrEqual(3);
+    // With 4 distinct candidates, the 4 cards surface 4 different
+    // strategies — the v10 mutex guarantees this since preference,
+    // lowestCost, mostStable, and worstCaseDefense each key on a
+    // distinct metric (and none of them can re-pick an excluded
+    // strategy when the filtered pool still has ≥1 candidate).
+    expect(new Set(ids).size).toBeGreaterThanOrEqual(4);
   });
 
   it("v10: concentration objective is in both term and payment modes with 0.05 tolerance", () => {
@@ -1302,5 +1304,193 @@ describe("Plan v10: concentration axis + picker mutex", () => {
     });
     const a = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "A");
     expect(a.concentration).toBe(1.0);
+  });
+
+  it("v10: small-pool fallback returns global min when filtering empties", () => {
+    // Construct 1 strategy. All 4 cards must return it (small-pool fallback:
+    // pickExcluding falls back to pickMin over the unfiltered pool when the
+    // filtered pool is empty, so the 4 cards always render a non-undefined
+    // pick even if it duplicates an earlier card's pick).
+    const results = [mkRow("only", "base", 10000, 400000, 3000, 0, 0, 2)];
+    const opt = optimizeStrategies({
+      simulationResults: results,
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "term"
+    });
+    expect(opt.recommendations.preference.strategyId).toBe("only");
+    expect(opt.recommendations.lowestCost.strategyId).toBe("only");
+    expect(opt.recommendations.mostStable.strategyId).toBe("only");
+    expect(opt.recommendations.worstCaseDefense.strategyId).toBe("only");
+  });
+});
+
+describe("Bilingual pros/cons via t() injection", () => {
+  // Mirror of `apps/web/messages/en-NZ.json` under `opt.pro.*` / `opt.con.*`.
+  // Kept local to the test (the engine is engine-layer-i18n-free and does
+  // not import from the app's dictionaries). The keys MUST match the
+  // `DEFAULT_ZH` constant in `packages/optimiser/src/index.js`.
+  const EN_DICT = {
+    "opt.pro.costLow": "Expected interest cost is very low; best in class for interest control.",
+    "opt.con.costHigh": "Expected total interest cost is on the high side.",
+    "opt.pro.div.costPremium": "Diversification preset: total cost is slightly above the optimum, in exchange for lower refix concentration and higher flexibility.",
+    "opt.con.div.costPremium": "Diversification preset: total interest cost is somewhat higher than the strict cost-optimal pick.",
+    "opt.pro.stabilitySmooth": "Payment volatility is low; cash flow is predictable and well-supported.",
+    "opt.con.peakRisk": "High-rate scenarios expose larger payment peaks (monthly / fortnightly / weekly).",
+    "opt.pro.paymentPayoffClean": "Loan is paid off within a reasonable horizon, with no long-tail balance risk.",
+    "opt.con.paymentPayoffUnfinished": "Loan is not fully paid off within the simulation horizon; balance tail risk exists.",
+    "opt.pro.term.principalFast": "Principal paydown is fast; remaining balance drops quickly.",
+    "opt.con.term.principalSlow": "Principal paydown is slow; ending balance is high.",
+    "opt.con.term.breachHigh": "Budget overage count is high under stress scenarios; cash flow is squeezed.",
+    "opt.pro.refix.spread": "Refix dates are spread across different months; avoids a concentrated repricing shock.",
+    "opt.con.refix.concurrent": "Multiple tranches mature together; refix exposure is concentrated.",
+    "opt.pro.div.refixSpread": "Diversification preset: refix risk is spread across different months, so a single shock is more controllable.",
+    "opt.con.div.multiTranche": "Diversification preset: managing multiple fixed-maturity dates is slightly more complex; track each sub-loan's refix timing.",
+    "opt.pro.div.flexPreserve": "Diversification preset: ample floating / Offset headroom is preserved for opportunistic repayments or hedging.",
+    "opt.pro.flex.high": "High floating share keeps funds flexible; large extra repayments and offset top-ups are easy to apply.",
+    "opt.con.flex.locked": "High fixed share locks in the loan; on-demand offset and large extra repayments are constrained.",
+    "opt.pro.endingBalanceLow": "Under extreme scenarios, the ending principal balance is small; debt reduction is steady.",
+    "opt.con.endingBalanceHigh": "Under extreme scenarios, the ending principal balance is high; paydown is uncertain.",
+    "opt.pro.volatilityLow": "Payment stream has small month-to-month variance; cash flow is predictable.",
+    "opt.con.volatilityHigh": "Payment stream is volatile; near-refix jumps are large — keep a buffer.",
+    "opt.pro.budgetLow": "Simulated budget overage count is low; payment pressure stays controllable.",
+    "opt.pro.paretoYes": "Yes (Pareto-optimal)",
+    "opt.pro.paretoNo": "No (dominated)",
+    "opt.pro.balanced": "All financial and risk metrics are roughly balanced.",
+    "opt.con.noTailDefense": "Lacks a deep defensive buffer against an extreme high-rate path."
+  };
+  const tEn = (key) => EN_DICT[key] !== undefined ? EN_DICT[key] : key;
+
+  // Sanity: the EN_DICT keys must cover the same set the engine emits
+  // via the diversification preset. If a new key is added to the engine
+  // and not added here, this test will fail at the assertion below, not
+  // silently emit a Chinese string.
+  const REQUIRED_KEYS = [
+    "opt.pro.costLow", "opt.con.costHigh",
+    "opt.con.div.costPremium",
+    "opt.pro.stabilitySmooth", "opt.con.peakRisk",
+    "opt.pro.paymentPayoffClean", "opt.con.paymentPayoffUnfinished",
+    "opt.pro.term.principalFast", "opt.con.term.principalSlow",
+    "opt.con.term.breachHigh",
+    "opt.pro.refix.spread", "opt.con.refix.concurrent",
+    "opt.pro.div.refixSpread", "opt.con.div.multiTranche",
+    "opt.pro.div.flexPreserve",
+    "opt.pro.flex.high", "opt.con.flex.locked",
+    "opt.pro.endingBalanceLow", "opt.con.endingBalanceHigh",
+    "opt.pro.volatilityLow", "opt.con.volatilityHigh",
+    "opt.pro.budgetLow",
+    "opt.pro.balanced", "opt.con.noTailDefense"
+  ];
+  for (const k of REQUIRED_KEYS) {
+    if (EN_DICT[k] === undefined) {
+      throw new Error(`English dictionary missing key: ${k}`);
+    }
+  }
+
+  const scenarios = [
+    { id: "low", probability: 0.2 },
+    { id: "base", probability: 0.6 },
+    { id: "high", probability: 0.2 }
+  ];
+
+  it("emits English pros/cons when a t() is supplied to optimizeStrategies", () => {
+    // Reuse the same "mid-pack diversification" fixture as the legacy
+    // Chinese-substring test so we cover the same code path.
+    const bounds = {
+      cost: { min: 1000, max: 2000, diff: 1000 },
+      principal: { min: 0, max: 0, diff: 1 },
+      refix: { min: 0.0, max: 0.6, diff: 0.6 },
+      resilience: { min: 3000, max: 5000, diff: 2000 },
+      flex: { min: 0.0, max: 0.6, diff: 0.6 },
+      stability: { min: 0, max: 0, diff: 1 },
+      budget: { min: 0, max: 0, diff: 1 },
+      endingBalance: { min: 0, max: 0, diff: 1 },
+      payoff: { min: 0, max: 0, diff: 1 }
+    };
+    const strategy = {
+      expectedInterest: 1500,
+      expectedMaxConcurrentRefixPercentage: 0.15,
+      expectedAffordabilityBreaches: 0,
+      expectedFloatingExposure: 0.45,
+      worstCasePayment: 3500,
+      expectedEndingBalance: 0
+    };
+    const exp = generateExplanations(strategy, bounds, "term", { diversification: true, t: tEn });
+    // 1. No CJK characters should appear anywhere in the English output.
+    for (const line of [...exp.pros, ...exp.cons]) {
+      expect(line).not.toMatch(/[一-鿿]/);
+    }
+    // 2. The English diversification copy should be present.
+    expect(exp.pros.some((p) => p.toLowerCase().includes("diversification"))).toBe(true);
+    expect(exp.pros.some((p) => p.toLowerCase().includes("refix risk is spread"))).toBe(true);
+    expect(exp.pros.some((p) => p.toLowerCase().includes("floating"))).toBe(true);
+    expect(exp.cons.some((c) => c.toLowerCase().includes("managing multiple fixed-maturity"))).toBe(true);
+  });
+
+  it("Chinese identity t() preserves the original Chinese strings (backward compat)", () => {
+    // Pins the backward-compat promise: callers that don't pass a `t`
+    // see the original Chinese pros/cons verbatim. This is the assertion
+    // that keeps the legacy "再融资风险分散" / "保留充足的浮动或Offset额度"
+    // / "管理多个固定到期日稍复杂" tests above green.
+    const strategy = {
+      expectedInterest: 1500,
+      expectedMaxConcurrentRefixPercentage: 0.15,
+      expectedAffordabilityBreaches: 0,
+      expectedFloatingExposure: 0.45,
+      worstCasePayment: 3500,
+      expectedEndingBalance: 0
+    };
+    const bounds = {
+      cost: { min: 1000, max: 2000, diff: 1000 },
+      refix: { min: 0.0, max: 0.6, diff: 0.6 },
+      resilience: { min: 3000, max: 5000, diff: 2000 },
+      flex: { min: 0.0, max: 0.6, diff: 0.6 },
+      stability: { min: 0, max: 0, diff: 1 },
+      budget: { min: 0, max: 0, diff: 1 },
+      principal: { min: 0, max: 0, diff: 1 },
+      endingBalance: { min: 0, max: 0, diff: 1 },
+      payoff: { min: 0, max: 0, diff: 1 }
+    };
+    const exp = generateExplanations(strategy, bounds, "term", { diversification: true });
+    expect(exp.pros.some((p) => p.includes("再融资风险分散"))).toBe(true);
+    expect(exp.pros.some((p) => p.includes("保留充足的浮动或Offset额度"))).toBe(true);
+    expect(exp.cons.some((c) => c.includes("管理多个固定到期日稍复杂"))).toBe(true);
+  });
+
+  it("optimizeStrategies forwards t to all four recommendation slots", () => {
+    // Build a 2-strategy fixture so the four cards pick from the same
+    // candidate pool. With English t(), the pros/cons on every card
+    // must be free of CJK characters.
+    const build = (id, interest, maxPay) => ({
+      strategyId: id,
+      scenarioId: "base",
+      totalInterest: interest,
+      totalRepayments: 0,
+      endingBalance: 0,
+      maximumPayment: maxPay,
+      minimumPayment: 0,
+      averagePayment: maxPay,
+      maximumPaymentIncrease: 0,
+      paymentVolatility: 0,
+      refixEventCount: 0,
+      maximumConcurrentRefixPercentage: 0,
+      floatingExposure: 0.5,
+      affordabilityBreaches: 0,
+      worstCaseInterest: interest,
+      worstCaseAffordabilityBreaches: 0,
+      expectedRefixEventCount: 0,
+      timeline: []
+    });
+    const opt = optimizeStrategies({
+      simulationResults: [build("A", 10000, 3000), build("B", 12000, 3500)],
+      scenarios: [{ id: "base", probability: 1 }],
+      mode: "term",
+      t: tEn
+    });
+    for (const card of Object.values(opt.recommendations)) {
+      if (!card) continue;
+      for (const line of [...card.pros, ...card.cons]) {
+        expect(line).not.toMatch(/[一-鿿]/);
+      }
+    }
   });
 });

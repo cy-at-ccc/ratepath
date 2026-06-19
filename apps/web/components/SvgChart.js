@@ -5,6 +5,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useId } from "react";
+import { useI18n } from "../lib/i18n/useI18n.js";
 
 /**
  * Resolve a CSS color string from props into a concrete RGB(A) hex.
@@ -48,13 +49,14 @@ function withAlpha(hex, alpha) {
  * crosshair + tooltip, year-based X axis, interactive legend, empty-state
  * polish and prefers-reduced-motion support.
  * @param {Object} props
- * @param {Array<{id: string, name: string, color: string, points: Array<{month: number, value: number}>, fillArea?: boolean, strokeDasharray?: string}>} props.data - Array of datasets
+ * @param {Array<{id: string, name: string, color: string, points: Array<{month: number, value: number}>, fillArea?: boolean, fillToSeriesId?: string, fillColor?: string, fillOpacity?: number, strokeDasharray?: string}>} props.data - Array of datasets
  * @param {string} [props.yAxisType="rate"] - Type of axis: "rate" (e.g., 5.50%) or "currency" (e.g., $450,000)
  * @param {string} [props.title]
  * @param {number} [props.height=300] - Height of chart
  * @returns {any}
  */
 export default function SvgChart({ data, yAxisType = "rate", title, height = 300 }) {
+  const { t } = useI18n();
   const [hoverMonth, setHoverMonth] = useState(/** @type {number|null} */ (null));
   const [hoverX, setHoverX] = useState(0);
   const [hoverY, setHoverY] = useState(0);
@@ -146,7 +148,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
           <path d="M3 3v18h18" />
           <path d="M7 14l4-4 4 4 5-6" />
         </svg>
-        <span>暂无图表数据</span>
+        <span>{t("strategyLab.emptyState")}</span>
         <style jsx>{`
           .chart-empty {
             display: flex;
@@ -208,19 +210,19 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
 
   // Format month label for axis (Y1, Y2, Y3, etc.)
   const formatXLabel = (/** @type {number} */ m) => {
-    if (m === 0) return "现在";
+    if (m === 0) return t("common.monthNow");
     const years = Math.floor(m / 12);
     const months = m % 12;
-    if (months === 0) return `Y${years}`;
-    return `Y${years}m${months}`;
+    if (months === 0) return t("common.yearLabel", { y: years });
+    return t("common.yearMonthLabel", { y: years, mo: months });
   };
 
   const formatTooltipMonth = (/** @type {number} */ m) => {
-    if (m === 0) return "第 0 个月 (现在)";
+    if (m === 0) return t("common.monthIndex", { m: 0 });
     const years = Math.floor(m / 12);
     const months = m % 12;
-    if (months === 0) return `第 ${m} 个月 (Y${years})`;
-    return `第 ${m} 个月 (Y${years}m${months})`;
+    if (months === 0) return t("common.monthYear", { m, y: years });
+    return t("common.monthYearMonth", { m, y: years, mo: months });
   };
 
   // Get SVG path descriptor (line)
@@ -248,6 +250,32 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
       })
       .join(" ");
     return `${top} L ${getX(last.month)} ${baselineY} L ${getX(first.month)} ${baselineY} Z`;
+  };
+
+  // Get SVG area-fill path descriptor between two series. Used for forecast
+  // bands, e.g. the long-term Monte Carlo P90-to-P10 range after month 36.
+  const getBandPathD = (/** @type {any[]} */ upperPoints, /** @type {any[]} */ lowerPoints) => {
+    const lowerByMonth = new Map(lowerPoints.map((/** @type {any} */ p) => [p.month, p]));
+    const pairs = upperPoints
+      .map((/** @type {any} */ upper) => ({ upper, lower: lowerByMonth.get(upper.month) }))
+      .filter((/** @type {any} */ pair) => pair.lower);
+
+    if (pairs.length === 0) return "";
+
+    const top = pairs
+      .map((/** @type {any} */ pair, /** @type {number} */ idx) => {
+        const x = getX(pair.upper.month);
+        const y = getY(pair.upper.value);
+        return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
+      })
+      .join(" ");
+    const bottom = pairs
+      .slice()
+      .reverse()
+      .map((/** @type {any} */ pair) => `L ${getX(pair.lower.month)} ${getY(pair.lower.value)}`)
+      .join(" ");
+
+    return `${top} ${bottom} Z`;
   };
 
   // Hover detection logic — snaps to the nearest month in the union axis
@@ -462,7 +490,25 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
           strokeWidth="1"
         />
 
-        {/* Area fills (drawn first so the lines sit on top) */}
+        {/* Forecast bands (drawn first so the lines sit on top) */}
+        {activeData.map((d) => {
+          if (!d.fillToSeriesId) return null;
+          const lowerSeries = activeData.find((series) => series.id === d.fillToSeriesId);
+          if (!lowerSeries) return null;
+          const bandPath = getBandPathD(d.points, lowerSeries.points);
+          if (!bandPath) return null;
+          return (
+            <path
+              key={`band-${d.id}-${d.fillToSeriesId}`}
+              d={bandPath}
+              fill={d.fillColor || `url(#${gradId(d.id)})`}
+              opacity={d.fillOpacity ?? 1}
+              stroke="none"
+            />
+          );
+        })}
+
+        {/* Area fills (drawn before lines so the lines sit on top) */}
         {activeData.map((d) => {
           if (d.fillArea === false) return null;
           return (
@@ -599,7 +645,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
                 className={`legend-item ${isHidden ? "is-hidden" : ""}`}
                 onClick={() => toggleSeries(d.id)}
                 aria-pressed={!isHidden}
-                aria-label={`切换 ${d.name} 系列显示`}
+                aria-label={t("common.ocrTooltip", { name: d.name })}
               >
                 <span
                   className="legend-dot"

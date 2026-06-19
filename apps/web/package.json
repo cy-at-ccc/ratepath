@@ -7,7 +7,9 @@
     "dev": "next dev -p 4321",
     "build": "NEXT_PUBLIC_BUILD_ID=$(git rev-parse --short HEAD 2>/dev/null || echo dev) next build",
     "start": "next start -p 4321",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:app": "vitest run --config vitest.config.js",
+    "test:app:watch": "vitest --config vitest.config.js"
   },
   "dependencies": {
     "@mortgage/country-adapters": "*",

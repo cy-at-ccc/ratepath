@@ -36,7 +36,7 @@ export default function Select(/** @type {any} */ props) {
     onChange,
     options,
     size = "md",
-    placeholder = "请选择",
+    placeholder,
     id,
     className = "",
     disabled = false
@@ -117,7 +117,7 @@ export default function Select(/** @type {any} */ props) {
     }
   };
 
-  const triggerLabel = current ? current.label : placeholder;
+  const triggerLabel = current ? current.label : (placeholder || " ");
 
   return (
     <div
