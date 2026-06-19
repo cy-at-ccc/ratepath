@@ -836,7 +836,10 @@ export default function StrategyLab() {
 
     setScenarios(activeScenarios);
 
-    const deterministicHorizonMonths = Math.min(simDurationYears * 12, 36);
+    // Each family is a single continuous line: one color throughout, no time-based style split.
+    // The line is smooth 0-36 (deterministic + medium-term AR(1)) and noisier 37+ (long-term MC);
+    // both come from the same scenario's full policyRatePath. The 4 long-term samples (expected /
+    // optimistic / median / stress) are added separately and faded via strokeOpacity:0.55.
     const scenarioFamilyPaths = ["low", "base", "high"].map((familyId) => {
       const familyScenario = activeScenarios.find((/** @type {any} */ s) => (s.assumptions?.scenarioFamily || s.id) === familyId);
       return {
@@ -846,9 +849,9 @@ export default function StrategyLab() {
           { pct: familyId === "low" ? scenarioProbabilities.low : familyId === "base" ? scenarioProbabilities.base : scenarioProbabilities.high }
         ),
         color: familyId === "low" ? "var(--color-emerald)" : familyId === "base" ? "var(--color-primary)" : "var(--color-rose)",
-        points: (familyScenario?.policyRatePath || [])
-          .filter((/** @type {any} */ p) => p.month <= deterministicHorizonMonths)
-          .map((/** @type {any} */ p) => ({ month: p.month, value: p.rate }))
+        points: (familyScenario?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })),
+        fillArea: false,
+        strokeDasharray: undefined
       };
     });
 
@@ -866,6 +869,7 @@ export default function StrategyLab() {
             type: "expected",
             color: "#f8fafc",
             strokeDasharray: "6 6",
+            strokeOpacity: 0.55,
             description: t("strategyLab.path.expected.desc"),
             targetStats: expectedPathStats
           },
@@ -876,6 +880,7 @@ export default function StrategyLab() {
             scenarioId: optimisticScenario?.id,
             color: "var(--chart-optimistic)",
             strokeDasharray: "2 6",
+            strokeOpacity: 0.55,
             description: t("strategyLab.path.optimistic.desc"),
             targetStats: scenarioPathStats(optimisticScenario)
           },
@@ -886,6 +891,7 @@ export default function StrategyLab() {
             scenarioId: medianScenario?.id,
             color: "var(--chart-median)",
             strokeDasharray: "6 4",
+            strokeOpacity: 0.55,
             description: t("strategyLab.path.median.desc"),
             targetStats: scenarioPathStats(medianScenario)
           },
@@ -896,6 +902,7 @@ export default function StrategyLab() {
             scenarioId: stressScenario?.id,
             color: "var(--color-rose)",
             strokeDasharray: "10 6",
+            strokeOpacity: 0.55,
             description: t("strategyLab.path.stress.desc"),
             targetStats: scenarioPathStats(stressScenario)
           }
@@ -924,7 +931,8 @@ export default function StrategyLab() {
           color: option.color,
           points: expectedPath,
           fillArea: false,
-          strokeDasharray: option.strokeDasharray
+          strokeDasharray: option.strokeDasharray,
+          strokeOpacity: option.strokeOpacity
         };
       }
 
@@ -937,7 +945,8 @@ export default function StrategyLab() {
           .filter((/** @type {any} */ p) => p.month >= Math.min(36, simDurationYears * 12))
           .map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })),
         fillArea: false,
-        strokeDasharray: option.strokeDasharray
+        strokeDasharray: option.strokeDasharray,
+        strokeOpacity: option.strokeOpacity
       };
     });
 

@@ -49,7 +49,7 @@ function withAlpha(hex, alpha) {
  * crosshair + tooltip, year-based X axis, interactive legend, empty-state
  * polish and prefers-reduced-motion support.
  * @param {Object} props
- * @param {Array<{id: string, name: string, color: string, points: Array<{month: number, value: number}>, fillArea?: boolean, fillToSeriesId?: string, fillColor?: string, fillOpacity?: number, strokeDasharray?: string}>} props.data - Array of datasets
+ * @param {Array<{id: string, name: string, color: string, points: Array<{month: number, value: number}>, fillArea?: boolean, fillToSeriesId?: string, fillColor?: string, fillOpacity?: number, strokeDasharray?: string, strokeOpacity?: number}>} props.data - Array of datasets
  * @param {string} [props.yAxisType="rate"] - Type of axis: "rate" (e.g., 5.50%) or "currency" (e.g., $450,000)
  * @param {string} [props.title]
  * @param {number} [props.height=300] - Height of chart
@@ -534,6 +534,7 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeDasharray={d.strokeDasharray}
+              strokeOpacity={d.strokeOpacity ?? 1}
               filter={`url(#chart-glow-${reactId})`}
               style={{
                 ...animationStyle,

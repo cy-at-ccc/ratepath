@@ -137,6 +137,43 @@ describe("Scenario Engine Tests", () => {
     expect(lowSamples[0].policyRatePath[48].rate).not.toBeUndefined();
   });
 
+  it("should join the long-term MC path continuously to the deterministic prefix at month 36", () => {
+    const scenarios = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 84,
+      controls: {
+        shortTermChange: 0.01,
+        mediumTermDirection: 1,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        spreadShock: 0,
+        longTermCycleYears: 2,
+        longTermReversalBias: 0.7,
+        monteCarloSampleCount: 4
+      }
+    });
+
+    // Find any base-family long-term MC sample. The first MC step (month 37) starts
+    // from `currentRate = month36Rate` and adds drift + oscillation + noise, so strict
+    // equality is not expected — but the first MC step must remain bounded.
+    /** @type {any} */
+    let baseSample = scenarios.find((/** @type {any} */ s) => s.assumptions?.scenarioFamily === "base" && s.assumptions?.isMonteCarloTail);
+    expect(baseSample).toBeTruthy();
+    baseSample = /** @type {any} */ (baseSample);
+    const anchorRate = baseSample.policyRatePath[36].rate;
+    const firstMcRate = baseSample.policyRatePath[37].rate;
+    expect(typeof anchorRate).toBe("number");
+    expect(typeof firstMcRate).toBe("number");
+    // Soft continuity: first MC step magnitude is bounded by monthlyTrendStep + baseNoiseScale
+    // (both small in absolute terms; allow generous 5pp upper bound for safety).
+    expect(Math.abs(firstMcRate - anchorRate)).toBeLessThan(0.05);
+    // Path length covers the full forecast horizon (forecastMonths + 1 = 85).
+    expect(baseSample.policyRatePath.length).toBe(85);
+  });
+
   it("should support explicit multi-sample Monte Carlo expansion", () => {
     const scenarios = generateScenarios({
       initialRate: 0.05,
