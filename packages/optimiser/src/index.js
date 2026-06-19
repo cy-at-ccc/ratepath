@@ -407,18 +407,24 @@ export function generateExplanations(s, bounds, mode = "term", opts = {}) {
  * @param {any[]} input.scenarios - List of scenarios with probabilities
  * @param {number} [input.sliderCostStability=0.5] - 0 = cost-priority, 1 = stability-priority
  * @param {number} [input.sliderFlexibility=0.0] - 0 = no flex, 1 = high flex
- * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, smoothness?: number, worstCaseDefense?: number}} [input.weights]
- *   - Optional explicit weights. Honoured keys: `cost`, `principal`, `refix`,
- *     `resilience`, `flex`, `budget`, `smoothness` (the 7 preference sliders),
- *     plus `worstCaseDefense` (the 8th v9 key, drives a composite of
- *     worstCaseInterest + worstCaseAffordabilityBreaches + worstCasePayment).
- *     Missing keys default to 0. Sum of present keys must be > 0 or all weights
- *     are ignored. `stability`, `endingBalance`, and `payoff` are NOT read from
- *     this object — in payment mode those keys are derived from
- *     `sliderCostStability` / `sliderFlexibility` via the slider-derived branch
- *     below. These weights only steer the `preference` recommendation;
- *     `lowestCost`, `mostStable`, and `worstCaseDefense` remain
- *     weights-agnostic (see function description).
+ * @param {{cost?: number, principal?: number, refix?: number, resilience?: number, flex?: number, budget?: number, smoothness?: number, worstCaseDefense?: number, balance?: number}} [input.weights]
+ *   - Optional explicit weights. Honoured keys: `cost`, `refix`, `flex`,
+ *     `balance`, `worstCaseDefense` (the v11 5-key shape that powers the
+ *     "Personal repayment preferences" group-6 UI). Legacy keys
+ *     `principal` / `resilience` / `budget` / `smoothness` are still read
+ *     for backward compatibility with persisted IndexedDB weights but the
+ *     page UI no longer exposes them — they have been folded into
+ *     `worstCaseDefense` (v9 composite) to remove duplication. The
+ *     `balance` weight (v11) is the inverse of the `concentration` Pareto
+ *     axis (max single allocation share) and steers `preference` away
+ *     from 90-10 fixed-heavy splits. Missing keys default to 0. Sum of
+ *     present keys must be > 0 or all weights are ignored. `stability`,
+ *     `endingBalance`, and `payoff` are NOT read from this object — in
+ *     payment mode those keys are derived from `sliderCostStability` /
+ *     `sliderFlexibility` via the slider-derived branch below. These
+ *     weights only steer the `preference` recommendation; `lowestCost`,
+ *     `mostStable`, and `worstCaseDefense` remain weights-agnostic (see
+ *     function description).
  * @param {"term"|"payment"} [input.mode] - Mode selector for the objective set (defaults to "term")
  * @param {Record<string, number>} [input.tolerances] - Per-objective tolerance override
  * @param {number} [input.recommendationMinAllocationCount] - Minimum number of

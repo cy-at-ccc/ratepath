@@ -861,6 +861,11 @@ export default function StrategyLab() {
     const stressScenario = getRepresentativeScenarioByQuantile(activeScenarios, 0.9);
     const scenarioPathStats = (/** @type {any} */ scenario) => buildPathTargetStats((scenario?.policyRatePath || []).map((/** @type {any} */ p) => ({ month: p.month, value: p.rate })));
     const expectedPathStats = buildPathTargetStats(expectedPath);
+    // Long-term options: only the probability-weighted expected path is
+    // surfaced in the chart legend / tooltip / chip selector. The
+    // optimistic / median / stress Monte Carlo samples are still computed
+    // (via `getRepresentativeScenarioByQuantile` above) so other code can
+    // reference them, but they are intentionally hidden from the UI.
     const longTermOptions = simDurationYears * 12 > 36
       ? [
           {
@@ -872,39 +877,6 @@ export default function StrategyLab() {
             strokeOpacity: 0.55,
             description: t("strategyLab.path.expected.desc"),
             targetStats: expectedPathStats
-          },
-          {
-            id: "optimistic",
-            label: t("strategyLab.path.optimistic.label"),
-            type: "scenario",
-            scenarioId: optimisticScenario?.id,
-            color: "var(--chart-optimistic)",
-            strokeDasharray: "2 6",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.optimistic.desc"),
-            targetStats: scenarioPathStats(optimisticScenario)
-          },
-          {
-            id: "median",
-            label: t("strategyLab.path.median.label"),
-            type: "scenario",
-            scenarioId: medianScenario?.id,
-            color: "var(--chart-median)",
-            strokeDasharray: "6 4",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.median.desc"),
-            targetStats: scenarioPathStats(medianScenario)
-          },
-          {
-            id: "stress",
-            label: t("strategyLab.path.stress.label"),
-            type: "scenario",
-            scenarioId: stressScenario?.id,
-            color: "var(--color-rose)",
-            strokeDasharray: "10 6",
-            strokeOpacity: 0.55,
-            description: t("strategyLab.path.stress.desc"),
-            targetStats: scenarioPathStats(stressScenario)
           }
         ]
       : [
