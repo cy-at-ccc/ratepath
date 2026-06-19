@@ -308,9 +308,12 @@ describe("Optimiser Engine Tests", () => {
     expect(ext90_10?.concentrationScore).toBeCloseTo(1.0, 6); // 0.9 is the upper bound
     expect(extBal?.concentrationScore).toBeCloseTo(0.0, 6);  // 0.5 is the lower bound
 
-    // balance=50: balanced (lower concentrationScore) gets bonus via
-    // `balanceScore = 1 - concentrationScore`. The balanced strategy
+    // balance=50: balanced (lower concentrationScore) gets a SMALLER
+    // contribution to overallScore than 90-10. The balanced strategy
     // should now rank better (lower overallScore) than the 90-10.
+    // v11 follows the "lower score is better" convention: `balanceScore`
+    // reuses `concentrationScore` directly (high concentration = high
+    // score = worse). This matches the costScore/refixScore pattern.
     const optWithBalance = optimizeStrategies({
       simulationResults: twoResults,
       scenarios: twoScenarios,
@@ -319,6 +322,8 @@ describe("Optimiser Engine Tests", () => {
     });
     const balRanked = optWithBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-balanced");
     const ext90Ranked = optWithBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-90-10");
+    // Lower score = better. Balanced (concentration 0.5 → score 0) should
+    // beat 90-10 (concentration 0.9 → score ~0.5).
     expect(balRanked?.score).toBeLessThan(ext90Ranked?.score ?? Infinity);
   });
 

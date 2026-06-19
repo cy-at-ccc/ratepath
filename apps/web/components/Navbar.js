@@ -68,7 +68,10 @@ export default function Navbar() {
     <nav className={`nav-sidebar ${isCollapsed ? "collapsed" : ""}`}>
       <div className="nav-logo">
         <span className="nav-logo-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 18 L8 14 L11 16 L16 9 L21 12" />
+            <polyline points="16 5 21 5 21 10" />
+          </svg>
         </span>
         <span className="nav-logo-text">RatePath</span>
         <span className="badge badge-emerald nav-logo-badge">NZ</span>
@@ -259,7 +262,8 @@ export default function Navbar() {
         }
 
         .nav-sidebar.collapsed .nav-logo-text,
-        .nav-sidebar.collapsed .nav-logo-badge {
+        .nav-sidebar.collapsed .nav-logo-badge,
+        .nav-sidebar.collapsed .nav-logo-switcher {
           display: none;
         }
 

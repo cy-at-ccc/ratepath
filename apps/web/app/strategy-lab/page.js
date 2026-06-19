@@ -180,9 +180,13 @@ export default function StrategyLab() {
 
   const normalizePreferenceWeights = (/** @type {Record<string, number>|undefined} */ input = DEFAULT_WEIGHTS) => {
     const raw = /** @type {Record<string, number>} */ ({});
+    // v11: clamp to [0, 35] (the per-slider max) so that every value in the
+    // returned weights object is within the slider's drag range. This
+    // eliminates the "blue border and dot are at different positions"
+    // mismatch when a rebalance pushes a non-dragged key above the cap.
     PREFERENCE_WEIGHT_KEYS.forEach((key) => {
       const value = Number(input?.[key]);
-      raw[key] = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0;
+      raw[key] = Number.isFinite(value) ? Math.max(0, Math.min(35, Math.round(value))) : 0;
     });
 
     const total = PREFERENCE_WEIGHT_KEYS.reduce((sum, key) => sum + raw[key], 0);
@@ -605,6 +609,15 @@ export default function StrategyLab() {
   // so a tight sequence of state changes can interleave before React flushes
   // the state update — useRef gives us a sync view (Reviewer H-2 fix).
   const simulationInFlightRef = useRef(/** @type {boolean} */(false));
+
+  // v11: Keep refs to the inline preference sliders' DOM nodes + a flag for
+  // the slider currently being dragged. After rebalance on
+  // `weights` change, we need to sync each slider's DOM `value` and
+  // `--slider-fill` to the new state — otherwise the "blue border" (thumb)
+  // and the "dot" (displayed %) drift apart for the OTHER sliders. The
+  // dragging flag prevents the effect from cancelling the active drag.
+  const preferenceSliderRefs = useRef(/** @type {Record<string, HTMLInputElement | null>} */ ({}));
+  const preferenceDraggingRef = useRef(/** @type {string | null} */ (null));
 
   /**
    * Stable JSON serialisation with sorted keys (no whitespace). Used for the
@@ -1334,6 +1347,27 @@ export default function StrategyLab() {
       explanation: t("strategyLab.weightKeys.worstCaseDefenseExplain"),
     }
   ];
+
+  // v11: after every `weights` change, sync each inline preference slider's
+  // DOM `value` + `--slider-fill` to the new state. The inline sliders are
+  // uncontrolled (`defaultValue` only sets the initial render), so without
+  // this the OTHER sliders' thumbs stay at their old positions while the
+  // displayed % (next to the slider, from `weights`) updates — visual
+  // mismatch between "blue border" (thumb position) and "dot" (displayed %).
+  // Skip the slider currently being dragged (its DOM value is the source of
+  // truth mid-drag; re-setting it would cancel the drag).
+  useEffect(() => {
+    preferenceWeightItems.forEach((item) => {
+      if (preferenceDraggingRef.current === item.key) return;
+      const slider = preferenceSliderRefs.current[item.key];
+      if (!slider) return;
+      const next = String(weights[item.key] ?? 0);
+      if (slider.value !== next) {
+        slider.value = next;
+      }
+      applySliderFill(slider);
+    });
+  }, [weights]);
 
   const preferenceSummaryItems = [...preferenceWeightItems]
     .sort((a, b) => (weights[b.key] ?? 0) - (weights[a.key] ?? 0))
@@ -2473,12 +2507,13 @@ export default function StrategyLab() {
                         type="range"
                         className="slider-input preference-inline-slider"
                         min={0}
-                        max={25}
+                        max={35}
                         step={1}
                         defaultValue={weights[item.key] ?? 0}
+                        ref={(el) => { preferenceSliderRefs.current[item.key] = el; }}
                         aria-label={`${item.label} weight`}
                         aria-valuemin={0}
-                        aria-valuemax={25}
+                        aria-valuemax={35}
                         onInput={(e) => {
                           // Live preview: imperatively update the % display
                           // without triggering React state per drag tick.
@@ -2486,9 +2521,19 @@ export default function StrategyLab() {
                           const display = e.currentTarget.parentElement?.querySelector(".slider-value");
                           if (display) display.textContent = `${e.currentTarget.value}%`;
                         }}
+                        onPointerDown={() => {
+                          // v11: mark this slider as "being dragged" so the
+                          // sync effect on `weights` change skips it (would
+                          // otherwise snap the thumb back mid-drag).
+                          preferenceDraggingRef.current = item.key;
+                        }}
                         onPointerUp={(e) => {
+                          preferenceDraggingRef.current = null;
                           const v = parseInt(e.currentTarget.value, 10);
                           if (Number.isFinite(v)) handleWeightChange(item.key, v);
+                        }}
+                        onPointerCancel={() => {
+                          preferenceDraggingRef.current = null;
                         }}
                         onKeyUp={(e) => {
                           if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"].includes(e.key)) {

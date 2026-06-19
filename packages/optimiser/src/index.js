@@ -666,6 +666,7 @@ export function optimizeStrategies({
     wBudget = 0;
     wSmoothness = 0;
     wWorstCaseDefense = 0;
+    wBalance = 0;
   } else {
     const rawCostWeight = 0.65 - sliderCostStability * 0.40;
     const rawStabilityWeight = 0.15 + sliderCostStability * 0.30;
@@ -684,6 +685,7 @@ export function optimizeStrategies({
     wPayoff = 0;
     wSmoothness = 0;
     wWorstCaseDefense = 0;
+    wBalance = 0;
   }
 
   // 6. Score and rank strategies
@@ -724,16 +726,18 @@ export function optimizeStrategies({
     const worstCaseBreachesScore = (s.worstCaseAffordabilityBreaches - bounds.worstCaseBreaches.min) / (bounds.worstCaseBreaches.diff || 1);
     const refixEventCountScore = (s.expectedRefixEventCount - bounds.refixEventCount.min) / (bounds.refixEventCount.diff || 1);
     // v10: per-axis normalised concentration score. Like the v9 worst-case
-    // axes, this is Pareto-only — it does NOT feed `overallScore` (no
-    // `wConcentration` slider). Surfaced on each ranked strategy so the
-    // Pareto table column can show the normalised position.
+    // axes, this was Pareto-only — it did NOT feed `overallScore`. Surfaced
+    // on each ranked strategy so the Pareto table column can show the
+    // normalised position.
+    // v11: `concentrationScore` ALSO drives the new `balance` weight axis.
+    // Following the optimiser's "lower is better" convention (see
+    // costScore/refixScore): `concentrationScore` already has the right
+    // direction (high concentration → high score → worse rank), so we
+    // reuse it as `balanceScore` and add it to `overallScore`. Users steer
+    // `preference` away from 90-10 fixed-heavy splits by raising the new
+    // `balance` slider. No new metric.
     const concentrationScore = (s.concentration - bounds.concentration.min) / (bounds.concentration.diff || 1);
-    // v11: balance is the inverse of concentration. Higher score = more
-    // diversified split. THIS is what feeds `overallScore` (via `wBalance`)
-    // so users can steer `preference` away from 90-10 fixed-heavy splits
-    // by raising the new `balance` slider. Note: still based on the
-    // existing `concentration` Pareto axis above; no new metric.
-    const balanceScore = 1 - concentrationScore;
+    const balanceScore = concentrationScore;
 
     const overallScore = wCost * costScore +
       wPrincipal * principalScore +
