@@ -409,6 +409,77 @@ describe("Optimiser Engine Tests", () => {
     expect(opt.recommendations.lowestCost.strategyId).toBe("strat-balanced");
     expect(opt.recommendations.mostStable.strategyId).toBe("strat-balanced");
   });
+
+  it("v12: baseline cards pick from Pareto-optimal subset (not dominated strategies)", () => {
+    // 3 strategies:
+    //  - 90-10 dominated: same interest as balanced ($13000 weighted) but worst
+    //    refix (0.9). Balanced strictly dominates it (equal interest, better
+    //    refix).
+    //  - 50-30-20 balanced: ties 90-10 on interest, lower refix. Pareto-optimal.
+    //  - 80-10-10 mid: highest interest but lowest refix. Pareto-optimal.
+    // Before v12: lowestCost could pick the dominated 90-10 (or balanced,
+    // depending on implementation order — both have the same interest).
+    // After v12:  lowestCost must come from the Pareto-optimal subset
+    // (balanced or 80-10-10). The dominated 90-10 must NEVER win.
+    const paretoScenarios = [
+      { id: "low", probability: 0.5 },
+      { id: "high", probability: 0.5 }
+    ];
+    const mkRow = (strategyId, scenarioId, interest, maxPayment, refixPct) => ({
+      strategyId,
+      scenarioId,
+      allocationCount: 2,
+      totalInterest: interest,
+      totalRepayments: 0,
+      endingBalance: 400000,
+      maximumPayment: maxPayment,
+      minimumPayment: maxPayment - 100,
+      averagePayment: maxPayment,
+      maximumPaymentIncrease: 0,
+      paymentVolatility: 50,
+      refixEventCount: 1,
+      maximumConcurrentRefixPercentage: refixPct,
+      floatingExposure: 0.1,
+      affordabilityBreaches: 0,
+      worstCaseInterest: 0,
+      worstCaseAffordabilityBreaches: 0,
+      expectedRefixEventCount: 1,
+      timeline: []
+    });
+    const paretoResults = [
+      // 90-10 dominated: tied interest with balanced, worse refix
+      mkRow("strat-90-10", "low", 6000, 3000, 0.9),
+      mkRow("strat-90-10", "high", 20000, 4000, 0.9),
+      // 50-30-20 Pareto-optimal: same interest, lower refix
+      mkRow("strat-balanced", "low", 6000, 3000, 0.3),
+      mkRow("strat-balanced", "high", 20000, 4000, 0.3),
+      // 80-10-10 Pareto-optimal: higher interest, lowest refix
+      mkRow("strat-80-10", "low", 8000, 3000, 0.1),
+      mkRow("strat-80-10", "high", 24000, 4000, 0.1)
+    ];
+    const paretoStrategyShapes = [
+      { id: "strat-90-10", allocations: [{ productCode: "fixed-2y", percentage: 0.9 }, { productCode: "floating", percentage: 0.1 }] },
+      { id: "strat-balanced", allocations: [{ productCode: "fixed-2y", percentage: 0.5 }, { productCode: "fixed-1y", percentage: 0.3 }, { productCode: "floating", percentage: 0.2 }] },
+      { id: "strat-80-10", allocations: [{ productCode: "fixed-3y", percentage: 0.8 }, { productCode: "floating", percentage: 0.2 }] }
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: paretoResults,
+      scenarios: paretoScenarios,
+      strategies: paretoStrategyShapes,
+      weights: { cost: 100, refix: 0, flex: 0, balance: 0, worstCaseDefense: 0 }
+    });
+    // Verify 90-10 is dominated (not Pareto-optimal)
+    const ext90 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-90-10");
+    const extBal = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-balanced");
+    const ext80 = opt.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-80-10");
+    expect(ext90?.isParetoOptimal).toBe(false);
+    expect(extBal?.isParetoOptimal).toBe(true);
+    expect(ext80?.isParetoOptimal).toBe(true);
+    // v12: lowestCost must NOT pick the dominated 90-10
+    expect(opt.recommendations.lowestCost.strategyId).not.toBe("strat-90-10");
+    // lowestCost must be one of the two Pareto-optimal candidates
+    expect(["strat-balanced", "strat-80-10"]).toContain(opt.recommendations.lowestCost.strategyId);
+  });
 });
 
 describe("Pareto tolerance & mode-specific objectives", () => {

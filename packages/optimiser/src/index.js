@@ -814,6 +814,17 @@ export function optimizeStrategies({
     (/** @type {any} */ s) => (s.allocationCount || 1) >= recommendationMinAllocationCount
   );
   const recommendationCandidates = recommendationPool.length > 0 ? recommendationPool : scoredStrategies;
+  // v12: Pareto-optimal subset for the 3 baseline cards. The 3 baseline
+  // pickers previously could land on a strategy that is dominated on
+  // some axis (e.g. a 90-10 with the lowest interest but 18+ refix
+  // events vs 13 for a 50/30/20) — that strategy would never show up
+  // in the user's Pareto table below the cards. Filtering to the
+  // Pareto frontier first means the baseline cards stay consistent
+  // with the table. Falls back to the full candidate pool when the
+  // Pareto-optimal subset has fewer than 4 strategies (small-pool
+  // fallback — same spirit as the v10 mutex fallback).
+  const paretoPool = recommendationCandidates.filter((/** @type {any} */ s) => s.isParetoOptimal);
+  const baselinePool = paretoPool.length >= 4 ? paretoPool : recommendationCandidates;
   const preference = recommendationCandidates[0];
 
   /**
@@ -881,13 +892,16 @@ export function optimizeStrategies({
   };
 
   excludedStrategyIds.add(preference.strategyId);
-  const lowestCost = pickExcluding(recommendationCandidates, "expectedInterest");
+  // v12: baseline cards pick from the Pareto-optimal subset (falls back to
+  // the full candidate pool when fewer than 4 strategies are Pareto-optimal,
+  // per the small-pool fallback contract documented above).
+  const lowestCost = pickExcluding(baselinePool, "expectedInterest");
   excludedStrategyIds.add(lowestCost.strategyId);
   const mostStable = mode === "payment"
-    ? pickExcluding(recommendationCandidates, "worstCaseEndingBalance")
-    : pickExcluding(recommendationCandidates, "worstCasePayment");
+    ? pickExcluding(baselinePool, "worstCaseEndingBalance")
+    : pickExcluding(baselinePool, "worstCasePayment");
   excludedStrategyIds.add(mostStable.strategyId);
-  const worstCaseDefense = pickExcludingComposite(recommendationCandidates);
+  const worstCaseDefense = pickExcludingComposite(baselinePool);
 
   const buildRecObject = (/** @type {any} */ s) => {
     if (!s) return null;

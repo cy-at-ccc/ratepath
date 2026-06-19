@@ -740,8 +740,14 @@ export default function StrategyLab() {
         if (resultsData && resultsData.results) {
           setSimResults(resultsData.results);
         }
-        // Fallback: old format had strategies/params in resultsData
-        const strategiesSource = (paramsData && paramsData.strategies) || (resultsData && resultsData.strategies);
+        // Fallback: old format had strategies/params in resultsData.
+        // Only restore strategies when cached simulation results exist
+        // (last_simulation was not deleted by a prior clear). Otherwise
+        // a page refresh after "清空仿真结果" would re-hydrate stale
+        // strategies from last_simulation_params, making it look like the
+        // clear didn't work.
+        const strategiesSource = resultsData
+          && ((paramsData && paramsData.strategies) || (resultsData && resultsData.strategies));
         const paramsSource = (paramsData && paramsData.params) || (resultsData && resultsData.params);
         if (strategiesSource) {
           setAllStrategies(strategiesSource);
