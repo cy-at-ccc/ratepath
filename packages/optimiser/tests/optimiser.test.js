@@ -351,6 +351,64 @@ describe("Optimiser Engine Tests", () => {
     expect(strat2?.isParetoOptimal).toBe(true);
     expect(strat2?.worstCaseInterest).toBe(16500);
   });
+
+  it("v11: balance tiebreaker picks the more diversified split when primary metrics tie", () => {
+    // Two strategies with IDENTICAL expectedInterest + worstCasePayment but
+    // different concentration. The objective pickMin would be
+    // implementation-order-dependent; with the v11 balance tiebreaker, the
+    // 50/30/20 must win both lowestCost and mostStable.
+    const tiedScenarios = [
+      { id: "low", probability: 0.5 },
+      { id: "high", probability: 0.5 }
+    ];
+    const mkRow = (strategyId, scenarioId, interest, maxPayment, maxRefixPct, breach) => ({
+      strategyId,
+      scenarioId,
+      allocationCount: 2,
+      totalInterest: interest,
+      totalRepayments: 0,
+      endingBalance: 400000,
+      maximumPayment: maxPayment,
+      minimumPayment: maxPayment - 100,
+      averagePayment: maxPayment,
+      maximumPaymentIncrease: 0,
+      paymentVolatility: 50,
+      refixEventCount: 1,
+      maximumConcurrentRefixPercentage: maxRefixPct,
+      floatingExposure: 0.1,
+      affordabilityBreaches: breach,
+      worstCaseInterest: 0,
+      worstCaseAffordabilityBreaches: 0,
+      expectedRefixEventCount: 1,
+      timeline: []
+    });
+    const tiedResults = [
+      // 90-10 (concentration 0.9) — same interest, same maxPayment as 50-30-20
+      mkRow("strat-90-10", "low", 10000, 3000, 0.9, 0),
+      mkRow("strat-90-10", "high", 20000, 4000, 0.9, 0),
+      // 50-30-20 (concentration 0.5)
+      mkRow("strat-balanced", "low", 10000, 3000, 0.3, 0),
+      mkRow("strat-balanced", "high", 20000, 4000, 0.3, 0)
+    ];
+    const tiedStrategyShapes = [
+      { id: "strat-90-10", allocations: [{ productCode: "fixed-2y", percentage: 0.9 }, { productCode: "floating", percentage: 0.1 }] },
+      { id: "strat-balanced", allocations: [{ productCode: "fixed-2y", percentage: 0.5 }, { productCode: "fixed-1y", percentage: 0.3 }, { productCode: "floating", percentage: 0.2 }] }
+    ];
+    const opt = optimizeStrategies({
+      simulationResults: tiedResults,
+      scenarios: tiedScenarios,
+      strategies: tiedStrategyShapes,
+      // balance weight irrelevant here — tiebreaker is independent of
+      // the weighted scoring. We use empty weights so the preference
+      // card is itself tied and falls through to its own tiebreaker
+      // (which also uses concentration, so balanced wins).
+      weights: { cost: 100, refix: 0, flex: 0, balance: 0, worstCaseDefense: 0 }
+    });
+    // primary metric tied at 15000 (low 10000 + high 20000, weighted)
+    // expect 50-30-20 wins on the tiebreaker
+    expect(opt.recommendations.lowestCost.strategyId).toBe("strat-balanced");
+    expect(opt.recommendations.mostStable.strategyId).toBe("strat-balanced");
+  });
 });
 
 describe("Pareto tolerance & mode-specific objectives", () => {

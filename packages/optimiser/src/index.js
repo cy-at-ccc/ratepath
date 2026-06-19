@@ -826,9 +826,22 @@ export function optimizeStrategies({
    * @param {(a: any, b: any) => number} [cmp]
    * @returns {any}
    */
-  const pickMin = (pool, key, cmp) => [...pool].sort((a, b) =>
-    cmp ? cmp(a[key], b[key]) : (a[key] ?? Infinity) - (b[key] ?? Infinity)
-  )[0];
+  // v11: pick the strategy that minimises `key` (or by the supplied `cmp`).
+  // On ties (primary metric is equal), prefer the more diversified split
+  // (lower `concentration`). This is the "balance tiebreaker" — when two
+  // strategies have the same lowest interest / same most-stable payment /
+  // same worst-case composite score, the one with the lower max single
+  // share wins. Prevents 90-10 fixed-heavy splits from crowding out
+  // balanced alternatives when the objective metrics are within rounding.
+  // The objective primary metric still dominates when it actually
+  // separates the candidates (e.g. 90/10 is genuinely $5000 cheaper than
+  // 50/30/20 — balance tiebreaker won't override that).
+  const pickMin = (pool, key, cmp) => [...pool].sort((a, b) => {
+    const primary = cmp ? cmp(a[key], b[key]) : (a[key] ?? Infinity) - (b[key] ?? Infinity);
+    if (primary !== 0) return primary;
+    // Tiebreaker: lower concentration wins (more diversified preferred).
+    return ((a.concentration ?? 1) - (b.concentration ?? 1));
+  })[0];
 
   // v10: mutex-aware pickers. `excludedStrategyIds` accumulates the picks
   // from earlier cards; each subsequent pick filters the pool. If filtering

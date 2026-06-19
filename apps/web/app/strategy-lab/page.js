@@ -891,6 +891,39 @@ export default function StrategyLab() {
             strokeOpacity: 0.55,
             description: t("strategyLab.path.expected.desc"),
             targetStats: expectedPathStats
+          },
+          {
+            id: "optimistic",
+            label: t("strategyLab.path.optimistic.label"),
+            type: "scenario",
+            scenarioId: optimisticScenario?.id,
+            color: "var(--chart-optimistic)",
+            strokeDasharray: "2 6",
+            strokeOpacity: 0.55,
+            description: t("strategyLab.path.optimistic.desc"),
+            targetStats: scenarioPathStats(optimisticScenario)
+          },
+          {
+            id: "median",
+            label: t("strategyLab.path.median.label"),
+            type: "scenario",
+            scenarioId: medianScenario?.id,
+            color: "var(--chart-median)",
+            strokeDasharray: "6 4",
+            strokeOpacity: 0.55,
+            description: t("strategyLab.path.median.desc"),
+            targetStats: scenarioPathStats(medianScenario)
+          },
+          {
+            id: "stress",
+            label: t("strategyLab.path.stress.label"),
+            type: "scenario",
+            scenarioId: stressScenario?.id,
+            color: "var(--color-rose)",
+            strokeDasharray: "10 6",
+            strokeOpacity: 0.55,
+            description: t("strategyLab.path.stress.desc"),
+            targetStats: scenarioPathStats(stressScenario)
           }
         ]
       : [
