@@ -162,20 +162,19 @@ export default function StrategyLab() {
   // Default mix: cost-aware, principal-led, modest refix/flex headroom,
   // low resilience/budget weight. Tweak here is the single source of truth
   // for the "重置默认" button below.
-  // V9 schema (plan v9 §2.1): 8 preference sliders, totals 100. The new
-  // `worstCaseDefense` slider (19%) is the headline composite that drives
-  // the 4th recommendation card and steers preference toward the worst-case
-  // optimum. flex bumped from 11→14 to keep balanced-split candidates
-  // competitive; budget + smoothness trimmed by 1pt each to make room.
+  // V11 schema (plan v11 §2): 5 preference sliders, totals 100. Folded
+  // `resilience` / `budget` / `smoothness` / `principal` into the v9
+  // `worstCaseDefense` composite (their signals were strict subsets or
+  // highly correlated, see plan v11 §1.2). Added new `balance` axis (v11)
+  // — inverse of the `concentration` Pareto axis — to break 90-10's
+  // stranglehold on `preference`. Default 18% on `balance` keeps the
+  // balanced-split candidates competitive without forcing them.
   const DEFAULT_WEIGHTS = {
-    cost: 13,
-    principal: 12,
-    refix: 12,
-    flex: 14,
-    resilience: 12,
-    budget: 9,
-    smoothness: 9,
-    worstCaseDefense: 19
+    cost: 18,
+    refix: 17,
+    flex: 17,
+    balance: 18,
+    worstCaseDefense: 30
   };
   const PREFERENCE_WEIGHT_KEYS = /** @type {(keyof typeof DEFAULT_WEIGHTS)[]} */ (Object.keys(DEFAULT_WEIGHTS));
 
@@ -230,10 +229,12 @@ export default function StrategyLab() {
   const handleWeightChange = (/** @type {string} */ key, /** @type {number} */ newValue) => {
     // Keep the displayed sliders as a closed 100% allocation.
     // Moving one dimension proportionally rebalances the remaining dimensions.
-    // v9: hard cap at 25 (was 100) so no single slider can dominate the
-    // preference score. With 8 sliders × 25% = 4 sliders can hit the cap,
-    // forcing at least 4 dimensions into the user's consideration.
-    newValue = Math.max(0, Math.min(25, Math.round(newValue)));
+    // v11: hard cap at 35 (was 25 in v9) for the 5-key shape. With 5
+    // sliders × 35% = 175% of the budget, at most 2 sliders can hit the
+    // cap simultaneously, forcing at least 3 dimensions into the user's
+    // consideration. (Was 4 dimensions under the v9 8-key shape with
+    // cap 25%.)
+    newValue = Math.max(0, Math.min(35, Math.round(newValue)));
     setWeights((prev) => {
       const current = normalizePreferenceWeights(prev);
       const otherKeys = PREFERENCE_WEIGHT_KEYS.filter((k) => k !== key);
@@ -414,13 +415,13 @@ export default function StrategyLab() {
       setMaxSplits(4);
       setPercentageStep(0.05);
       setMaxFloatingPercentage(30);
-      setWeights(normalizePreferenceWeights({ cost: 18, principal: 18, refix: 22, flex: 14, resilience: 6, budget: 6, smoothness: 4, worstCaseDefense: 12 }));
+      setWeights(normalizePreferenceWeights({ cost: 12, refix: 22, flex: 14, balance: 28, worstCaseDefense: 24 }));
       setShowExhaustedReport(true);
     } else {
       setMaxSplits(5);
       setPercentageStep(0.05);
       setMaxFloatingPercentage(50);
-      setWeights(normalizePreferenceWeights({ cost: 12, principal: 12, refix: 22, flex: 18, resilience: 6, budget: 6, smoothness: 4, worstCaseDefense: 20 }));
+      setWeights(normalizePreferenceWeights({ cost: 10, refix: 22, flex: 18, balance: 30, worstCaseDefense: 20 }));
       setShowExhaustedReport(true);
     }
   };
@@ -1305,13 +1306,6 @@ export default function StrategyLab() {
       explanation: t("strategyLab.weightKeys.costExplain"),
     },
     {
-      key: "principal",
-      label: t("strategyLab.weightKeys.principal"),
-      minText: t("strategyLab.weightKeys.principalMin"),
-      maxText: t("strategyLab.weightKeys.principalMax"),
-      explanation: t("strategyLab.weightKeys.principalExplain", { y: simDurationYears }),
-    },
-    {
       key: "refix",
       label: t("strategyLab.weightKeys.refix"),
       minText: t("strategyLab.weightKeys.refixMin"),
@@ -1326,25 +1320,11 @@ export default function StrategyLab() {
       explanation: t("strategyLab.weightKeys.flexExplain"),
     },
     {
-      key: "resilience",
-      label: t("strategyLab.weightKeys.resilience"),
-      minText: t("strategyLab.weightKeys.resilienceMin"),
-      maxText: t("strategyLab.weightKeys.resilienceMax"),
-      explanation: t("strategyLab.weightKeys.resilienceExplain"),
-    },
-    {
-      key: "budget",
-      label: t("strategyLab.weightKeys.budget"),
-      minText: t("strategyLab.weightKeys.budgetMin"),
-      maxText: t("strategyLab.weightKeys.budgetMax"),
-      explanation: t("strategyLab.weightKeys.budgetExplain"),
-    },
-    {
-      key: "smoothness",
-      label: t("strategyLab.weightKeys.smoothness"),
-      minText: t("strategyLab.weightKeys.smoothnessMin"),
-      maxText: t("strategyLab.weightKeys.smoothnessMax"),
-      explanation: t("strategyLab.weightKeys.smoothnessExplain"),
+      key: "balance",
+      label: t("strategyLab.weightKeys.balance"),
+      minText: t("strategyLab.weightKeys.balanceMin"),
+      maxText: t("strategyLab.weightKeys.balanceMax"),
+      explanation: t("strategyLab.weightKeys.balanceExplain"),
     },
     {
       key: "worstCaseDefense",

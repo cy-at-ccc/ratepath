@@ -618,7 +618,7 @@ export function optimizeStrategies({
   };
 
   // 5. Weight calculation (mode-aware per spec 10.2)
-  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff, wSmoothness, wWorstCaseDefense;
+  let wCost, wPrincipal, wRefix, wResilience, wFlex, wStability, wBudget, wEndingBalance, wPayoff, wSmoothness, wWorstCaseDefense, wBalance;
   if (weights) {
     const totalRaw = (weights.cost || 0) +
       (weights.principal || 0) +
@@ -627,7 +627,8 @@ export function optimizeStrategies({
       (weights.flex || 0) +
       (weights.budget || 0) +
       (weights.smoothness || 0) +
-      (weights.worstCaseDefense || 0) || 1;
+      (weights.worstCaseDefense || 0) +
+      (weights.balance || 0) || 1;
     wCost = (weights.cost || 0) / totalRaw;
     wPrincipal = (weights.principal || 0) / totalRaw;
     wRefix = (weights.refix || 0) / totalRaw;
@@ -640,6 +641,10 @@ export function optimizeStrategies({
     // worstCaseCompositeScore). 0 by default for backward-compat with
     // legacy callers that don't set it.
     wWorstCaseDefense = (weights.worstCaseDefense || 0) / totalRaw;
+    // v11: balance weight. Inverse of the `concentration` Pareto axis
+    // (max single allocation share). Steers `preference` away from
+    // 90-10 fixed-heavy splits. 0 by default for legacy callers.
+    wBalance = (weights.balance || 0) / totalRaw;
     wStability = 0;
     wEndingBalance = 0;
     wPayoff = 0;
@@ -723,6 +728,12 @@ export function optimizeStrategies({
     // `wConcentration` slider). Surfaced on each ranked strategy so the
     // Pareto table column can show the normalised position.
     const concentrationScore = (s.concentration - bounds.concentration.min) / (bounds.concentration.diff || 1);
+    // v11: balance is the inverse of concentration. Higher score = more
+    // diversified split. THIS is what feeds `overallScore` (via `wBalance`)
+    // so users can steer `preference` away from 90-10 fixed-heavy splits
+    // by raising the new `balance` slider. Note: still based on the
+    // existing `concentration` Pareto axis above; no new metric.
+    const balanceScore = 1 - concentrationScore;
 
     const overallScore = wCost * costScore +
       wPrincipal * principalScore +
@@ -736,7 +747,11 @@ export function optimizeStrategies({
       wSmoothness * smoothnessScore +
       // v9: composite worst-case score. Driven by the 8th weight key
       // `worstCaseDefense` (which defaults to 0 for legacy callers).
-      wWorstCaseDefense * worstCaseCompositeScore(s, bounds);
+      wWorstCaseDefense * worstCaseCompositeScore(s, bounds) +
+      // v11: balance weight. Inverse of concentration — the only way
+      // `concentration` enters the weighted sum (and breaks 90-10's
+      // stranglehold on `preference`).
+      wBalance * balanceScore;
 
     return {
       ...s,

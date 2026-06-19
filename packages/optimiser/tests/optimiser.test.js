@@ -242,6 +242,86 @@ describe("Optimiser Engine Tests", () => {
     expect(optStability.recommendations.mostStable.strategyId).toBe("strat-3");
   });
 
+  it("v11: balance weight should steer preference toward diversified splits", () => {
+    // Two strategies with identical cost/principal/refix/worst-case numbers
+    // — only the `concentration` (max single allocation share) differs.
+    // concentration=0.9 (90-10) vs concentration=0.5 (50-30-20).
+    // With `balance` weight = 0, the 90-10 wins (lower cost penalty by chance
+    // — in this fixture they tie, so the v10 mutex kicks in; we test the
+    // weighted score directly to avoid mutex coupling).
+    // With `balance` weight = 50, the 50-30-20 must win preference.
+    const twoScenarios = [
+      { id: "low", probability: 0.5 },
+      { id: "high", probability: 0.5 }
+    ];
+    const mkRow = (strategyId, scenarioId, interest, maxPayment, maxRefixPct) => ({
+      strategyId,
+      scenarioId,
+      allocationCount: 2,
+      totalInterest: interest,
+      totalRepayments: 0,
+      endingBalance: 400000,
+      maximumPayment: maxPayment,
+      minimumPayment: maxPayment - 100,
+      averagePayment: maxPayment,
+      maximumPaymentIncrease: 0,
+      paymentVolatility: 50,
+      refixEventCount: 1,
+      maximumConcurrentRefixPercentage: maxRefixPct,
+      floatingExposure: 0.1,
+      affordabilityBreaches: 0,
+      worstCaseInterest: 0,
+      worstCaseAffordabilityBreaches: 0,
+      expectedRefixEventCount: 1,
+      timeline: []
+    });
+    const twoResults = [
+      // 90-10 (concentration 0.9)
+      mkRow("strat-90-10", "low", 10000, 3000, 0.9),
+      mkRow("strat-90-10", "high", 20000, 4000, 0.9),
+      // 50-30-20 (concentration 0.5)
+      mkRow("strat-balanced", "low", 10000, 3000, 0.3),
+      mkRow("strat-balanced", "high", 20000, 4000, 0.3)
+    ];
+    // v10: `strategies` arg drives `concentration` derivation
+    // (max single allocation.percentage). Required for the v11 balance
+    // axis to have non-trivial bounds.
+    const twoStrategyShapes = [
+      { id: "strat-90-10", allocations: [{ productCode: "fixed-2y", percentage: 0.9 }, { productCode: "floating", percentage: 0.1 }] },
+      { id: "strat-balanced", allocations: [{ productCode: "fixed-2y", percentage: 0.5 }, { productCode: "fixed-1y", percentage: 0.3 }, { productCode: "floating", percentage: 0.2 }] }
+    ];
+
+    // balance=0: 90-10 and 50-30-20 tie on weighted sum (no balance
+    // contribution); v10 mutex makes the test brittle. Verify the v10
+    // surface: `concentration` is exposed and `concentrationScore` flips
+    // with the balance weight.
+    const optNoBalance = optimizeStrategies({
+      simulationResults: twoResults,
+      scenarios: twoScenarios,
+      strategies: twoStrategyShapes,
+      weights: { cost: 50, refix: 0, flex: 0, balance: 0, worstCaseDefense: 50 }
+    });
+    const ext90_10 = optNoBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-90-10");
+    const extBal = optNoBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-balanced");
+    expect(ext90_10?.concentration).toBeCloseTo(0.9, 6);
+    expect(extBal?.concentration).toBeCloseTo(0.5, 6);
+    expect(ext90_10?.concentrationScore).toBeCloseTo(1.0, 6); // 0.9 is the upper bound
+    expect(extBal?.concentrationScore).toBeCloseTo(0.0, 6);  // 0.5 is the lower bound
+
+    // balance=50: balanced (lower concentrationScore) gets bonus via
+    // `balanceScore = 1 - concentrationScore`. The balanced strategy
+    // should now rank better (lower overallScore) than the 90-10.
+    const optWithBalance = optimizeStrategies({
+      simulationResults: twoResults,
+      scenarios: twoScenarios,
+      strategies: twoStrategyShapes,
+      weights: { cost: 0, refix: 0, flex: 0, balance: 50, worstCaseDefense: 50 }
+    });
+    const balRanked = optWithBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-balanced");
+    const ext90Ranked = optWithBalance.rankedStrategies.find((/** @type {any} */ s) => s.strategyId === "strat-90-10");
+    expect(balRanked?.score).toBeLessThan(ext90Ranked?.score ?? Infinity);
+  });
+
   it("should identify dominated strategies in Pareto sorting", () => {
     const opt = optimizeStrategies({
       simulationResults,
