@@ -1,19 +1,20 @@
 {
   // Cloudflare Workers config for the RatePath web app.
   //
-  // This is a static-assets-only Worker — no server code is bundled.
+  // This is a static-assets-only Worker; no server code is bundled.
   // `next build` (with `output: "export"` in next.config.mjs) emits ./out
   // as a tree of HTML/CSS/JS; that tree is uploaded as Worker assets.
   //
-  // Cloudflare dashboard build settings (set these on the Worker, not here):
-  //   - Root directory:    apps/web
-  //   - Build command:     npm run build
-  //   - Deploy command:    npx wrangler deploy
+  // Cloudflare dashboard build settings (set these on the Worker, not here).
+  // Keep the root at the repository root so npm can resolve monorepo
+  // workspaces under packages/*.
+  //   - Root directory:    repository root
+  //   - Build command:     npm --workspace @mortgage/web run build
+  //   - Deploy command:    npx wrangler deploy --config apps/web/wrangler.jsonc
   //
   // Locally:
-  //   cd apps/web
-  //   npm run build          # produces ./out
-  //   npx wrangler deploy    # uploads ./out as the Worker's assets
+  //   npm --workspace @mortgage/web run build
+  //   npx wrangler deploy --config apps/web/wrangler.jsonc
   //
   // Docs:
   //   https://developers.cloudflare.com/workers/static-assets/
@@ -28,7 +29,7 @@
     "directory": "./out",
 
     // Multi-page app (/, /about, /strategy-lab, /mortgage-setup,
-    // /legal/disclaimer, /legal/privacy) — NOT an SPA, so we want a real
+    // /legal/disclaimer, /legal/privacy) is NOT an SPA, so we want a real
     // 404 page for unmatched routes. Next emits /404.html automatically.
     "not_found_handling": "404-page"
   }
