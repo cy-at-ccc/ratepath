@@ -170,7 +170,7 @@ export default function MortgageSetup() {
 
     try {
       await dbPut("mortgages", mortgageData);
-      router.push("/");
+      router.push("/strategy-lab");
     } catch (err) {
       const errorVal = /** @type {any} */ (err);
       setError(t("mortgageSetup.errorSave", { message: errorVal.message }));
@@ -357,7 +357,7 @@ export default function MortgageSetup() {
           <button type="submit" className="btn btn-primary btn-lg" style={{ padding: "14px 28px" }}>
             {t("mortgageSetup.save")}
           </button>
-          <button type="button" onClick={() => router.push("/")} className="btn btn-secondary btn-lg" style={{ padding: "14px 28px" }}>
+          <button type="button" onClick={() => router.push("/strategy-lab")} className="btn btn-secondary btn-lg" style={{ padding: "14px 28px" }}>
             {t("mortgageSetup.cancel")}
           </button>
         </div>

@@ -51,7 +51,7 @@ export default function LanguageSwitcher({ className = "" }) {
           border: 1px solid var(--border-glass);
           border-radius: var(--radius-pill);
           padding: 2px;
-          height: 28px;
+          height: 24px;
           flex-shrink: 0;
         }
         .lang-btn {
@@ -60,15 +60,16 @@ export default function LanguageSwitcher({ className = "" }) {
           border: 0;
           color: var(--text-secondary);
           font-family: var(--font-heading);
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 700;
           letter-spacing: 0.04em;
-          padding: 0 10px;
-          height: 22px;
+          padding: 0 5px;
+          height: 18px;
           border-radius: var(--radius-pill);
           cursor: pointer;
           transition: var(--transition-smooth);
-          min-width: 32px;
+          min-width: 22px;
+          white-space: nowrap;
         }
         .lang-btn:hover {
           color: #fff;

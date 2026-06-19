@@ -433,7 +433,7 @@ export default function StrategyLab() {
   // a manual weight tweak to clobber the preset label.
   const PRESET_PROFILES = {
     default: { maxSplits: 3, percentageStep: 0.05, maxFloatingPercentage: 10 },
-    diversification: { maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 30 },
+    diversification: { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 30 },
     max: { maxSplits: 5, percentageStep: 0.05, maxFloatingPercentage: 50 }
   };
 
@@ -555,6 +555,18 @@ export default function StrategyLab() {
   const [allStrategies, setAllStrategies] = useState(/** @type {any[]} */([]));
   const [showExhaustedReport, setShowExhaustedReport] = useState(true);
   const [showAllRows, setShowAllRows] = useState(false);
+  // Column sort for the exhausted-strategies table. `key` is one of the
+  // numeric field names on a ranked strategy; `null` means "no sort, use
+  // default order". Click a column header to toggle asc / desc.
+  const [exhaustedSort, setExhaustedSort] = useState(/** @type {{key: string|null, dir: "asc" | "desc"} | null} */(null));
+  const handleExhaustedSort = (/** @type {string} */ key) => {
+    setExhaustedSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      if (prev.dir === "asc") return { key, dir: "desc" };
+      return null; // third click clears sort
+    });
+    setShowAllRows(false);
+  };
   const [recPreference, setRecPreference] = useState(/** @type {any} */(null));
   const [recLowestCost, setRecLowestCost] = useState(/** @type {any} */(null));
   const [recMostStable, setRecMostStable] = useState(/** @type {any} */(null));
@@ -934,7 +946,7 @@ export default function StrategyLab() {
       ...longTermChartPaths
     ]);
 
-  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates]);
+  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, simDurationYears, marketRates, t]);
 
   // Recalculate optimization recommendations ONLY when the underlying
   // simulation results or the right-side scenario basis changes.
@@ -1008,7 +1020,8 @@ export default function StrategyLab() {
         weights,
         mode: mortgage?.targetMode === "payment" ? "payment" : "term",
         recommendationMinAllocationCount,
-        diversification: diversificationPreset !== "default"
+        diversification: diversificationPreset !== "default",
+        t
       });
       optimisedDataRef.current = opt;
       rankingKeyRef.current = newRankingKey;
@@ -1048,7 +1061,7 @@ export default function StrategyLab() {
     // Removed: weights, mortgage?.targetMode, maxSplits — these are
     // left-side inputs that should NOT cause a re-rank here. They take
     // effect on the next "重新仿真" click.
-  }, [simResults, scenarios, detailScenarioOptions, selectedDetailScenario]);
+  }, [simResults, scenarios, detailScenarioOptions, selectedDetailScenario, t]);
 
   // Lazy-fetch the per-tranche 60-month detail timeline for any strategy.
 // Shared by the selected-strategy effect and the modal opener — clicking
@@ -1090,12 +1103,10 @@ export default function StrategyLab() {
   // Start Matrix Simulation using Web Worker
   const handleStartSimulation = async () => {
     if (!mortgage) return;
-    // Synchronous guard: if a simulation is already in flight, return
-    // immediately. The ref is checked before the state setter runs, so the
-    // auto-resim useEffect cannot race with the explicit button click.
     if (simulationInFlightRef.current) return;
     simulationInFlightRef.current = true;
 
+    try {
     await releaseSimulationArtifacts();
     simulationInFlightRef.current = true;
     setError(null);
@@ -1222,6 +1233,12 @@ export default function StrategyLab() {
       maxAffordablePayment,
       forceRecompute
     });
+    } catch (err) {
+      console.error("Simulation failed:", err);
+      setError(t("common.workerError", { message: err instanceof Error ? err.message : String(err) }));
+      simulationInFlightRef.current = false;
+      setSimulationRunning(false);
+    }
   };
 
   const handleCancelSimulation = () => {
@@ -1467,7 +1484,11 @@ export default function StrategyLab() {
     const metrics = getStrategyDisplayMetrics(strategyId);
     if (!metrics) return null;
     const freqLabel = getRepaymentFrequencyLabel();
-    const metricLabelPrefix = metrics.isScenarioSpecific ? metrics.label : t("strategyLab.metricLabelPrefix.expected");
+    // For the default aggregate ("Expected" / "概率加权期望") view, the
+    // metric keys already include the "Expected" / "期望" prefix; prepending
+    // it again produced "ExpectedExpected Total interest". Only prepend the
+    // scenario label when showing a scenario-specific view.
+    const metricLabelPrefix = metrics.isScenarioSpecific ? `${metrics.label} ` : "";
 
     return (
       <div className="rec-metrics">
@@ -1658,6 +1679,64 @@ export default function StrategyLab() {
   };
 
   const [error, setError] = useState(/** @type {string|null} */(null));
+
+  /**
+   * Render a sortable numeric column header. Shows the current sort arrow
+   * (▲ / ▼) for the active column, dim arrow for inactive ones, and cycles
+   * asc → desc → cleared on repeated clicks.
+   * @param {string} sortKey - one of the numeric field names on a ranked strategy
+   * @param {string} label
+   * @param {{key: string|null, dir: "asc"|"desc"}|null} sortState
+   * @param {(key: string) => void} onClick
+   * @returns {any}
+   */
+  const renderSortHeader = (sortKey, label, sortState, onClick) => {
+    const isActive = sortState && sortState.key === sortKey;
+    const arrow = isActive ? (sortState.dir === "asc" ? "▲" : "▼") : "↕";
+    // Inline-style belt-and-braces: Chrome's user-agent stylesheet gives
+    // <button> a grey background, 1px border, and inset shadow that
+    // styled-jsx scoping sometimes doesn't fully cancel. The `!important`
+    // on the .th-sort-btn class is the primary fix; this inline style is
+    // a guaranteed override in case the class rule gets dropped.
+    return (
+      <button
+        type="button"
+        className={`th-sort-btn ${isActive ? "active" : ""}`}
+        onClick={() => onClick(sortKey)}
+        aria-label={t("common.sortBy", { label })}
+        style={{
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          color: "inherit",
+          fontWeight: 600
+        }}
+      >
+        <span>{label}</span>
+        <span className="th-sort-arrow" aria-hidden="true">{arrow}</span>
+      </button>
+    );
+  };
+
+  /**
+   * Resolve the numeric value used for sorting a ranked strategy on a given
+   * column key. The `principalRepaid` column is derived in the row from
+   * `totalBalance - expectedEndingBalance`; mirror that here so sorting by
+   * "Expected principal repaid" matches the displayed values.
+   * @param {any} s
+   * @param {string} key
+   * @returns {number|null}
+   */
+  const resolveSortValue = (/** @type {any} */ s, /** @type {string} */ key) => {
+    if (!s) return null;
+    if (key === "splitCount") return getSplitCountForRanked(s);
+    if (key === "principalRepaid") {
+      if (typeof s.expectedEndingBalance !== "number") return null;
+      return getTotalBalance() - s.expectedEndingBalance;
+    }
+    const v = s[key];
+    return typeof v === "number" ? v : null;
+  };
 
   /**
    * Build the 4-section `intro` payload that StrategyDetailModal renders
@@ -2070,7 +2149,7 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">3</span>
                   <span>
-                    <span className="control-group-title">Long-term Monte Carlo paths</span>
+                    <span className="control-group-title">{t("strategyLab.group3.title")}</span>
                     <span className="control-group-subtitle">{t("strategyLab.group3.subtitle")}</span>
                   </span>
                 </span>
@@ -2151,8 +2230,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">4</span>
                   <span>
-                    <span className="control-group-title">Simulation scope</span>
-                    <span className="control-group-subtitle">Drives the future horizon this analysis covers</span>
+                    <span className="control-group-title">{t("strategyLab.group4.title")}</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group4.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2176,7 +2255,7 @@ export default function StrategyLab() {
                       {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.horizon ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.horizon ? `${t("strategyLab.collapse")} ▴` : `${t("strategyLab.expand")} ▾`}</span>
                 </span>
               </div>
               {openControlGroups.horizon && (
@@ -2235,8 +2314,8 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">5</span>
                   <span>
-                    <span className="control-group-title">Split and budget constraints</span>
-                    <span className="control-group-subtitle">Drives the candidate strategy space and risk boundary</span>
+                    <span className="control-group-title">{t("strategyLab.group5.title")}</span>
+                    <span className="control-group-subtitle">{t("strategyLab.group5.subtitle")}</span>
                   </span>
                 </span>
                 <span className="control-group-actions">
@@ -2260,7 +2339,7 @@ export default function StrategyLab() {
                       {t("strategyLab.resetDefault")}
                     </span>
                   )}
-                  <span className="control-group-toggle">{openControlGroups.constraints ? "收起 ▴" : "展开 ▾"}</span>
+                  <span className="control-group-toggle">{openControlGroups.constraints ? `${t("strategyLab.collapse")} ▴` : `${t("strategyLab.expand")} ▾`}</span>
                 </span>
               </div>
               {openControlGroups.constraints && (
@@ -2389,7 +2468,7 @@ export default function StrategyLab() {
                 <span className="control-group-title-wrap">
                   <span className="step-num">6</span>
                   <span>
-                    <span className="control-group-title">Personal repayment preferences</span>
+                    <span className="control-group-title">{t("strategyLab.group6.title")}</span>
                     <span className="control-group-subtitle">{t("strategyLab.group6.subtitle")}</span>
                   </span>
                 </span>
@@ -2623,76 +2702,75 @@ export default function StrategyLab() {
           </section>
         </div>
         )}
+        {/* Right Column: Scenario Rates Chart, Run Button, Results & Recommendations */}
+        <div className="right-results-col">
 
           {/* Scenario Rates Chart */}
           <section className="glass-panel chart-section accent-cyan">
-            <h2 className="section-title"><span className="step-num">7</span>OCR forecast scenario curves</h2>
+            <h2 className="section-title"><span className="step-num">7</span>{t("strategyLab.step7.title")}</h2>
             <div style={{ marginTop: "16px" }}>
               <SvgChart data={chartScenarioPaths} yAxisType="rate" height={220} />
             </div>
             <div className="chart-explain-box">
-              <div className="chart-explain-title">How to read this chart</div>
+              <div className="chart-explain-title">{t("strategyLab.step7.howToReadTitle")}</div>
               <div className="chart-explain-copy">
-                This chart updates live with the left-side input — no need to run a simulation first. The first 36 months show the low / base / high deterministic OCR scenario lines, reflecting your subjective read on the medium-term rate path. From month 37, the system stops extrapolating a single path and instead draws long-term Monte Carlo samples governed by your long-term cycle length and reversal probability, expressing the long-term uncertainty.
+                {t("strategyLab.step7.howToReadBody")}
               </div>
 
-              <div className="chart-explain-title" style={{ marginTop: "12px" }}>Term explanations</div>
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>{t("strategyLab.step7.termsTitle")}</div>
               <div className="chart-glossary-grid">
                 <div className="chart-glossary-item">
-                  <strong>OCR</strong>
-                  <span>New Zealand's Official Cash Rate. Not a mortgage rate itself, but it drives floating rates and fixed-rate refix pricing.</span>
+                  <strong>{t("strategyLab.step7.term.ocr.label")}</strong>
+                  <span>{t("strategyLab.step7.term.ocr.body")}</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>Probability-weighted expected path</strong>
-                  <span>White dashed line. Month-by-month weighted average of the low / base / high paths using your weights; drives expected interest and expected balance.</span>
+                  <strong>{t("strategyLab.step7.term.weighted.label")}</strong>
+                  <span>{t("strategyLab.step7.term.weighted.body")}</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>Long-term optimistic path</strong>
-                  <span>Long-term representative path with low rates. Conceptually close to the 10th-percentile (P10) sample — the optimistic side.</span>
+                  <strong>{t("strategyLab.step7.term.optimistic.label")}</strong>
+                  <span>{t("strategyLab.step7.term.optimistic.body")}</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>Long-term median path</strong>
-                  <span>Long-term representative path with median rates. Conceptually close to the 50th-percentile (P50) sample — the median.</span>
+                  <strong>{t("strategyLab.step7.term.median.label")}</strong>
+                  <span>{t("strategyLab.step7.term.median.body")}</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>Long-term stress path</strong>
-                  <span>Long-term representative path with high rates. Conceptually close to the 90th-percentile (P90) sample — the stress side.</span>
+                  <strong>{t("strategyLab.step7.term.stress.label")}</strong>
+                  <span>{t("strategyLab.step7.term.stress.body")}</span>
                 </div>
                 <div className="chart-glossary-item">
-                  <strong>Monte Carlo</strong>
-                  <span>Rather than guessing a single future line, we generate many possible paths and extract representative samples plus statistics.</span>
+                  <strong>{t("strategyLab.step7.term.monteCarlo.label")}</strong>
+                  <span>{t("strategyLab.step7.term.monteCarlo.body")}</span>
                 </div>
               </div>
 
-              <div className="chart-explain-title" style={{ marginTop: "12px" }}>Examples</div>
+              <div className="chart-explain-title" style={{ marginTop: "12px" }}>{t("strategyLab.step7.examplesTitle")}</div>
               <div className="chart-example-list">
                 <div className="chart-example-item">
-                  If the weights are low 50% / base 30% / high 20%, the white dashed line sits closer to the low-rate path because it represents the weighted average of the three medium-term scenarios, not any one of them.
+                  {t("strategyLab.step7.example1")}
                 </div>
                 <div className="chart-example-item">
-                  If months 13-36 trend up overall and the long-term reversal probability is 70%, the first long-term sample after month 37 is more likely to dip first, but it won't be a rigid line — up/down noise is preserved.
+                  {t("strategyLab.step7.example2")}
                 </div>
                 <div className="chart-example-item">
-                  Long-term optimistic / median / stress are not fixed percentage moves and not user-set probability weights; they are three representative paths picked from the long-term samples.
+                  {t("strategyLab.step7.example3")}
                 </div>
                 <div className="chart-example-item">
-                  If the month-36 low-rate scenario sits at a low level but the long-term optimistic path starts from a higher position, you'll see a "gap". That's because the optimistic path is a representative sample, not a direct extension of the low-rate green line.
+                  {t("strategyLab.step7.example4")}
                 </div>
                 <div className="chart-example-item">
-                  The detail table below is in 1:1 correspondence with the chart. Switch to the "Long-term median path" and the table's interest, max payment, and ending principal all change to that path's results.
+                  {t("strategyLab.step7.example5")}
                 </div>
               </div>
             </div>
           </section>
 
-        {/* Right Column: Results & Recommendations */}
-        <div className="right-results-col">
-
           {/* Run Button & Progress panel */}
           <section className="glass-panel run-section accent-emerald">
-            <h2 className="section-title"><span className="step-num">8</span>Strategy simulation</h2>
+            <h2 className="section-title"><span className="step-num">8</span>{t("strategyLab.step8.title")}</h2>
             <p className="text-muted" style={{ fontSize: "12px", margin: "8px 0 16px" }}>
-              The system will generate valid strategies under at most {maxSplits} splits and at most {maxFloatingPercentage}% floating / Offset share, and run a {simDurationYears * 12}-month cash-flow analysis under three future rate scenarios.
+              {t("strategyLab.step8.body", { maxSplits, maxFloatingPercentage, months: simDurationYears * 12 })}
             </p>
 
             {error && <div className="error-banner">{error}</div>}
@@ -2768,11 +2846,11 @@ export default function StrategyLab() {
                   <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
                 </div>
                 <div className="progress-text-row">
-                  <span>Simulating... {Math.round(progress)}%</span>
+                  <span>{t("strategyLab.progress.simulating", { pct: Math.round(progress) })}</span>
                   <span>
-                    Completed {completedSims.toLocaleString()} / {totalSims.toLocaleString()} simulations
+                    {t("strategyLab.progress.completed", { done: completedSims.toLocaleString(), total: totalSims.toLocaleString() })}
                     {currentSimulationInfo?.scenarioTotal > 1 &&
-                      ` · 当前情景 ${(currentSimulationInfo?.scenarioIndex ?? 0) + 1}/${currentSimulationInfo.scenarioTotal}`}
+                      t("strategyLab.progress.currentScenario", { idx: (currentSimulationInfo?.scenarioIndex ?? 0) + 1, total: currentSimulationInfo.scenarioTotal })}
                   </span>
                 </div>
                 {currentSimulationInfo && (
@@ -2800,13 +2878,21 @@ export default function StrategyLab() {
                   {t("common.cancelSimulation")}
                 </button>
               </div>
+            ) : !mortgage ? (
+              <div className="no-mortgage-prompt">
+                <div className="no-mortgage-prompt-title">{t("strategyLab.noMortgage.title")}</div>
+                <div className="no-mortgage-prompt-body">{t("strategyLab.noMortgage.body")}</div>
+                <Link href="/" className="btn-cta-run" style={{ display: "inline-flex", alignItems: "center", gap: "8px", marginTop: "12px", textDecoration: "none" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5l7 7-7 7" /></svg>
+                  {t("strategyLab.noMortgage.cta")}
+                </Link>
+              </div>
             ) : (
               <button
                 type="button"
                 onClick={handleStartSimulation}
                 className="btn-cta-run"
                 style={{ width: "100%", marginTop: "12px" }}
-                disabled={!mortgage}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5" /><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
                 {simResults ? t("common.rerunCta") : t("common.runCta")}
@@ -2817,16 +2903,18 @@ export default function StrategyLab() {
           {/* Recommendations Cards */}
           {optimisedData && (
             <section className="recommendations-section accent-amber">
-              <h2 className="section-title"><span className="step-num">9</span>Pareto recommendations — optimal strategy per axis</h2>
+              <h2 className="section-title"><span className="step-num">9</span>{t("strategyLab.step9.title")}</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
-                The system independently picks the mathematical optimum for each Pareto axis (weights-independent), so you can see the trade-offs across dimensions. The top 3 benchmark cards are: Lowest expected cost / Most stable payment / Worst-case defense.
-                <strong>The "Composite preference" card at the bottom</strong> responds live to the <strong>8</strong> weight sliders above. All weights sum to 100%, each capped at 25% (forcing at least 4 dimensions to be considered). When you raise one, the others rescale proportionally.
-                {maxSplits > 1 ? " Recommendation cards by default only pick from real split strategies with ≥ 2 tranches; 100% single-product strategies stay in the table below as a benchmark." : " Current setting is 1 split, so only single-term-locked strategies are compared."} <strong>Click any card to open the detail modal and view the full timeline and comparison analysis.</strong>
+                {t("strategyLab.step9.intro")}{" "}
+                <strong>{t("strategyLab.step9.preferenceCardStrong")}</strong>{" "}
+                {t("strategyLab.step9.preferenceCardTail", { n: 8 })}{" "}
+                {maxSplits > 1 ? t("strategyLab.step9.recommendMulti") : t("strategyLab.step9.recommendSingle")}{" "}
+                <strong>{t("strategyLab.step9.clickCta")}</strong>
               </p>
 
               {detailScenarioOptions.length > 1 && (
                 <div className="recommendation-basis-panel">
-                  <div className="recommendation-basis-label">推荐依据</div>
+                  <div className="recommendation-basis-label">{t("strategyLab.recommendBasis")}</div>
                   <div className="recommendation-basis-chips">
                     {detailScenarioOptions.map((/** @type {any} */ option) => (
                       <button
@@ -2855,14 +2943,14 @@ export default function StrategyLab() {
                       }
                     }}
                   >
-                    <div className="badge badge-indigo">偏好匹配推荐</div>
+                    <div className="badge badge-indigo">{t("strategyLab.rec.preference.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      按您设置的权重打分排序（响应偏好权重）
+                      {t("strategyLab.rec.preference.subtitle")}
                     </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recPreference.strategyId)}
                     </h3>
-                    <p className="rec-desc">根据您当前设置的约束参数和偏好权重，系统算出的综合得分最高的个性化贷款 split。</p>
+                    <p className="rec-desc">{t("strategyLab.rec.preference.desc")}</p>
                     {/* v10: no mutex suffix on the preference card itself —
                         this is the anchor that the other 3 cards exclude. */}
 
@@ -2902,18 +2990,18 @@ export default function StrategyLab() {
                       }
                     }}
                   >
-                    <div className="badge badge-emerald">最低期望成本</div>
+                    <div className="badge badge-emerald">{t("strategyLab.rec.lowestCost.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      期望总利息最小的方案（与权重无关）
+                      {t("strategyLab.rec.lowestCost.subtitle")}
                     </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recLowestCost.strategyId)}
                     </h3>
                     <p className="rec-desc">
-                      在所有未来走势情景下，数学期望总利息支出最低的拆分组合（降息通道下偏向短期，但伴随重定价波动风险）。
+                      {t("strategyLab.rec.lowestCost.desc")}
                       {recPreference && (
                         <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
-                          （本卡已避开偏好卡选中的「{renderStrategySplit(recPreference.strategyId)}」，聚焦次低期望利息的细分优势。）
+                          {t("strategyLab.rec.lowestCost.mutexSuffix", { strategy: renderStrategySplit(recPreference.strategyId) })}
                         </span>
                       )}
                     </p>
@@ -2955,16 +3043,19 @@ export default function StrategyLab() {
                   >
                     <div className="badge badge-amber">{t("strategyLab.rec.mostStable.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      单月最坏供款最小的方案（与权重无关）
+                      {t("strategyLab.rec.mostStable.subtitle")}
                     </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recMostStable.strategyId)}
                     </h3>
                     <p className="rec-desc">
-                      还款流波动率与极端高息情景下峰值供款最小的组合（偏向长期锁死固定利率，最抗利息飙升风险，但可能损失降息红利）。
+                      {t("strategyLab.rec.mostStable.desc")}
                       {recPreference && recLowestCost && (
                         <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
-                          （本卡已避开偏好卡「{renderStrategySplit(recPreference.strategyId)}」与最低成本卡「{renderStrategySplit(recLowestCost.strategyId)}」选中的方案，聚焦次稳的峰值供款。）
+                          {t("strategyLab.rec.mostStable.mutexSuffix", {
+                            pref: renderStrategySplit(recPreference.strategyId),
+                            cost: renderStrategySplit(recLowestCost.strategyId)
+                          })}
                         </span>
                       )}
                     </p>
@@ -3005,16 +3096,20 @@ export default function StrategyLab() {
                   >
                     <div className="badge badge-rose">{t("strategyLab.rec.worstCase.badge")}</div>
                     <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: "1.4" }}>
-                      综合最坏利息 + 违约 + 月供的客观最优（与权重无关）
+                      {t("strategyLab.rec.worstCase.subtitle")}
                     </div>
                     <h3 className="rec-title" style={{ fontSize: "14px", lineHeight: "1.5" }}>
                       {renderStrategySplit(recWorstCaseDefense.strategyId)}
                     </h3>
                     <p className="rec-desc">
-                      在所有未来走势情景下，最坏总利息、最坏月供峰值、超预算次数的加权综合分最低的拆分组合。
+                      {t("strategyLab.rec.worstCase.desc")}
                       {recPreference && recLowestCost && recMostStable && (
                         <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
-                          （本卡已避开前 3 张卡选中的方案「{renderStrategySplit(recPreference.strategyId)} / {renderStrategySplit(recLowestCost.strategyId)} / {renderStrategySplit(recMostStable.strategyId)}」，聚焦次优最坏情景综合分。）
+                          {t("strategyLab.rec.worstCase.mutexSuffix", {
+                            pref: renderStrategySplit(recPreference.strategyId),
+                            cost: renderStrategySplit(recLowestCost.strategyId),
+                            stable: renderStrategySplit(recMostStable.strategyId)
+                          })}
                         </span>
                       )}
                     </p>
@@ -3057,8 +3152,8 @@ export default function StrategyLab() {
               }}
               className="accordion-toggle-btn"
             >
-              <span>{showExhaustedReport ? "收起可行拆分组合穷举评估报告 ▴" : "打开完整可行拆分组合穷举评估报告 ▾"}</span>
-              <span className="badge badge-emerald">{optimisedData.rankedStrategies.length} 组组合</span>
+              <span>{showExhaustedReport ? `${t("strategyLab.report.close")} ▴` : `${t("strategyLab.report.open")} ▾`}</span>
+              <span className="badge badge-emerald">{t("common.benchmarksCount", { n: optimisedData.rankedStrategies.length })}</span>
             </button>
           )}
 
@@ -3068,31 +3163,31 @@ export default function StrategyLab() {
 
               {/* Professional Split Advice & Logic */}
               <div className="glass-panel pro-advice-section" style={{ marginTop: "24px" }}>
-                <h2 className="section-title" style={{ marginBottom: "16px" }}>📖 专业拆分策略建议与原理分析</h2>
+                <h2 className="section-title" style={{ marginBottom: "16px" }}>{t("strategyLab.proAdvice.title")}</h2>
                 <div className="pro-advice-grid">
                   <div className="advice-column">
-                    <h3>为什么要对贷款进行拆分（Split）？</h3>
+                    <h3>{t("strategyLab.proAdvice.q1")}</h3>
                     <ul>
                       <li>
-                        <strong>防范重定价风险 (Rate Shock Protection)</strong>
-                        <p>若将贷款全部绑定在单一固定期限，到期时一旦遭遇高息周期，全部贷款额度将被动承受高额利息压力。拆分后，不同Tranche在不同年份分批到期，能有效分散和分摊利率波动冲击。</p>
+                        <strong>{t("strategyLab.proAdvice.q1.l1.title")}</strong>
+                        <p dangerouslySetInnerHTML={{ __html: t("strategyLab.proAdvice.q1.l1.body") }} />
                       </li>
                       <li>
-                        <strong>平滑现金流与资金灵活性</strong>
-                        <p>短固定期（如6个月、1年）能让您随时享受降息周期的利息下调红利；长固定期（如3年、5年）则为您锁死未来月供上限，提供高度确定性；而浮动利率（Floating）部分则方便您随时进行大额提前还款或利用 Offset 账户抵消利息，资金流转更加自如。</p>
+                        <strong>{t("strategyLab.proAdvice.q1.l2.title")}</strong>
+                        <p dangerouslySetInnerHTML={{ __html: t("strategyLab.proAdvice.q1.l2.body") }} />
                       </li>
                     </ul>
                   </div>
                   <div className="advice-column">
-                    <h3>如何选择最适合您的最优拆分策略？</h3>
+                    <h3>{t("strategyLab.proAdvice.q2")}</h3>
                     <ul>
                       <li>
-                        <strong>优先在“帕累托最优”中筛选</strong>
-                        <p>下方穷举列表中标记为<strong>“首选”</strong>的均是数学上的**帕累托最优组合（Pareto Optimal）**。这意味着在相同的利息开销下，这些组合的还款波动性最低；或者在相同的波动指标下，利息总开销最低。被支配方案通常在同等指标下存在更好的选择，不建议优先考虑。</p>
+                        <strong>{t("strategyLab.proAdvice.q2.l1.title")}</strong>
+                        <p dangerouslySetInnerHTML={{ __html: t("strategyLab.proAdvice.q2.l1.body") }} />
                       </li>
                       <li>
-                        <strong>构建期限阶梯 (Tranche Laddering)</strong>
-                        <p>在新西兰市场，通常建议采用“梯队式锁定”法（例如：30% 锁 1 年，50% 锁 2 年，20% 浮动/对冲）。这不仅能合理利用中短期利率折价，还能让您每隔 12 个月都有机会视市场变化灵活展期或清偿本金。</p>
+                        <strong>{t("strategyLab.proAdvice.q2.l2.title")}</strong>
+                        <p dangerouslySetInnerHTML={{ __html: t("strategyLab.proAdvice.q2.l2.body") }} />
                       </li>
                     </ul>
                   </div>
@@ -3101,18 +3196,18 @@ export default function StrategyLab() {
 
               {/* Full Exhausted Strategies Table */}
               <section className="glass-panel exhausted-list-section" style={{ marginTop: "24px" }}>
-                <h2 className="section-title" style={{ marginBottom: "8px" }}>所有可行拆分组合评估报告</h2>
-                <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
-                  <strong>综合评分</strong>：系统根据您设定的偏好权重对每个方案进行归一化加权评分，分数越低表示综合表现越优。
-                  <strong>帕累托最优</strong>：在同等利息成本下还款波动最小、或在同等波动下利息最低的方案，标记为 <strong className="text-emerald">首选</strong>。
-                  <strong>被支配方案</strong>：存在另一个方案在各项指标上都不差于它、且至少有一项严格优于它。
-                </p>
+                <h2 className="section-title" style={{ marginBottom: "8px" }}>{t("strategyLab.report.title")}</h2>
+                <p
+                  className="text-muted"
+                  style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}
+                  dangerouslySetInnerHTML={{ __html: t("strategyLab.report.intro") }}
+                />
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
                   <p className="text-muted" style={{ fontSize: "12px", margin: 0, maxWidth: "60%" }}>
                     {showOnlyBestPerMix
-                      ? `系统已将所有符合规则的 ${optimisedData.rankedStrategies.length} 组穷举方案，按“不同期限组合 (Split Product Mix)”聚合去重，筛选出各组合中的最优方案（共 ${getBestStrategiesPerMix().length} 组）。`
-                      : `下表列出了系统穷举出的所有满足规则配比的房贷拆包组合（共 ${optimisedData.rankedStrategies.length} 组）。`
+                      ? t("strategyLab.report.summaryBestPerMix", { total: optimisedData.rankedStrategies.length, n: getBestStrategiesPerMix().length })
+                      : t("strategyLab.report.summaryAll", { total: optimisedData.rankedStrategies.length })
                     }
                   </p>
                   <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
@@ -3126,7 +3221,7 @@ export default function StrategyLab() {
                         setShowAllRows(false);
                       }}
                     >
-                      每个组合仅看最优
+                      {t("strategyLab.segment.bestPerMix")}
                     </button>
                     <button
                       type="button"
@@ -3134,7 +3229,7 @@ export default function StrategyLab() {
                       style={{ padding: "6px 14px", borderRadius: "0 8px 8px 0", fontSize: "11px", height: "32px", display: "flex", alignItems: "center" }}
                       onClick={() => setShowOnlyBestPerMix(false)}
                     >
-                      查看全部穷举
+                      {t("strategyLab.segment.allCombos")}
                     </button>
                   </div>
                   <button
@@ -3142,9 +3237,9 @@ export default function StrategyLab() {
                     className={`segmented-btn ${showOnlyPareto ? "active" : ""}`}
                     style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "11px", height: "32px", display: "flex", alignItems: "center", whiteSpace: "nowrap" }}
                     onClick={() => { setShowOnlyPareto(!showOnlyPareto); setShowAllRows(false); }}
-                    title="仅显示帕累托最优（非被支配）方案"
+                    title={t("strategyLab.toggle.paretoOnlyTitle")}
                   >
-                    {showOnlyPareto ? "✓ 仅帕累托最优" : "仅帕累托最优"}
+                    {showOnlyPareto ? t("strategyLab.toggle.paretoOnlyActive") : t("strategyLab.toggle.paretoOnly")}
                   </button>
                   </div>
                 </div>
@@ -3154,15 +3249,15 @@ export default function StrategyLab() {
                   const counts = getAvailableSplitCounts();
                   if (counts.length <= 1) return null;
                   return (
-                    <div className="count-filter-pills" role="group" aria-label="按拆分笔数过滤">
-                      <span className="count-filter-label">拆分笔数</span>
+                    <div className="count-filter-pills" role="group" aria-label={t("common.tabsFilters")}>
+                      <span className="count-filter-label">{t("strategyLab.filter.splitCount")}</span>
                       <button
                         type="button"
                         className={`count-pill ${splitCountFilter === null ? "active" : ""}`}
                         onClick={() => { setSplitCountFilter(null); setShowAllRows(false); }}
                         aria-pressed={splitCountFilter === null}
                       >
-                        全部
+                        {t("strategyLab.filter.all")}
                       </button>
                       {counts.map((n) => (
                         <button
@@ -3172,7 +3267,7 @@ export default function StrategyLab() {
                           onClick={() => { setSplitCountFilter(n); setShowAllRows(false); }}
                           aria-pressed={splitCountFilter === n}
                         >
-                          {n} 拆分
+                          {t("common.splitCountN", { n })}
                         </button>
                       ))}
                     </div>
@@ -3183,30 +3278,67 @@ export default function StrategyLab() {
                   <table className="exhausted-table">
                     <thead>
                       <tr>
-                        <th>排序</th>
-                        <th>重新拆分方案结构 (额度与锁定时间)</th>
-                        <th>拆分笔数</th>
-                        <th>期望总利息</th>
-                        <th>期望最高{getRepaymentFrequencyLabel()}</th>
-                        <th>期望已还本金</th>
-                        <th>期望剩余本金</th>
-                        <th>还款波动</th>
-                        <th>最坏总利息</th>
-                        <th>最坏违约次数</th>
-                        <th title="分散度 = 最大单笔贷款占比;越低越分散。已纳入 Pareto 主导关系。">分散度</th>
-                        <th>refix 事件数</th>
-                        <th>帕累托前沿?</th>
-                        <th>综合评分</th>
-                        <th>明细</th>
+                        <th>{t("strategyLab.table.rank")}</th>
+                        <th>{t("strategyLab.table.splitStructure")}</th>
+                        <th>
+                          {renderSortHeader("splitCount", t("strategyLab.table.splitCount"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("expectedInterest", t("strategyLab.table.expectedInterest"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("expectedMaxPayment", t("strategyLab.table.expectedMaxPayment", { freq: getRepaymentFrequencyLabel() }), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("principalRepaid", t("strategyLab.table.expectedPrincipalRepaid"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("expectedEndingBalance", t("strategyLab.table.expectedEndingBalance"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("expectedPaymentVolatility", t("strategyLab.table.paymentVolatility"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("worstCaseInterest", t("strategyLab.table.worstInterest"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("worstCaseAffordabilityBreaches", t("strategyLab.table.worstBreaches"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th title={t("strategyLab.table.diversificationTitle")}>
+                          {renderSortHeader("concentration", t("strategyLab.table.diversification"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>
+                          {renderSortHeader("expectedRefixEventCount", t("strategyLab.table.refixCount"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>{t("strategyLab.table.paretoFrontier")}</th>
+                        <th>
+                          {renderSortHeader("score", t("strategyLab.table.compositeScore"), exhaustedSort, handleExhaustedSort)}
+                        </th>
+                        <th>{t("strategyLab.table.detail")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(() => {
                         const baseList = showOnlyBestPerMix ? getBestStrategiesPerMix() : optimisedData.rankedStrategies;
                         const paretoFiltered = showOnlyPareto ? baseList.filter((/** @type {any} */ s) => s.isParetoOptimal) : baseList;
-                        const displayedList = splitCountFilter === null
+                        const filteredList = splitCountFilter === null
                           ? paretoFiltered
                           : paretoFiltered.filter((/** @type {any} */ s) => getSplitCountForRanked(s) === splitCountFilter);
+                        // Apply user-selected column sort. Numeric fields are
+                        // resolved via a small map; missing values sort last
+                        // regardless of direction (Infinity / -Infinity).
+                        const sortedList = exhaustedSort
+                          ? [...filteredList].sort((/** @type {any} */ a, /** @type {any} */ b) => {
+                              const va = resolveSortValue(a, exhaustedSort.key);
+                              const vb = resolveSortValue(b, exhaustedSort.key);
+                              const missing = (v) => v === null || Number.isNaN(v);
+                              if (missing(va) && missing(vb)) return 0;
+                              if (missing(va)) return 1;
+                              if (missing(vb)) return -1;
+                              return exhaustedSort.dir === "asc" ? va - vb : vb - va;
+                            })
+                          : filteredList;
+                        const displayedList = sortedList;
                         const slicedList = showAllRows ? displayedList : displayedList.slice(0, 10);
                         // V6: Build a set of strategyIds picked by ANY benchmark card
                         // so the row can show "this row is the X-optimal pick".
@@ -3221,7 +3353,7 @@ export default function StrategyLab() {
                           return (
                             <tr>
                               <td colSpan={15} className="text-muted" style={{ textAlign: "center", padding: "24px 8px", fontSize: "12px" }}>
-                                当前筛选条件下没有匹配的拆分组合,请尝试其它拆分笔数。
+                                {t("strategyLab.table.noResults")}
                               </td>
                             </tr>
                           );
@@ -3247,7 +3379,7 @@ export default function StrategyLab() {
                               <td className="strategy-structure-cell">
                                 {renderStrategySplit(s.strategyId)}
                                 {s.isParetoOptimal && (
-                                  <span className="pareto-mini-badge">首选</span>
+                                  <span className="pareto-mini-badge">{t("strategyLab.table.paretoMini")}</span>
                                 )}
                               </td>
                               <td className="font-semibold text-center">{getSplitCountForRanked(s)}</td>
@@ -3262,9 +3394,9 @@ export default function StrategyLab() {
                               <td className="text-secondary">{Math.round(s.expectedRefixEventCount || 0)}</td>
                               <td>
                                 {s.isParetoOptimal ? (
-                                  <span className="badge badge-emerald">帕累托最优</span>
+                                  <span className="badge badge-emerald">{t("strategyLab.table.paretoBadge")}</span>
                                 ) : (
-                                  <span className="text-muted" style={{ fontSize: "11px" }}>被支配方案</span>
+                                  <span className="text-muted" style={{ fontSize: "11px" }}>{t("common.paretoNo")}</span>
                                 )}
                                 {/* V6: Show which benchmark card(s) picked this row.
                                     Helps users see the role of each strategy on the
@@ -3275,16 +3407,16 @@ export default function StrategyLab() {
                                   .map((/** @type {any} */ tag) => {
                                     const benchmarkKey = String(tag).split("|")[1];
                                     const shortLabels = {
-                                      preference: "偏好",
-                                      lowestCost: "成本",
-                                      worstCaseDefense: "抗压",
-                                      mostStable: "稳健"
+                                      preference: t("common.shortPref"),
+                                      lowestCost: t("common.shortCost"),
+                                      worstCaseDefense: t("common.shortWorstCase"),
+                                      mostStable: t("common.shortWorst")
                                     };
                                     return (
                                       <span
                                         key={benchmarkKey}
                                         className="benchmark-pick-tag"
-                                        title={`此行被「${shortLabels[benchmarkKey] || benchmarkKey}最优」卡选中`}
+                                        title={t("common.benchPicked", { label: shortLabels[benchmarkKey] || benchmarkKey })}
                                         style={{
                                           display: "inline-block",
                                           marginLeft: "4px",
@@ -3308,9 +3440,9 @@ export default function StrategyLab() {
                                   type="button"
                                   className="btn btn-secondary exhausted-row-cta"
                                   onClick={(e) => openStrategyDetailModal(e, s.strategyId, "row", "row")}
-                                  aria-label={`查看 ${renderStrategySplit(s.strategyId)} 完整明细`}
+                                  aria-label={t("common.rowAriaView", { split: renderStrategySplit(s.strategyId) })}
                                 >
-                                  查看
+                                  {t("common.view")}
                                 </button>
                               </td>
                             </tr>
@@ -3336,7 +3468,7 @@ export default function StrategyLab() {
                           className="btn btn-secondary"
                           style={{ padding: "8px 24px", fontSize: "13px" }}
                         >
-                          {showAllRows ? "收起，只显示前 10 组组合 ▴" : `展开全部 ${displayedList.length} 组组合 ▾`}
+                          {showAllRows ? `${t("common.seeLessFirstN")} ▴` : `${t("common.seeAllN", { n: displayedList.length })} ▾`}
                         </button>
                       </div>
                     );
@@ -3475,6 +3607,27 @@ export default function StrategyLab() {
           line-height: 1.6;
         }
 
+        .no-mortgage-prompt {
+          text-align: center;
+          padding: 20px 16px;
+          margin-top: 8px;
+        }
+
+        .no-mortgage-prompt-title {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--text-primary, #fff);
+          margin-bottom: 8px;
+        }
+
+        .no-mortgage-prompt-body {
+          font-size: 13px;
+          color: var(--text-secondary);
+          line-height: 1.6;
+          max-width: 360px;
+          margin: 0 auto;
+        }
+
         .lab-grid {
           display: grid;
           grid-template-columns: 360px minmax(0, 1fr);
@@ -3502,10 +3655,8 @@ export default function StrategyLab() {
         }
 
         .chart-section {
-          grid-column: 2;
         }
 
-        .lab-grid.inputs-hidden .chart-section,
         .lab-grid.inputs-hidden .right-results-col {
           grid-column: 1;
         }
@@ -3530,9 +3681,9 @@ export default function StrategyLab() {
           color: inherit;
           padding: 14px 16px;
           display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
           cursor: pointer;
           text-align: left;
         }
@@ -3588,8 +3739,11 @@ export default function StrategyLab() {
         .control-group-actions {
           display: flex;
           align-items: center;
+          justify-content: flex-end;
           gap: 10px;
           flex-shrink: 0;
+          padding-top: 6px;
+          border-top: 1px solid rgba(255, 255, 255, 0.04);
         }
 
         .control-group-toggle {
@@ -4201,6 +4355,48 @@ export default function StrategyLab() {
           background: #0b0f19;
         }
 
+        .th-sort-btn {
+          appearance: none;
+          -webkit-appearance: none;
+          background: transparent !important;
+          background-color: transparent !important;
+          background-image: none !important;
+          border: 0 !important;
+          border-color: transparent !important;
+          box-shadow: none !important;
+          color: #fff !important;
+          font: inherit;
+          font-weight: 600;
+          margin: 0;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          cursor: pointer;
+          white-space: normal;
+          text-align: left;
+          line-height: 1.3;
+        }
+
+        .th-sort-btn:hover {
+          color: var(--color-primary);
+        }
+
+        .th-sort-btn.active {
+          color: var(--color-primary);
+        }
+
+        .th-sort-arrow {
+          font-size: 9px;
+          opacity: 0.45;
+          flex-shrink: 0;
+        }
+
+        .th-sort-btn:hover .th-sort-arrow,
+        .th-sort-btn.active .th-sort-arrow {
+          opacity: 1;
+        }
+
         .exhausted-table td {
           border-bottom: 1px solid rgba(255, 255, 255, 0.05);
           padding: 12px 8px;
@@ -4416,7 +4612,7 @@ export default function StrategyLab() {
 
         .recommendation-basis-label {
           color: var(--text-muted);
-          font-size: 9.5px;
+          font-size: 8.5px;
           font-weight: 500;
           letter-spacing: 0.04em;
           text-transform: uppercase;
@@ -4457,14 +4653,14 @@ export default function StrategyLab() {
           align-items: flex-start;
           gap: 7px;
           color: var(--text-secondary);
-          font-size: 11px;
+          font-size: 10px;
           line-height: 1.45;
           letter-spacing: 0.01em;
         }
 
         .path-explain-copy strong {
           color: #e5e7eb;
-          font-weight: 700;
+          font-weight: 600;
         }
 
         .path-dot {
@@ -4999,7 +5195,6 @@ export default function StrategyLab() {
             grid-template-columns: minmax(0, 1fr);
           }
           .left-controls-col,
-          .chart-section,
           .right-results-col {
             grid-column: 1;
           }
@@ -5049,10 +5244,10 @@ export default function StrategyLab() {
             font-size: 11px;
           }
           .recommendation-basis-label {
-            font-size: 9.5px;
+            font-size: 8.5px;
           }
           .path-explain-copy {
-            font-size: 12px;
+            font-size: 10.5px;
             line-height: 1.5;
           }
           .progress-text-row {

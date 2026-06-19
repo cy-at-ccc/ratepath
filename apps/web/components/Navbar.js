@@ -129,24 +129,25 @@ export default function Navbar() {
         .nav-logo {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 5px;
           font-family: var(--font-heading);
-          font-size: 20px;
+          font-size: 16px;
           font-weight: 800;
           color: #fff;
           margin-bottom: 36px;
-          padding: 4px 8px;
+          padding: 4px 4px;
           border-radius: 10px;
           transition: var(--transition-smooth);
+          min-width: 0;
         }
 
         .nav-logo-icon {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 32px;
-          height: 32px;
-          border-radius: 8px;
+          width: 28px;
+          height: 28px;
+          border-radius: 7px;
           background: var(--gradient-primary);
           color: #fff;
           box-shadow: var(--glow-primary);
@@ -160,19 +161,26 @@ export default function Navbar() {
           -webkit-text-fill-color: transparent;
           color: transparent;
           letter-spacing: -0.02em;
+          white-space: nowrap;
+          min-width: 0;
+          flex-shrink: 1;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .nav-logo-badge {
-          margin-left: 4px;
-          font-size: 10px;
-          padding: 2px 7px;
+          margin-left: 1px;
+          font-size: 9px;
+          padding: 1px 5px;
           letter-spacing: 0.05em;
+          flex-shrink: 0;
         }
 
         .nav-logo-switcher {
           margin-left: auto;
           display: inline-flex;
           align-items: center;
+          flex-shrink: 0;
         }
 
         .nav-mobile-switcher {
