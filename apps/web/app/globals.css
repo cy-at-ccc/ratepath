@@ -645,14 +645,17 @@ a:focus-visible {
   }
 }
 
-/* Mobile responsive styles */
+/* Mobile responsive styles — sidebar becomes a fixed top-left trigger
+   with a slide-in drawer (see apps/web/components/Navbar.js). The
+   .app-container switches to column so the sidebar drops out of flow
+   (it's display:none on mobile), and main-content picks up the full width. */
 @media (max-width: 768px) {
   .app-container {
     flex-direction: column;
   }
   .main-content {
     padding: 20px;
-    padding-bottom: 90px; /* space for bottom navigation bar */
+    padding-top: 72px; /* clears the fixed top-left 44×44 trigger button + breathing room */
   }
 }
 

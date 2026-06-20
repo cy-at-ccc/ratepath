@@ -16,7 +16,7 @@ import { simulateStrategyScenario } from "@mortgage/simulation-engine";
 import { calculateScheduledPayment } from "@mortgage/mortgage-engine";
 import SvgChart from "../../components/SvgChart.js";
 import StrategyDetailModal from "../../components/StrategyDetailModal.js";
-import { NumberInput } from "../../components/index.js";
+import { NumberInput, SimulationProgressModal } from "../../components/index.js";
 import { useI18n } from "../../lib/i18n/useI18n.js";
 
 /**
@@ -146,11 +146,11 @@ export default function StrategyLab() {
   // conservative profile.
   const [maxFloatingPercentage, setMaxFloatingPercentage] = useState(10);
   const [maxAffordablePayment, setMaxAffordablePayment] = useState(5000);
-  // Allocation-grid step. Default 0.05 (5%) per country-adapter rule.
-  // v9: default changed from 0.10 (10%) to 0.05 (5%) so the candidate set
-  // includes balanced splits like 33-33-33 / 40-30-30 / 25-25-50. UI in
-  // Section 2 still lets the user coarsen to 10% or refine to 1%.
-  const [percentageStep, setPercentageStep] = useState(0.05);
+  // Allocation-grid step. Default 0.10 (10%) so the page loads in a state
+  // that matches the "默认" preset label (默认 (3 拆分 / 10%)) — previously
+  // initialised at 0.05 which made the segmented control show "5% (细)"
+  // while the preset label claimed 10%, confusing users.
+  const [percentageStep, setPercentageStep] = useState(0.10);
 
   // Diversification preset ("default" | "diversification" | "max"). When set
   // to a non-default value, the preset overwrites maxSplits, percentageStep,
@@ -369,13 +369,13 @@ export default function StrategyLab() {
   }, [mortgage]);
 
   const isConstraintsModified = maxSplits !== nzProfile.rules.maxSplits ||
-    percentageStep !== 0.05 ||
+    percentageStep !== 0.10 ||
     maxFloatingPercentage !== 10 ||
     maxAffordablePayment !== defaultMaxAffordablePayment;
 
   const handleResetConstraints = () => {
     setMaxSplits(nzProfile.rules.maxSplits);
-    setPercentageStep(0.05);
+    setPercentageStep(0.10);
     setMaxFloatingPercentage(10);
     setMaxAffordablePayment(defaultMaxAffordablePayment);
     setDiversificationPreset("default");
@@ -415,7 +415,10 @@ export default function StrategyLab() {
     setDiversificationPreset(preset);
     if (preset === "default") {
       setMaxSplits(3);
-      setPercentageStep(0.05);
+      // Align with the label "默认（3 拆分 / 10%）" — previously set to
+      // 0.05 which silently downgraded the displayed "组合网格步长" to
+      // 5% after picking the default preset.
+      setPercentageStep(0.10);
       setMaxFloatingPercentage(10);
       setWeights(normalizePreferenceWeights(DEFAULT_WEIGHTS));
     } else if (preset === "diversification") {
@@ -440,8 +443,8 @@ export default function StrategyLab() {
   // separate granular weight sliders and "重置默认" buttons, and we don't want
   // a manual weight tweak to clobber the preset label.
   const PRESET_PROFILES = {
-    default: { maxSplits: 3, percentageStep: 0.05, maxFloatingPercentage: 10 },
-    diversification: { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 30 },
+    default: { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 10 },
+    diversification: { maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 30 },
     max: { maxSplits: 5, percentageStep: 0.05, maxFloatingPercentage: 50 }
   };
 
@@ -478,6 +481,16 @@ export default function StrategyLab() {
   const [totalSims, setTotalSims] = useState(0);
   const [currentSimulationInfo, setCurrentSimulationInfo] = useState(/** @type {any} */(null));
   const [hideParameterPanel, setHideParameterPanel] = useState(false);
+  // Drives the SimulationProgressModal. Set true at the same batch as
+  // setSimulationRunning(true) inside handleStartSimulation. The modal owns
+  // its own auto-dismiss timer (default 900 ms) on success/cached and only
+  // closes on user action during the error phase.
+  const [simulationModalOpen, setSimulationModalOpen] = useState(false);
+  // Records the latest terminal message from the worker ("success" /
+  // "cached" / "error") so the modal can derive its phase without forcing
+  // the page to introduce a separate "completedType" state slot. Reset to
+  // null at the start of every new run.
+  const simulationLastTerminalRef = useRef(/** @type {"success"|"cached"|"error"|null} */(null));
 
   // Estimate total simulation count from current constraints — runs the
   // strategy generator synchronously (no amortisation, just enumeration) to
@@ -1219,6 +1232,10 @@ export default function StrategyLab() {
     setProgress(0);
     setCompletedSims(0);
     setCurrentSimulationInfo(null);
+    // Open the progress modal and reset the terminal-type marker so the
+    // modal can derive its phase purely from worker messages.
+    simulationLastTerminalRef.current = null;
+    setSimulationModalOpen(true);
 
     workerRef.current.onmessage = (/** @type {any} */ e) => {
       const msg = e.data;
@@ -1235,6 +1252,11 @@ export default function StrategyLab() {
         setHideParameterPanel(true);
         simulationInFlightRef.current = false;
         setSimulationRunning(false);
+        // Record the terminal message type so the modal can switch to the
+        // success/cached phase and auto-dismiss after ~900 ms. The modal
+        // itself owns the timer and calls setSimulationModalOpen(false) via
+        // its onDismiss prop — no extra cleanup needed here.
+        simulationLastTerminalRef.current = msg.type;
         // Save strategies and params to IndexedDB
         dbPut("savedResults", {
           id: "last_simulation_params",
@@ -1262,6 +1284,9 @@ export default function StrategyLab() {
         setError(t("common.workerError", { message: msg.error }));
         simulationInFlightRef.current = false;
         setSimulationRunning(false);
+        // Keep the modal open so the user sees the error block + Close button;
+        // modal phase is derived from (simulationRunning=false, error!=null).
+        simulationLastTerminalRef.current = "error";
       }
     };
 
@@ -1298,6 +1323,11 @@ export default function StrategyLab() {
     setProgress(0);
     setCompletedSims(0);
     setCurrentSimulationInfo(null);
+    // Close the progress modal immediately so the user is back on the
+    // main page and can re-trigger a run. The cancel button is the only
+    // way to dismiss the modal mid-run (backdrop + Escape are inert).
+    setSimulationModalOpen(false);
+    simulationLastTerminalRef.current = null;
   };
 
   const renderStrategySplit = (/** @type {string} */ strategyId) => {
@@ -2884,65 +2914,10 @@ export default function StrategyLab() {
               </div>
             )}
 
-            {simulationRunning ? (
-              <div className="progress-panel">
-                {simCountIsHigh && (
-                  <div
-                    className="warning-banner"
-                    style={{
-                      background: "rgba(245, 158, 11, 0.10)",
-                      border: "1px solid rgba(245, 158, 11, 0.35)",
-                      borderRadius: "8px",
-                      padding: "10px 12px",
-                      marginBottom: "12px",
-                      color: "var(--chart-amber)"
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, marginBottom: "4px", fontSize: "12.5px" }}>
-                      {t("strategyLab.warnings.inProgressTitle", { count: totalSims.toLocaleString() })}
-                    </div>
-                    <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: "1.5" }}>
-                      {t("strategyLab.warnings.inProgressBody", { threshold: SIM_COUNT_WARNING_THRESHOLD.toLocaleString() })}
-                    </div>
-                  </div>
-                )}
-                <div className="progress-bar-container">
-                  <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="progress-text-row">
-                  <span>{t("strategyLab.progress.simulating", { pct: Math.round(progress) })}</span>
-                  <span>
-                    {t("strategyLab.progress.completed", { done: completedSims.toLocaleString(), total: totalSims.toLocaleString() })}
-                    {currentSimulationInfo?.scenarioTotal > 1 &&
-                      t("strategyLab.progress.currentScenario", { idx: (currentSimulationInfo?.scenarioIndex ?? 0) + 1, total: currentSimulationInfo.scenarioTotal })}
-                  </span>
-                </div>
-                {currentSimulationInfo && (
-                  <div className="simulation-current-grid">
-                    <div>
-                      <span>{t("strategyLab.progress.currentCombination")}</span>
-                      <strong>{currentSimulationInfo.combination}</strong>
-                    </div>
-                    <div>
-                      <span>{t("strategyLab.progress.currentFixTerms")}</span>
-                      <strong>{currentSimulationInfo.fixTerms}</strong>
-                    </div>
-                    <div>
-                      <span>{t("strategyLab.progress.currentScenario")}</span>
-                      <strong>{currentSimulationInfo.scenarioPath}</strong>
-                    </div>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={handleCancelSimulation}
-                  className="btn btn-secondary"
-                  style={{ marginTop: "12px", width: "100%" }}
-                >
-                  {t("common.cancelSimulation")}
-                </button>
-              </div>
-            ) : !mortgage ? (
+            {/* While a simulation is in flight the SimulationProgressModal
+                owns the progress affordance, so this section just renders the
+                static CTAs (run / re-run button or "no mortgage" prompt). */}
+            {!simulationRunning && !mortgage ? (
               <div className="no-mortgage-prompt">
                 <div className="no-mortgage-prompt-title">{t("strategyLab.noMortgage.title")}</div>
                 <div className="no-mortgage-prompt-body">{t("strategyLab.noMortgage.body")}</div>
@@ -2951,7 +2926,7 @@ export default function StrategyLab() {
                   {t("strategyLab.noMortgage.cta")}
                 </Link>
               </div>
-            ) : (
+            ) : !simulationRunning ? (
               <button
                 type="button"
                 onClick={handleStartSimulation}
@@ -2961,7 +2936,7 @@ export default function StrategyLab() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5" /><path d="M12 2v20" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
                 {simResults ? t("common.rerunCta") : t("common.runCta")}
               </button>
-            )}
+            ) : null}
           </section>
 
           {/* Recommendations Cards */}
@@ -3561,6 +3536,30 @@ export default function StrategyLab() {
           })()}
         />
 
+        {/* SimulationProgressModal — focused-progress popup shown while the
+            strategy matrix is computed in the Web Worker. Phase is derived
+            purely from existing state + simulationLastTerminalRef so the
+            worker message contract stays untouched. */}
+        <SimulationProgressModal
+          isOpen={simulationModalOpen}
+          phase={
+            simulationRunning
+              ? "running"
+              : error
+                ? "error"
+                : simulationLastTerminalRef.current || "running"
+          }
+          progress={progress}
+          completedSims={completedSims}
+          totalSims={totalSims}
+          currentSimulationInfo={currentSimulationInfo}
+          errorMessage={error}
+          simCountIsHigh={simCountIsHigh}
+          simCountWarningThreshold={SIM_COUNT_WARNING_THRESHOLD}
+          onCancel={handleCancelSimulation}
+          onDismiss={() => setSimulationModalOpen(false)}
+        />
+
       </div>
 
 
@@ -3939,66 +3938,6 @@ export default function StrategyLab() {
           padding: 12px;
           font-size: 13px;
           margin-bottom: 12px;
-        }
-
-        .progress-panel {
-          background: rgba(255,255,255,0.02);
-          border: 1px solid var(--border-glass);
-          border-radius: 8px;
-          padding: 16px;
-        }
-
-        .progress-bar-container {
-          height: 6px;
-          background: rgba(255,255,255,0.1);
-          border-radius: 3px;
-          overflow: hidden;
-          margin-bottom: 8px;
-        }
-
-        .progress-bar-fill {
-          height: 100%;
-          background: var(--color-primary);
-          transition: var(--transition-smooth);
-        }
-
-        .progress-text-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          font-size: 12px;
-          color: var(--text-secondary);
-        }
-
-        .simulation-current-grid {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 8px;
-          margin-top: 12px;
-        }
-
-        .simulation-current-grid div {
-          min-width: 0;
-          padding: 10px 12px;
-          border-radius: 8px;
-          background: rgba(255,255,255,0.025);
-          border: 1px solid rgba(255,255,255,0.05);
-        }
-
-        .simulation-current-grid span {
-          display: block;
-          color: var(--text-muted);
-          font-size: 10px;
-          line-height: 1.4;
-          margin-bottom: 4px;
-        }
-
-        .simulation-current-grid strong {
-          display: block;
-          color: #fff;
-          font-size: 12px;
-          line-height: 1.45;
-          overflow-wrap: anywhere;
         }
 
         .results-wrapper {
@@ -4665,8 +4604,8 @@ export default function StrategyLab() {
           align-items: flex-start;
           gap: 7px;
           color: var(--text-secondary);
-          font-size: 10px;
-          line-height: 1.45;
+          font-size: 8.5px;
+          line-height: 1.4;
           letter-spacing: 0.01em;
         }
 
@@ -4711,8 +4650,8 @@ export default function StrategyLab() {
         .path-target-grid span {
           display: block;
           color: var(--text-muted);
-          font-size: 9.5px;
-          line-height: 1.35;
+          font-size: 8px;
+          line-height: 1.3;
           letter-spacing: 0.01em;
           margin: 0;
           min-width: 0;
@@ -4723,7 +4662,7 @@ export default function StrategyLab() {
 
         .path-target-grid strong {
           color: #e2e8f0;
-          font-size: 10.5px;
+          font-size: 9px;
           font-weight: 600;
           font-family: var(--font-heading);
           letter-spacing: 0;
@@ -5250,24 +5189,17 @@ export default function StrategyLab() {
             padding: 4px 0;
           }
           .path-target-grid span {
-            font-size: 10px;
+            font-size: 8.5px;
           }
           .path-target-grid strong {
-            font-size: 11px;
+            font-size: 9.5px;
           }
           .recommendation-basis-label {
             font-size: 8.5px;
           }
           .path-explain-copy {
-            font-size: 10.5px;
-            line-height: 1.5;
-          }
-          .progress-text-row {
-            flex-direction: column;
-            gap: 4px;
-          }
-          .simulation-current-grid {
-            grid-template-columns: 1fr;
+            font-size: 9px;
+            line-height: 1.45;
           }
           .exhausted-table th:nth-child(1),
           .exhausted-table td:nth-child(1),

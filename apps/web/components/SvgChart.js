@@ -523,6 +523,11 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
 
         {/* Line paths with animated entry */}
         {activeData.map((d, i) => {
+          // Fill-only bands (e.g. P10↔P90 confidence ribbon) use the same
+          // points as their upper/lower bound series. Without this guard the
+          // band would also draw a stroke on top of the bound series and
+          // visually overwrite its colour.
+          if (d.fillToSeriesId) return null;
           const lineDelay = reducedMotion ? 0 : i * 80;
           return (
             <path
