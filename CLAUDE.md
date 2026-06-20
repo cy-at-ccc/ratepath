@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UI is in Simplified Chinese (zh-CN). Data defaults are sourced from RBNZ (NZ OCR as the policy rate).
 
+> **Homepage & page visibility (2026-06-21).** The public homepage is the 6-question Easy Strategy wizard at `/lab`; the root route `/` is a thin client-side redirect to `/lab`. The Mortgage Dashboard, Mortgage Setup, and Strategy Lab are part of the planned PREMIUM tier — they are temporarily hidden from the navbar but the files are kept in the codebase with explicit `⚠️ PREMIUM-GATED PAGE — DO NOT DELETE ⚠️` banners. See [`apps/web/CLAUDE.md`](apps/web/CLAUDE.md) → "Hidden Premium Pages" for the full list, rationale, and re-enable instructions.
+
 ## Workspace Layout
 
 Monorepo (npm workspaces) with no build pipeline — packages are consumed by source via path aliases.

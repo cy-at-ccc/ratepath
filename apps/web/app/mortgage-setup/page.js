@@ -1,3 +1,21 @@
+// =============================================================================
+// ⚠️  PREMIUM-GATED PAGE — DO NOT DELETE ⚠️
+//
+// Mortgage configuration form (贷款信息配置), the canonical input for the
+// mortgage engine. Currently hidden from the navbar because it is part of
+// the planned PREMIUM tier. The file must stay because:
+//
+//   1. It is the only UI surface that writes to IndexedDB store "mortgages".
+//   2. The strategy-lab page (also premium) reads from the same store and
+//      requires the same data model.
+//   3. Without this page, premium users cannot reconfigure their loans.
+//
+// To re-enable for premium users, uncomment the corresponding entry in
+// apps/web/components/Navbar.js#navItems and add a route guard.
+//
+// See apps/web/CLAUDE.md → "Hidden Premium Pages" for context.
+// =============================================================================
+
 "use client";
 
 import { useEffect, useState } from "react";

@@ -63,31 +63,22 @@ export default function Navbar() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // ⚠️  PREMIUM-GATED NAV ITEMS — DO NOT RE-ADD WITHOUT PREMIUM ROADMAP ⚠️
+  //
+  // Three pages are temporarily hidden from the navbar because they belong
+  // to the planned PREMIUM tier. They are still fully present in the
+  // codebase and accessible via direct URL (no gate is implemented yet).
+  //
+  // HIDDEN (kept as a comment so the i18n keys + icon SVGs are not lost):
+  //   - dashboard      → "/"  (legacy source at app/_legacy/dashboard/page.js)
+  //   - mortgageSetup  → "/mortgage-setup"
+  //   - strategyLab    → "/strategy-lab"
+  //
+  // To re-enable for premium users, uncomment the relevant entry below and
+  // add a route guard. See apps/web/CLAUDE.md → "Hidden Premium Pages".
+  // ---------------------------------------------------------------------------
   const navItems = [
-    {
-      key: "dashboard",
-      label: t("nav.dashboard"),
-      href: "/",
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
-      )
-    },
-    {
-      key: "mortgageSetup",
-      label: t("nav.mortgageSetup"),
-      href: "/mortgage-setup",
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="8" x2="16" y1="10" y2="10"/><line x1="8" x2="12" y1="14" y2="14"/><line x1="8" x2="14" y1="18" y2="18"/></svg>
-      )
-    },
-    {
-      key: "strategyLab",
-      label: t("nav.strategyLab"),
-      href: "/strategy-lab",
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.26-2.5 3.19-2.5 5.5s1 4.24 2.5 5.5"/><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-      )
-    },
     {
       key: "lab",
       label: t("nav.lab"),

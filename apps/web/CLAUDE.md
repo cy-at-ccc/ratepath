@@ -41,10 +41,44 @@ apps/web/
 
 | Path | Page | Purpose |
 | --- | --- | --- |
-| `/` | `app/page.js` | Dashboard: read OCR/floating/fixed-6m..5y rates, edit custom market rates (persisted to `localStorage`), and link into setup/strategy-lab. |
-| `/mortgage-setup` | `app/mortgage-setup/page.js` | Mortgage + tranche configuration, persisted to IndexedDB `mortgages` store. |
-| `/strategy-lab` | `app/strategy-lab/page.js` | Sliders (`shortTermChange`, `mediumTermDirection`, `changeSpeed`, `uncertainty`), split constraints, preference weights. Posts the full simulation matrix to the worker. |
+| `/` | `app/page.js` | **Redirects to `/lab`.** This is a thin client-side `router.replace("/lab")` page; the historical Mortgage Dashboard source is preserved at `app/_legacy/dashboard/page.js` (see "Hidden Premium Pages" below). |
+| `/lab` | `app/lab/page.js` | **New public homepage.** 6-question Easy Strategy wizard that produces a single recommended split. Drives the same engine pipeline as Strategy Lab. |
+| `/mortgage-setup` | `app/mortgage-setup/page.js` | Mortgage + tranche configuration, persisted to IndexedDB `mortgages` store. **Premium-gated — see below.** |
+| `/strategy-lab` | `app/strategy-lab/page.js` | Sliders (`shortTermChange`, `mediumTermDirection`, `changeSpeed`, `uncertainty`), split constraints, preference weights. Posts the full simulation matrix to the worker. **Premium-gated — see below.** |
 | `/about` | `app/about/page.js` | Market config (NZ), privacy notice (zero upload, IndexedDB-only, Web Worker sandbox), disclaimer, build info. |
+| `/legal/privacy`, `/legal/disclaimer` | `app/legal/privacy/page.js`, `app/legal/disclaimer/page.js` | Privacy policy and disclaimer pages. Linked from `/about` and from the in-app footer. |
+
+## Hidden Premium Pages
+
+Three pages belong to the planned **PREMIUM tier** and are **temporarily hidden from the navbar** for free-tier users. They are still fully present in the codebase and remain accessible via direct URL — the premium gate is not implemented yet (it will be added when the premium user feature is built). **DO NOT DELETE these files.**
+
+| Page | Path | File | Status |
+| --- | --- | --- | --- |
+| 房贷控制面板 (Dashboard) | `/` → redirected to `/lab`; legacy source kept at `_legacy/dashboard` | `apps/web/app/_legacy/dashboard/page.js` | Premium-only (planned) |
+| 房贷信息配置 (Mortgage Setup) | `/mortgage-setup` | `apps/web/app/mortgage-setup/page.js` | Premium-only (planned) |
+| 策略仿真实验室 (Strategy Lab) | `/strategy-lab` | `apps/web/app/strategy-lab/page.js` | Premium-only (planned) |
+
+### Why the files are kept
+
+- **Dashboard** (`_legacy/dashboard/page.js`): only writes to the `mortgages` IndexedDB store + custom market rates editor. Premium users will need this view back. The folder is prefixed with `_` so Next.js App Router treats it as a **private (non-routable)** folder — the file is never served at any URL.
+- **Mortgage Setup** (`/mortgage-setup`): only writes to the `mortgages` store. Required input for any simulation (lab and strategy-lab both depend on the data model).
+- **Strategy Lab** (`/strategy-lab`): drives the `@mortgage/*` engine packages. Removing it would regress engine integration confidence; premium users need the full slider-based surface.
+
+### How to identify these files
+
+Each file starts with a `⚠️ PREMIUM-GATED PAGE — DO NOT DELETE ⚠️` banner explaining why it is kept and how to re-enable it. The banner includes a 4-6 bullet rationale and a pointer to this section.
+
+### How to re-enable (future premium tier)
+
+1. Uncomment the corresponding entry in `apps/web/components/Navbar.js#navItems` (the entries are preserved as a comment block so the i18n keys + icon SVGs are not lost).
+2. Add a route guard (`<PremiumGate>`) when the premium system is built.
+3. Move the legacy dashboard back to `app/page.js` if `/` should re-route to it for premium users (today it redirects to `/lab`).
+
+### What is NOT premium
+
+- `/lab` (the new public homepage) — free for everyone.
+- `/about` (legal + market config) — free for everyone.
+- `/legal/privacy`, `/legal/disclaimer` — free for everyone.
 
 ## State Persistence
 

@@ -1,3 +1,27 @@
+// =============================================================================
+// ⚠️  PREMIUM-GATED PAGE — DO NOT DELETE ⚠️
+//
+// The Strategy Lab (策略仿真实验室) is the full-power simulation surface:
+// OCR sliders, scenario probabilities, Monte Carlo params, split
+// constraints, 5-axis preference weights, the strategy×scenario matrix
+// worker, and the Pareto ranking. Currently hidden from the navbar
+// because it is part of the planned PREMIUM tier. The file must stay
+// because:
+//
+//   1. It is the canonical driver of @mortgage/* engine packages.
+//   2. The Lab ("/lab") and the Strategy Lab share the worker boundary
+//      and many of the same engine inputs — removing this page would
+//      regress test coverage and engine integration confidence.
+//   3. Premium users will need direct access to the full simulation
+//      surface (preference weights, scenario probabilities, custom
+//      risk parameters) that the simplified /lab wizard does not expose.
+//
+// To re-enable for premium users, uncomment the corresponding entry in
+// apps/web/components/Navbar.js#navItems and add a route guard.
+//
+// See apps/web/CLAUDE.md → "Hidden Premium Pages" for context.
+// =============================================================================
+
 // @ts-nocheck — React UI page; JSDoc strict-mode type checks on dynamic-key
 // access (`weights[k]`, `reduce`/`filter` callbacks) are out of scope for
 // financial correctness. Financial algorithms live in `packages/*/src/*` and
