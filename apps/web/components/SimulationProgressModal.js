@@ -393,6 +393,10 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           overflow: hidden;
         }
 
+        .prg-card[data-phase="running"] .prg-body {
+          padding-bottom: 76px;
+        }
+
         /* Header */
         .prg-header {
           display: flex;
@@ -659,6 +663,16 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           border-top: 1px solid #263450;
         }
 
+        .prg-card[data-phase="running"] .prg-footer {
+          position: absolute;
+          left: 22px;
+          right: 22px;
+          bottom: 18px;
+          margin-top: 0;
+          padding-top: 12px;
+          background: linear-gradient(180deg, rgba(16, 25, 45, 0) 0%, rgba(16, 25, 45, 0.88) 18%, #10192d 100%);
+        }
+
         /* Animations */
         @keyframes prg-fade-in {
           from { opacity: 0; }
@@ -697,6 +711,9 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
             height: 580px;
             overflow: hidden;
           }
+          .prg-card[data-phase="running"] .prg-body {
+            padding-bottom: 84px;
+          }
           .prg-current-grid {
             grid-template-columns: 1fr;
             gap: 6px;
@@ -707,6 +724,11 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           }
           .prg-title {
             font-size: 18px;
+          }
+          .prg-card[data-phase="running"] .prg-footer {
+            left: 18px;
+            right: 18px;
+            bottom: 14px;
           }
         }
 

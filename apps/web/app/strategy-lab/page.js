@@ -814,9 +814,13 @@ export default function StrategyLab() {
   const buildExpectedPolicyPath = (/** @type {any[]} */ activeScenarios) => {
     if (activeScenarios.length === 0) return [];
     const template = activeScenarios[0].policyRatePath || [];
+    const totalWeight = activeScenarios.reduce((sum, scenario) => sum + (scenario.probability || 0), 0) || 1;
     return template.map((/** @type {any} */ point, /** @type {number} */ idx) => ({
       month: point.month,
-      value: activeScenarios.reduce((sum, scenario) => sum + (scenario.probability || 0) * (scenario.policyRatePath[idx]?.rate || 0), 0)
+      value: activeScenarios.reduce(
+        (sum, scenario) => sum + (scenario.probability || 0) * (scenario.policyRatePath[idx]?.rate || 0),
+        0
+      ) / totalWeight
     }));
   };
 

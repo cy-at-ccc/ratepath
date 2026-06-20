@@ -5,7 +5,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { nzProfile, nzBetas } from "@mortgage/country-adapters";
-import { generateScenarios } from "@mortgage/scenario-engine";
+import { generateScenarios, buildQuantileScenarios } from "@mortgage/scenario-engine";
 import { generateSplitStrategies } from "@mortgage/strategy-generator";
 import { optimizeStrategies } from "@mortgage/optimiser";
 import { simulateStrategyScenario } from "@mortgage/simulation-engine";
@@ -36,9 +36,21 @@ const FORECAST_YEARS_MIN = 3;
 const FORECAST_YEARS_MAX = 10;
 const REPAYMENT_YEARS_MAX = 40;
 
+// NZ-typical mortgage ranges. CCCFA / Responsible Lending Code doesn't set
+// hard limits, but NZ owner-occupied lenders broadly require these bounds:
+//   - min amount: below ~$50k falls into personal-loan territory
+//   - max amount: most owner-occupied caps sit at $5M (above = investment)
+//   - min term: 5y is the shortest mortgage product banks typically offer
+//   - max term: 30y is the longest amortisation banks typically accept
+const NZ_AMOUNT_MIN = 50000;
+const NZ_AMOUNT_MAX = 5000000;
+const NZ_TERM_MIN_YEARS = 5;
+const NZ_TERM_MAX_YEARS = 30;
+
 const SHORT_TO_DELTA = {
   "fall-strong": -0.02,
   "fall":        -0.005,
+  "flat":         0.000,
   "rise":        +0.005,
   "rise-strong": +0.02
 };
@@ -53,6 +65,73 @@ const STEPS = ["welcome", "q1", "q2", "q3", "q4", "q5", "q6", "ocr", "results"];
 const QUESTION_STEPS = ["q1", "q2", "q3", "q4", "q5", "q6"];
 
 const PORTFOLIO_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#f43f5e", "#06b6d4", "#8b5cf6", "#ec4899"];
+
+function DetailsIcon() {
+  return (
+    <svg className="rec-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path d="M5 7.5h14" />
+      <path d="M5 12h9" />
+      <path d="M5 16.5h12" />
+      <path d="M18 12.5h.01" />
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg className="rec-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path d="M12 3.5l1.66 4.84L18.5 10l-4.84 1.66L12 16.5l-1.66-4.84L5.5 10l4.84-1.66L12 3.5z" />
+      <path d="M18.5 14.5l.72 2.12L21.34 17l-2.12.72-.72 2.12-.72-2.12-2.12-.72 2.12-.72.72-2.12z" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg className="rec-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <path d="M20 4v5h-5" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg className="rec-action-arrow-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path d="M5 12h13" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function TrendIcon({ direction }) {
+  if (direction === "fall") {
+    return (
+      <svg className="scenario-picker-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+        <path d="M6 7h12" />
+        <path d="M12 7v10" />
+        <path d="M8 13l4 4 4-4" />
+      </svg>
+    );
+  }
+
+  if (direction === "rise") {
+    return (
+      <svg className="scenario-picker-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+        <path d="M6 17h12" />
+        <path d="M12 17V7" />
+        <path d="M8 11l4-4 4 4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="scenario-picker-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path d="M6 12h12" />
+      <path d="M15 9l3 3-3 3" />
+    </svg>
+  );
+}
 
 function formatAllocationPct(value) {
   const pct = Number(value);
@@ -146,18 +225,43 @@ function buildDetailTimelineDataFromResult({ detailResult, strategy, mortgage })
 
 function deriveMediumDirection(shortOutlook, mediumOutlook) {
   if (!shortOutlook || !mediumOutlook) return 0;
+
+  // q3 = flat → q4 becomes an independent direction question with options
+  // "rise" / "flat" / "fall". Magnitude 0.6 matches the q3=rise + q4=continue
+  // / q3=fall + q4=continue combos so users opting out of short-term
+  // direction still get a meaningful medium-term slope.
+  if (shortOutlook === "flat") {
+    if (mediumOutlook === "rise") return +0.6;
+    if (mediumOutlook === "fall") return -0.6;
+    return 0;
+  }
+
+  // q3 expresses a direction → continue / slow / reverse semantic.
   const tier = shortOutlook.endsWith("strong") ? 1 : 0;
   const rise = shortOutlook.startsWith("rise");
-  const mag = mediumOutlook === "continue" ? 1.0 : 0.4;
   const baseMag = tier === 1 ? 1.0 : 0.6;
-  return rise ? baseMag * mag : -baseMag * mag;
+  const sign = rise ? 1 : -1;
+  // "reverse" = same baseMag as continue but flipped direction and discounted
+  // by 0.6 — a reversal of one's short-term view is treated as a softer
+  // commitment than reaffirming it.
+  if (mediumOutlook === "reverse")  return -sign * baseMag * 0.6;
+  if (mediumOutlook === "continue") return  sign * baseMag;
+  if (mediumOutlook === "slow")     return  sign * baseMag * 0.4;
+  return 0;
 }
 
 function deriveRiskScore(shortOutlook, mediumOutlook, uncertainty) {
   let score = 0;
   if (shortOutlook?.endsWith("strong")) score += 2;
-  else if (shortOutlook) score += 1;
-  if (mediumOutlook === "continue") score += 1;
+  else if (shortOutlook && shortOutlook !== "flat") score += 1;
+  // q3=flat carries no directional risk preference — don't bump the score.
+  // In flat mode, q4 options are "rise"/"flat"/"fall"; "rise" and "fall"
+  // each commit to a medium-term direction and count the same as the
+  // original "continue" answer in directional mode.
+  const mediumConfirms =
+    mediumOutlook === "continue" ||
+    (shortOutlook === "flat" && (mediumOutlook === "rise" || mediumOutlook === "fall"));
+  if (mediumConfirms) score += 1;
   if (uncertainty === "high") score += 2;
   else if (uncertainty === "low") score -= 1;
   return score;
@@ -197,14 +301,6 @@ function normalizePreferenceWeights(input) {
   return next;
 }
 
-function estimateMonthlyPayment(principal, annualRate, termYears) {
-  if (!principal || principal <= 0) return 0;
-  const r = (annualRate || 0.0579) / 12;
-  const n = (termYears || 25) * 12;
-  if (r === 0) return principal / n;
-  return (principal * r) / (1 - Math.pow(1 + r, -n));
-}
-
 function getPeriodsPerYearForFrequency(frequency) {
   if (frequency === "weekly") return 52;
   if (frequency === "fortnightly") return 26;
@@ -226,18 +322,28 @@ function estimatePayoffYears(principal, annualRate, periodicPayment, frequency) 
   const periodsPerYear = getPeriodsPerYearForFrequency(frequency);
   const periodicRate = (annualRate || 0.0579) / periodsPerYear;
   if (periodicRate === 0) {
-    return principal / periodicPayment / periodsPerYear;
+    return Math.min(REPAYMENT_YEARS_MAX, principal / periodicPayment / periodsPerYear);
   }
   const interestOnlyPayment = principal * periodicRate;
   if (periodicPayment <= interestOnlyPayment) {
     return REPAYMENT_YEARS_MAX;
   }
   const periods = -Math.log(1 - (principal * periodicRate) / periodicPayment) / Math.log(1 + periodicRate);
-  return periods / periodsPerYear;
+  return Math.min(REPAYMENT_YEARS_MAX, periods / periodsPerYear);
 }
 
 function defaultPaymentForAmount(amount, frequency, annualRate) {
   return Math.round(estimatePeriodicPayment(amount, annualRate || 0.0579, 25, frequency));
+}
+
+// Minimum per-period payment that at least covers the interest portion of
+// the loan. Used to validate "payment" mode in q2: a payment below this
+// threshold would cause the loan balance to grow instead of amortise.
+function getMinInterestPayment(loanAmount, annualRate, frequency) {
+  if (!Number.isFinite(loanAmount) || loanAmount <= 0) return 0;
+  if (!Number.isFinite(annualRate) || annualRate <= 0) return 0;
+  const periodsPerYear = getPeriodsPerYearForFrequency(frequency);
+  return (loanAmount * annualRate) / periodsPerYear;
 }
 
 function buildMortgageFromAnswers(answers, marketRates) {
@@ -273,12 +379,15 @@ function buildConstraints() {
   return {
     maxSplits: nzProfile.rules.maxSplits,
     minPercentage: nzProfile.rules.minPercentage,
-    // Use the country adapter's percentageStep directly — finer grid = richer candidate set.
-    percentageStep: nzProfile.rules.percentageStep,
+    // 10% step matches the Strategy Lab default preset — coarser grid than
+    // the country adapter's 5% to keep the candidate set interpretable and
+    // mirror Strategy Lab's default behaviour.
+    percentageStep: 0.10,
     minTrancheAmount: nzProfile.rules.minTrancheAmount,
-    // No hard cap on floating; let the optimiser/Pareto frontier rank naturally.
-    // (The strategy generator's PR-1 still prunes infeasible splits.)
-    maxFloatingPercentage: 1.0,
+    // Force 100% fixed-rate: maxFloating=0 ⇒ minFixed=1.0, so every candidate
+    // strategy has zero floating exposure. Strategy generator's PR-1 prunes
+    // any allocation with >0% floating.
+    maxFloatingPercentage: 0,
     mustKeepFloating: false
   };
 }
@@ -331,6 +440,9 @@ export default function LabPage() {
   const [allStrategies, setAllStrategies] = useState([]);
   const [simResults, setSimResults] = useState(null);
   const [optimisedData, setOptimisedData] = useState(null);
+  // Default to the median quantile scenario ("p50") — the closest match to
+  // "what will most likely happen" for a non-expert user.
+  const [selectedScenarioId, setSelectedScenarioId] = useState("p50");
 
   // ---- Modal state --------------------------------------------------------
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -471,10 +583,34 @@ export default function LabPage() {
   }, [premiumPopupOpen, closePremiumPopup]);
 
   // ---- Derived: scenarios (live OCR chart) -------------------------------
+  // Mirrors the Strategy Lab pipeline: 200-sample Monte Carlo pool is
+  // aggregated into 3 quantile scenarios (P10/P50/P90) and a probability-
+  // weighted expected scenario, then handed to the worker as 4 deterministic
+  // `RateScenario`s. The raw MC pool is never sent to the simulation engine.
+  const buildExpectedPolicyPath = (/** @type {any[]} */ quantileScenarios) => {
+    if (!Array.isArray(quantileScenarios) || quantileScenarios.length === 0) return [];
+    const template = quantileScenarios[0].policyRatePath || [];
+    // Quantile scenarios carry tail-mass probabilities (P10/P50/P90 = 0.1/0.5/0.1,
+    // sum 0.7 — see buildQuantileScenarios). To get the true probability-weighted
+    // expected rate at each month we have to divide by the total weight; otherwise
+    // the expected path sits ~30% below the quantiles even when all quantiles start
+    // at the same initialRate.
+    const totalWeight = quantileScenarios.reduce((sum, sc) => sum + (sc.probability || 0), 0) || 1;
+    return template.map((/** @type {any} */ point, /** @type {number} */ idx) => ({
+      month: point.month,
+      value: quantileScenarios.reduce(
+        (sum, scenario) => sum + (scenario.probability || 0) * (scenario.policyRatePath[idx]?.rate || 0),
+        0
+      ) / totalWeight
+    }));
+  };
+
   const scenarios = useMemo(() => {
     if (!shortOutlook || !mediumOutlook || !uncertainty) return null;
     try {
-      return generateScenarios({
+      // Stage 1a: raw MC pool — 3 families × 200 samples = 600 paths. Used
+      // only to derive quantile/expected scenarios; never sent to the worker.
+      const mcScenarios = generateScenarios({
         initialRate: marketRates.ocr,
         currentProductRates: marketRates,
         betas: nzBetas,
@@ -488,9 +624,37 @@ export default function LabPage() {
           scenarioProbabilities: { low: 0.15, base: 0.7, high: 0.15 },
           longTermCycleYears: 2,
           longTermReversalBias: 0.7,
-          monteCarloSampleCount: 1
+          monteCarloSampleCount: 200
         }
       });
+
+      // Stage 1b: 3 quantile scenarios from the MC pool.
+      const quantileScenarios = buildQuantileScenarios(
+        mcScenarios,
+        [0.1, 0.5, 0.9],
+        { forecastMonths, currentProductRates: marketRates, betas: nzBetas, products: nzProfile.products }
+      );
+
+      // Stage 1c: probability-weighted expected path + 4th scenario.
+      const expectedPath = buildExpectedPolicyPath(quantileScenarios);
+      const expectedScenario = {
+        id: "expected",
+        countryCode: "NZ",
+        name: "Expected",
+        mode: "policy-rate-derived",
+        probability: 0.3,
+        forecastMonths,
+        policyRatePath: expectedPath.map((/** @type {any} */ p) => ({ month: p.month, rate: p.value })),
+        productRatePaths: quantileScenarios[1]?.productRatePaths || {},
+        assumptions: {
+          scenarioFamily: "expected",
+          isMonteCarloTail: true,
+          isExpectedAggregate: true,
+          sourceMonteCarloSampleCount: mcScenarios.length
+        }
+      };
+
+      return [...quantileScenarios, expectedScenario];
     } catch (err) {
       console.warn("lab: generateScenarios failed", err);
       return null;
@@ -516,43 +680,47 @@ export default function LabPage() {
     if (STEPS.includes(target)) setStep(target);
   }, []);
 
-  const resetAll = useCallback(() => {
-    setStep("welcome");
-    setLoanAmount(600000);
-    setTargetMode("term");
-    setTargetYears(25);
-    setTargetPayment(defaultPaymentForAmount(600000, "fortnightly", marketRates.floating));
-    setRepaymentFrequency("fortnightly");
-    setShortOutlook(null);
-    setMediumOutlook(null);
-    setUncertainty(null);
-    setForecastYears(DEFAULT_FORECAST_YEARS);
-    setError(null);
-    setSimResults(null);
-    setOptimisedData(null);
-    setAllStrategies([]);
-    setMortgage(null);
-    setPhase("form");
-    setProgress(0);
-    setCompletedSims(0);
-    setTotalSims(0);
-    setSimProgressInfo(null);
-    setSimError(null);
-    if (typeof window !== "undefined") window.localStorage.removeItem(FORM_STORAGE_KEY);
+  // "Start over" / "Try different answers" buttons must NOT clear the user's
+  // inputs — they are navigation aids only. They take the user back to q1 so
+  // they can tweak answers and re-run the simulation with their existing
+  // loan amount, target, outlook, etc. preserved.
+  const goToFirstQuestion = useCallback(() => {
     if (workerRef.current) {
       workerRef.current.terminate();
       workerRef.current = null;
     }
-  }, [marketRates.floating]);
+    setPhase("form");
+    setError(null);
+    setSimError(null);
+    setStep("q1");
+  }, []);
 
   // ---- Validation per step -----------------------------------------------
+  // q1/q2 enforce NZ-typical mortgage ranges (NZ_AMOUNT_*, NZ_TERM_*, see top
+  // of file). q2 payment mode additionally checks that the per-period payment
+  // covers the interest portion of the loan at the worst-case (floating) rate
+  // — otherwise the balance would grow and the amortisation engine would loop.
   const canAdvance = useMemo(() => {
     switch (step) {
       case "welcome": return true;
-      case "q1": return loanAmount >= 1000;
+      case "q1":
+        return Number.isFinite(loanAmount)
+          && loanAmount >= NZ_AMOUNT_MIN
+          && loanAmount <= NZ_AMOUNT_MAX;
       case "q2":
-        if (targetMode === "term") return targetYears >= 1 && targetYears <= 40;
-        return targetPayment > 0;
+        if (targetMode === "term") {
+          return Number.isFinite(targetYears)
+            && targetYears >= NZ_TERM_MIN_YEARS
+            && targetYears <= NZ_TERM_MAX_YEARS;
+        }
+        // payment mode
+        if (!Number.isFinite(targetPayment) || targetPayment <= 0) return false;
+        const minInterest = getMinInterestPayment(
+          loanAmount,
+          marketRates?.floating ?? 0.0579,
+          repaymentFrequency
+        );
+        return targetPayment >= minInterest;
       case "q3": return !!shortOutlook;
       case "q4": return !!mediumOutlook;
       case "q5": return !!uncertainty;
@@ -560,7 +728,8 @@ export default function LabPage() {
       case "ocr": return !!scenarios;
       default: return true;
     }
-  }, [step, loanAmount, targetMode, targetYears, targetPayment, shortOutlook, mediumOutlook, uncertainty, forecastYears, scenarios]);
+  }, [step, loanAmount, targetMode, targetYears, targetPayment, repaymentFrequency,
+      shortOutlook, mediumOutlook, uncertainty, forecastYears, scenarios, marketRates]);
 
   // ---- Run simulation -----------------------------------------------------
   const startSimulation = useCallback(() => {
@@ -683,7 +852,7 @@ export default function LabPage() {
     setDetailModalOpen(true);
     setDetailLoading(true);
     setDetailTimelineData(null);
-    const baseScenario = scenarios.find((s) => s.id === "base") || scenarios[0];
+    const baseScenario = scenarios.find((s) => s.id === "p50") || scenarios[0];
     if (!baseScenario) {
       setDetailLoading(false);
       return;
@@ -721,37 +890,64 @@ export default function LabPage() {
   }, []);
 
   // ---- OCR summary text --------------------------------------------------
+  // Three-axis branching that matches the questionnaire structure:
+  //   - q3 = "flat"      → flat summary + q4 (rise/flat/fall) trajectory
+  //   - q3 = "rise*"     → rise summary + q4 (continue/slow) trajectory
+  //   - q3 = "fall*"     → fall summary + q4 (continue/slow) trajectory
+  // Previously the q3=flat path silently fell through to the fall-summary
+  // branch, producing "下降约 0.00%" — neither direction nor magnitude.
   const ocrSummary = useMemo(() => {
     if (!scenarios || !shortOutlook) return "";
+    const isFlat = shortOutlook === "flat";
+    const isRise = !isFlat && shortOutlook.startsWith("rise");
+
+    let trajKey;
+    if (isFlat) {
+      if (mediumOutlook === "rise")      trajKey = "lab.ocr.traj.indep.rise";
+      else if (mediumOutlook === "fall") trajKey = "lab.ocr.traj.indep.fall";
+      else                                trajKey = "lab.ocr.traj.indep.flat";
+    } else if (mediumOutlook === "continue") {
+      trajKey = isRise ? "lab.ocr.traj.continue.rise" : "lab.ocr.traj.continue.fall";
+    } else if (mediumOutlook === "slow") {
+      trajKey = isRise ? "lab.ocr.traj.slow.rise" : "lab.ocr.traj.slow.fall";
+    } else {
+      // q4 = "reverse" or any other value — map to the same trajectory as
+      // "continue" but with reversed semantic implied by the chart.
+      trajKey = isRise ? "lab.ocr.traj.continue.fall" : "lab.ocr.traj.continue.rise";
+    }
+
+    const traj = t(trajKey);
+    if (isFlat) {
+      return t("lab.ocr.summary.flat", { traj });
+    }
     const delta = Math.abs(SHORT_TO_DELTA[shortOutlook] || 0) * 100;
-    const isRise = shortOutlook.startsWith("rise");
     const baseKey = isRise ? "lab.ocr.summary.rise" : "lab.ocr.summary.fall";
-    let trajKey = "lab.ocr.traj.slow";
-    if (mediumOutlook === "continue") trajKey = isRise ? "lab.ocr.traj.continue.rise" : "lab.ocr.traj.continue.fall";
-    else trajKey = isRise ? "lab.ocr.traj.slow.rise" : "lab.ocr.traj.slow.fall";
-    return t(baseKey, { pct: delta.toFixed(2), traj: t(trajKey) });
+    return t(baseKey, { pct: delta.toFixed(2), traj });
   }, [scenarios, shortOutlook, mediumOutlook, t]);
 
   // ---- Chart series (only when scenarios exist) ---------------------------
+  // Lab's 4 active scenarios arrive in order [P10, P50, P90, expected].
+  // Map them to the same green/indigo/red palette the v1 lab used for
+  // low/base/high, plus a dashed white "expected" line — matching the
+  // Strategy Lab chart semantics so users get a consistent visual across
+  // both pages. SvgChart expects `points: [{month, value}]`.
   const chartSeries = useMemo(() => {
     if (!scenarios) return [];
+    const styles = [
+      { color: "#10b981", label: t("lab.ocr.low") },       // P10  (low/optimistic)
+      { color: "#6366f1", label: t("lab.ocr.base") },      // P50  (median)
+      { color: "#f43f5e", label: t("lab.ocr.high") },      // P90  (high/pessimistic)
+      { color: "#f8fafc", label: t("lab.ocr.expected"), strokeDasharray: "6 6", strokeOpacity: 0.85 } // expected
+    ];
     return scenarios.map((sc, idx) => {
-      // RateScenario objects carry the OCR path on `policyRatePath`, each
-      // entry is {month, rate}. SvgChart expects points: [{month, value}].
-      // Scenarios returned by generateScenarios are in order [low, base, high] where
-      //   low  = LOW rates  (optimistic for borrower)
-      //   high = HIGH rates (pessimistic for borrower)
-      // The visual semantics the user expects:
-      //   top line    = red  (pessimistic, high rates)
-      //   middle line = indigo (base)
-      //   bottom line = green (optimistic, low rates)
-      const colorByIdx = ["#10b981", "#6366f1", "#f43f5e"]; // green, indigo, red
-      const labelByIdx = [t("lab.ocr.low"), t("lab.ocr.base"), t("lab.ocr.high")];
+      const style = styles[idx] || { color: "#6366f1", label: sc.id };
       const path = Array.isArray(sc.policyRatePath) ? sc.policyRatePath : [];
       return {
         id: sc.id || `scenario-${idx}`,
-        name: labelByIdx[idx] || sc.id,
-        color: colorByIdx[idx] || "#6366f1",
+        name: style.label,
+        color: style.color,
+        ...(style.strokeDasharray ? { strokeDasharray: style.strokeDasharray } : {}),
+        ...(style.strokeOpacity ? { strokeOpacity: style.strokeOpacity } : {}),
         points: path.map((p) => ({ month: Number(p.month), value: Number(p.rate) }))
       };
     });
@@ -795,6 +991,24 @@ export default function LabPage() {
       allocations: enrichedAllocs
     };
   }, [topRec, topRanked, allStrategies]);
+
+  // Per-scenario view of the recommended strategy. When the user picks a
+  // different rate-future pill, we look up the matching row in simResults
+  // (which already contains all strategy × scenario rows from the worker)
+  // and surface that row's raw metrics. Falls back to null when the row
+  // can't be found — render-side then falls back to enrichedTopRec.expected*.
+  const scenarioMetrics = useMemo(() => {
+    if (!enrichedTopRec || !Array.isArray(simResults) || simResults.length === 0) return null;
+    const row = simResults.find(
+      (r) => r && r.strategyId === enrichedTopRec.strategyId && r.scenarioId === selectedScenarioId
+    );
+    if (!row) return null;
+    return {
+      interest: Number(row.totalInterest) || 0,
+      maxPayment: Number(row.maximumPayment) || 0,
+      endingBalance: Number(row.endingBalance) || 0
+    };
+  }, [enrichedTopRec, simResults, selectedScenarioId]);
 
   const introForModal = useMemo(() => ({
     whyThisOne: whyThisOneIntro,
@@ -853,7 +1067,7 @@ export default function LabPage() {
                   syncTargetFromMode("payment", v, targetYears, targetPayment, repaymentFrequency);
                 }
               }}
-              min={1000}
+              min={NZ_AMOUNT_MIN}
               step={1000}
               prefix="$"
               align="left"
@@ -861,7 +1075,9 @@ export default function LabPage() {
               inputMode="numeric"
               className="lab-number-input"
             />
-            {loanAmount < 1000 && <p className="form-error">{t("lab.error.amount")}</p>}
+            {(loanAmount < NZ_AMOUNT_MIN || loanAmount > NZ_AMOUNT_MAX) && (
+              <p className="form-error">{t("lab.error.amount")}</p>
+            )}
           </div>
         );
 
@@ -906,8 +1122,8 @@ export default function LabPage() {
                         }
                         syncTargetFromMode("term", loanAmount, v, targetPayment, repaymentFrequency);
                       }}
-                      min={1}
-                      max={40}
+                      min={NZ_TERM_MIN_YEARS}
+                      max={NZ_TERM_MAX_YEARS}
                       step={1}
                       align="left"
                       size="sm"
@@ -923,6 +1139,9 @@ export default function LabPage() {
                 <span className="q2-option-badge">
                   {targetMode === "term" ? t("lab.choice.selected") : t("lab.choice.autoCalculated")}
                 </span>
+                {targetMode === "term" && Number.isFinite(targetYears) && (targetYears < NZ_TERM_MIN_YEARS || targetYears > NZ_TERM_MAX_YEARS) && (
+                  <p className="form-error q2-error">{t("lab.error.years")}</p>
+                )}
               </div>
 
               <div
@@ -977,6 +1196,12 @@ export default function LabPage() {
                 <span className="q2-option-badge">
                   {targetMode === "payment" ? t("lab.choice.selected") : t("lab.choice.autoCalculated")}
                 </span>
+                {targetMode === "payment" && Number.isFinite(targetPayment) && targetPayment > 0 && (() => {
+                  const minPay = getMinInterestPayment(loanAmount, marketRates?.floating ?? 0.0579, repaymentFrequency);
+                  return targetPayment < minPay ? (
+                    <p className="form-error q2-error">{t("lab.error.payment.tooSmall", { min: Math.ceil(minPay) })}</p>
+                  ) : null;
+                })()}
               </div>
             </div>
 
@@ -1015,6 +1240,7 @@ export default function LabPage() {
               {[
                 { value: "fall-strong", label: "↘↘", text: t("lab.q3.fallStrong"), tone: "green" },
                 { value: "fall",        label: "↘",  text: t("lab.q3.fall"),       tone: "teal" },
+                { value: "flat",        label: "→",  text: t("lab.q3.flat"),       tone: "primary" },
                 { value: "rise",        label: "↗",  text: t("lab.q3.rise"),       tone: "amber" },
                 { value: "rise-strong", label: "↗↗", text: t("lab.q3.riseStrong"), tone: "red" }
               ].map((opt) => (
@@ -1034,39 +1260,53 @@ export default function LabPage() {
           </div>
         );
 
-      case "q4":
+      case "q4": {
+        // When q3 = "flat", q4 becomes an independent 3-way direction question
+        // (rise / flat / fall) with its own title and hint. Otherwise we keep
+        // the original continue/slow semantic with the q3-derived title.
+        const flatMode = shortOutlook === "flat";
+        const q4Title = flatMode
+          ? t("lab.q4.indep.title")
+          : (shortOutlook?.startsWith("rise")
+              ? t("lab.q4.title.rise")
+              : t("lab.q4.title.fall"));
+        const q4Hint = flatMode ? t("lab.q4.indep.hint") : t("lab.q4.hint");
+        const q4Buttons = flatMode
+          ? [
+              { value: "rise", label: "↗", text: t("lab.q4.indep.rise"), tone: "amber" },
+              { value: "flat", label: "→", text: t("lab.q4.indep.flat"), tone: "primary" },
+              { value: "fall", label: "↘", text: t("lab.q4.indep.fall"), tone: "teal" }
+            ]
+          : [
+              { value: "continue", label: "→", text: t("lab.q4.continue"), tone: "amber" },
+              { value: "slow",     label: "~", text: t("lab.q4.slow"),     tone: "cyan" },
+              // Rose tone signals "you're going against your earlier q3 choice";
+              // the parameter derivation discounts reverse to 0.6× the equivalent
+              // continue strength (see deriveMediumDirection).
+              { value: "reverse",  label: "↩", text: t("lab.q4.reverse"),  tone: "rose" }
+            ];
         return (
           <div className="glass-panel accent-amber wizard-step">
-            <h2 className="card-header"><span className="card-header-accent" />{
-              shortOutlook?.startsWith("rise")
-                ? t("lab.q4.title.rise")
-                : t("lab.q4.title.fall")
-            }</h2>
-            <p className="wizard-step-hint">{t("lab.q4.hint")}</p>
+            <h2 className="card-header"><span className="card-header-accent" />{q4Title}</h2>
+            <p className="wizard-step-hint">{q4Hint}</p>
             <div className="choice-grid q4-grid">
-              <button
-                type="button"
-                className={`choice-card tone-amber ${mediumOutlook === "continue" ? "selected" : ""}`}
-                onClick={() => setMediumOutlook("continue")}
-                aria-pressed={mediumOutlook === "continue"}
-              >
-                <span className="choice-card-glyph" aria-hidden="true">→</span>
-                <span className="choice-card-label">{t("lab.q4.continue")}</span>
-                {mediumOutlook === "continue" && <span className="choice-card-status">{t("lab.choice.selected")}</span>}
-              </button>
-              <button
-                type="button"
-                className={`choice-card tone-cyan ${mediumOutlook === "slow" ? "selected" : ""}`}
-                onClick={() => setMediumOutlook("slow")}
-                aria-pressed={mediumOutlook === "slow"}
-              >
-                <span className="choice-card-glyph" aria-hidden="true">~</span>
-                <span className="choice-card-label">{t("lab.q4.slow")}</span>
-                {mediumOutlook === "slow" && <span className="choice-card-status">{t("lab.choice.selected")}</span>}
-              </button>
+              {q4Buttons.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`choice-card tone-${opt.tone} ${mediumOutlook === opt.value ? "selected" : ""}`}
+                  onClick={() => setMediumOutlook(opt.value)}
+                  aria-pressed={mediumOutlook === opt.value}
+                >
+                  <span className="choice-card-glyph" aria-hidden="true">{opt.label}</span>
+                  <span className="choice-card-label">{opt.text}</span>
+                  {mediumOutlook === opt.value && <span className="choice-card-status">{t("lab.choice.selected")}</span>}
+                </button>
+              ))}
             </div>
           </div>
         );
+      }
 
       case "q5":
         return (
@@ -1151,74 +1391,137 @@ export default function LabPage() {
             {!enrichedTopRec ? (
               <p className="ocr-summary">{t("lab.error.sim")}</p>
             ) : (
-              <div className="rec-card">
+              <div className="rec-card-wrap">
                 <div
-                  className="portfolio-bar"
-                  role="img"
-                  aria-label={t("lab.results.portfolioAria", {
-                    parts: enrichedTopRec.allocations.map((a) => `${formatAllocationPct(a.percentage)} ${a.displayName}`).join(", ")
-                  })}
+                  className="scenario-picker"
+                  role="tablist"
+                  aria-label={t("lab.results.scenarioPicker.aria")}
                 >
-                  {enrichedTopRec.allocations.map((a, i) => (
-                    <span
-                      key={i}
-                      className="portfolio-segment"
-                      style={{ width: formatAllocationPct(a.percentage), background: a.color }}
-                      title={`${a.displayName} ${formatAllocationPct(a.percentage)}`}
-                    />
-                  ))}
-                </div>
-                <ul className="portfolio-legend">
-                  {enrichedTopRec.allocations.map((a, i) => (
-                    <li key={i} style={{ color: a.color }}>
-                      {formatAllocationPct(a.percentage)} {a.displayName}
-                    </li>
-                  ))}
-                </ul>
-                <div className="stat-tile-grid">
-                  <div className="stat-tile">
-                    <span className="stat-tile-lbl">{t("lab.results.metrics.interest")}</span>
-                    <span className="stat-tile-val">{formatMoney(Number(enrichedTopRec.expectedInterest) || 0)}</span>
-                  </div>
-                  <div className="stat-tile">
-                    <span className="stat-tile-lbl">{t("lab.results.metrics.maxPayment")}</span>
-                    <span className="stat-tile-val">{formatMoney(Number(enrichedTopRec.expectedMaxPayment) || 0)}</span>
-                  </div>
-                  <div className="stat-tile">
-                    <span className="stat-tile-lbl">{t("lab.results.metrics.endingBalance", { years: normalizedForecastYears })}</span>
-                    <span className="stat-tile-val">{formatMoney(Number(enrichedTopRec.expectedEndingBalance) || 0)}</span>
-                  </div>
-                  <div className="stat-tile">
-                    <span className="stat-tile-lbl">{t("lab.results.metrics.principal")}</span>
-                    <span className="stat-tile-val">
-                      {formatMoney(Math.max(0, loanAmount - (Number(enrichedTopRec.expectedEndingBalance) || 0)))}
+                  <button
+                    type="button"
+                    role="tab"
+                    className="scenario-picker-btn scenario-picker-btn-fall"
+                    aria-selected={selectedScenarioId === "p10"}
+                    onClick={() => setSelectedScenarioId("p10")}
+                  >
+                    <span className="scenario-picker-btn-icon-wrap" aria-hidden="true">
+                      <TrendIcon direction="fall" />
                     </span>
-                  </div>
+                    <span className="scenario-picker-btn-label">{t("lab.results.scenarioPicker.low")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    className="scenario-picker-btn scenario-picker-btn-flat"
+                    aria-selected={selectedScenarioId === "p50"}
+                    onClick={() => setSelectedScenarioId("p50")}
+                  >
+                    <span className="scenario-picker-btn-icon-wrap" aria-hidden="true">
+                      <TrendIcon direction="flat" />
+                    </span>
+                    <span className="scenario-picker-btn-label">{t("lab.results.scenarioPicker.base")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    className="scenario-picker-btn scenario-picker-btn-rise"
+                    aria-selected={selectedScenarioId === "p90"}
+                    onClick={() => setSelectedScenarioId("p90")}
+                  >
+                    <span className="scenario-picker-btn-icon-wrap" aria-hidden="true">
+                      <TrendIcon direction="rise" />
+                    </span>
+                    <span className="scenario-picker-btn-label">{t("lab.results.scenarioPicker.high")}</span>
+                  </button>
                 </div>
-                <p className="rec-intro">{whyThisOneIntro}</p>
-                <div className="rec-actions">
-                  <button
-                    ref={triggerBtnRef}
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={(e) => openDetail(enrichedTopRec.strategyId, e.currentTarget)}
+                <p className="scenario-picker-hint">{t("lab.results.scenarioPicker.hint")}</p>
+                <div className="rec-card">
+                  <div
+                    className="portfolio-bar"
+                    role="img"
+                    aria-label={t("lab.results.portfolioAria", {
+                      parts: enrichedTopRec.allocations.map((a) => `${formatAllocationPct(a.percentage)} ${a.displayName}`).join(", ")
+                    })}
                   >
-                    {t("lab.results.seeDetails")}
-                  </button>
-                  <button
-                    ref={upgradeBtnRef}
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={(e) => {
-                      upgradeBtnRef.current = e.currentTarget;
-                      setPremiumPopupOpen(true);
-                    }}
-                  >
-                    {t("lab.results.upgrade")}
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={resetAll}>
-                    {t("lab.results.startOver")}
-                  </button>
+                    {enrichedTopRec.allocations.map((a, i) => (
+                      <span
+                        key={i}
+                        className="portfolio-segment"
+                        style={{ width: formatAllocationPct(a.percentage), background: a.color }}
+                        title={`${a.displayName} ${formatAllocationPct(a.percentage)}`}
+                      />
+                    ))}
+                  </div>
+                  <ul className="portfolio-legend">
+                    {enrichedTopRec.allocations.map((a, i) => (
+                      <li key={i} style={{ color: a.color }}>
+                        {formatAllocationPct(a.percentage)} {a.displayName}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="stat-tile-grid">
+                    <div className="stat-tile">
+                      <span className="stat-tile-lbl">{t("lab.results.metrics.interest")}</span>
+                      <span className="stat-tile-val">{formatMoney(scenarioMetrics?.interest ?? (Number(enrichedTopRec.expectedInterest) || 0))}</span>
+                    </div>
+                    <div className="stat-tile">
+                      <span className="stat-tile-lbl">{t("lab.results.metrics.maxPayment")}</span>
+                      <span className="stat-tile-val">{formatMoney(scenarioMetrics?.maxPayment ?? (Number(enrichedTopRec.expectedMaxPayment) || 0))}</span>
+                    </div>
+                    <div className="stat-tile">
+                      <span className="stat-tile-lbl">{t("lab.results.metrics.endingBalance", { years: normalizedForecastYears })}</span>
+                      <span className="stat-tile-val">{formatMoney(scenarioMetrics?.endingBalance ?? (Number(enrichedTopRec.expectedEndingBalance) || 0))}</span>
+                    </div>
+                    <div className="stat-tile">
+                      <span className="stat-tile-lbl">{t("lab.results.metrics.principal")}</span>
+                      <span className="stat-tile-val">
+                        {formatMoney(Math.max(0, loanAmount - (scenarioMetrics?.endingBalance ?? (Number(enrichedTopRec.expectedEndingBalance) || 0))))}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="rec-intro">{whyThisOneIntro}</p>
+                  <div className="rec-actions">
+                    <button
+                      ref={triggerBtnRef}
+                      type="button"
+                      className="btn btn-primary rec-action-btn rec-action-btn-primary"
+                      onClick={(e) => openDetail(enrichedTopRec.strategyId, e.currentTarget)}
+                    >
+                      <span className="rec-action-copy">
+                        <span className="rec-action-icon-wrap" aria-hidden="true">
+                          <DetailsIcon />
+                        </span>
+                        <span>{t("lab.results.seeDetails")}</span>
+                      </span>
+                      <span className="rec-action-arrow" aria-hidden="true">
+                        <ArrowRightIcon />
+                      </span>
+                    </button>
+                    <button
+                      ref={upgradeBtnRef}
+                      type="button"
+                      className="btn btn-secondary rec-action-btn rec-action-btn-secondary"
+                      onClick={(e) => {
+                        upgradeBtnRef.current = e.currentTarget;
+                        setPremiumPopupOpen(true);
+                      }}
+                    >
+                      <span className="rec-action-copy">
+                        <span className="rec-action-icon-wrap" aria-hidden="true">
+                          <SparkleIcon />
+                        </span>
+                        <span>{t("lab.results.upgrade")}</span>
+                      </span>
+                    </button>
+                    <button type="button" className="btn btn-ghost rec-action-btn rec-action-btn-tertiary" onClick={goToFirstQuestion}>
+                      <span className="rec-action-copy">
+                        <span className="rec-action-icon-wrap" aria-hidden="true">
+                          <RefreshIcon />
+                        </span>
+                        <span>{t("lab.results.startOver")}</span>
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1319,7 +1622,7 @@ export default function LabPage() {
               {t("lab.nav.next")}
             </button>
           )}
-          <button type="button" className="wizard-reset-link" onClick={resetAll} disabled={phase === "running"}>
+          <button type="button" className="wizard-reset-link" onClick={goToFirstQuestion} disabled={phase === "running"}>
             {t("lab.nav.reset")}
           </button>
         </div>
@@ -1670,6 +1973,15 @@ export default function LabPage() {
         .q2-option-row[data-tone="cyan"] {
           --choice-color: var(--accent-cyan);
           --choice-glow: rgba(6, 182, 212, 0.24);
+        }
+        /* Error message inside the option row — must span all 3 grid
+           columns, otherwise it lands in the 42px icon column and wraps
+           one word per line. */
+        .q2-error {
+          grid-column: 1 / -1;
+          margin-top: 6px;
+          padding-left: 56px;
+          font-weight: 500;
         }
         .q2-option-row::after {
           content: "";
@@ -2047,6 +2359,103 @@ export default function LabPage() {
         .wizard-reset-link:hover:not(:disabled) { color: var(--text-secondary); }
         .wizard-reset-link:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        /* ===== Results — scenario picker (rate-future switcher) ===== */
+        .rec-card-wrap {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .scenario-picker {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .scenario-picker-btn {
+          --scenario-accent: #6366f1;
+          --scenario-accent-soft: rgba(99, 102, 241, 0.14);
+          flex: 1 1 0;
+          min-width: 0;
+          padding: 12px 16px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: var(--text-primary, #e5e7eb);
+          font: inherit;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          transition:
+            background 140ms ease,
+            border-color 140ms ease,
+            color 140ms ease,
+            box-shadow 140ms ease,
+            transform 140ms ease;
+          white-space: nowrap;
+          text-align: center;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
+        .scenario-picker-btn:hover:not([aria-selected="true"]) {
+          background: var(--scenario-accent-soft);
+          border-color: color-mix(in srgb, var(--scenario-accent) 55%, white 12%);
+          transform: translateY(-1px);
+        }
+        .scenario-picker-btn:focus-visible {
+          outline: 2px solid var(--scenario-accent);
+          outline-offset: 2px;
+        }
+        .scenario-picker-btn[aria-selected="true"] {
+          background: color-mix(in srgb, var(--scenario-accent) 20%, rgba(255, 255, 255, 0.04));
+          border-color: color-mix(in srgb, var(--scenario-accent) 65%, white 6%);
+          color: #fff;
+          font-weight: 600;
+          box-shadow: 0 8px 18px color-mix(in srgb, var(--scenario-accent) 24%, transparent);
+        }
+        .scenario-picker-btn-fall {
+          --scenario-accent: #10b981;
+          --scenario-accent-soft: rgba(16, 185, 129, 0.14);
+        }
+        .scenario-picker-btn-flat {
+          --scenario-accent: #6366f1;
+          --scenario-accent-soft: rgba(99, 102, 241, 0.14);
+        }
+        .scenario-picker-btn-rise {
+          --scenario-accent: #f59e0b;
+          --scenario-accent-soft: rgba(245, 158, 11, 0.14);
+        }
+        .scenario-picker-btn-icon-wrap {
+          width: 28px;
+          height: 28px;
+          flex: none;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: color-mix(in srgb, var(--scenario-accent) 18%, rgba(255, 255, 255, 0.04));
+          border: 1px solid color-mix(in srgb, var(--scenario-accent) 34%, rgba(255, 255, 255, 0.08));
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+        .scenario-picker-icon {
+          width: 16px;
+          height: 16px;
+          stroke: var(--scenario-accent);
+          stroke-width: 2.2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+        .scenario-picker-btn-label {
+          min-width: 0;
+        }
+        .scenario-picker-hint {
+          font-size: 12px;
+          color: var(--text-secondary, #94a3b8);
+          margin: 0 4px 4px;
+          max-width: 1120px;
+          line-height: 1.5;
+        }
+
         /* ===== Results — rec-card hover lift ===== */
         .results-step {
           gap: 30px;
@@ -2149,10 +2558,138 @@ export default function LabPage() {
           font-size: var(--fs-md);
         }
         .rec-actions {
-          display: flex;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
           gap: 14px;
-          flex-wrap: wrap;
+          align-items: stretch;
           margin-top: 2px;
+        }
+        .rec-actions :global(.btn) {
+          width: 100%;
+          min-width: 0;
+        }
+        .rec-action-btn {
+          min-height: 62px;
+          padding: 16px 18px;
+          border-radius: 18px;
+          font-size: 15px;
+          font-weight: 700;
+          letter-spacing: 0.01em;
+          transition:
+            transform 180ms ease,
+            box-shadow 180ms ease,
+            border-color 180ms ease,
+            background-color 180ms ease,
+            color 180ms ease,
+            filter 180ms ease;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+        .rec-action-btn:hover:not(:disabled) {
+          transform: translateY(-2px);
+        }
+        .rec-action-btn:active:not(:disabled) {
+          transform: translateY(0) scale(0.99);
+        }
+        .rec-action-btn:focus-visible {
+          outline: 2px solid rgba(99, 102, 241, 0.9);
+          outline-offset: 3px;
+        }
+        .rec-action-copy {
+          display: inline-flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 0;
+        }
+        .rec-action-icon-wrap {
+          width: 34px;
+          height: 34px;
+          border-radius: 12px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex: none;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+        .rec-action-icon {
+          width: 18px;
+          height: 18px;
+          stroke: currentColor;
+          stroke-width: 2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          opacity: 0.96;
+        }
+        .rec-action-arrow {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-left: auto;
+          width: 30px;
+          height: 30px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          flex: none;
+        }
+        .rec-action-arrow-icon {
+          width: 16px;
+          height: 16px;
+          stroke: currentColor;
+          stroke-width: 2.2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          opacity: 0.95;
+        }
+        .rec-actions .rec-action-btn-primary {
+          justify-content: space-between;
+          background: linear-gradient(135deg, #7c6cf7 0%, #6c63ff 54%, #8b5cf6 100%);
+          color: #fff;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          box-shadow: 0 16px 30px rgba(99, 102, 241, 0.32);
+        }
+        .rec-actions .rec-action-btn-primary:hover:not(:disabled) {
+          filter: brightness(1.04);
+          box-shadow: 0 20px 36px rgba(99, 102, 241, 0.42);
+        }
+        .rec-actions .rec-action-btn-primary .rec-action-icon-wrap,
+        .rec-actions .rec-action-btn-primary .rec-action-arrow {
+          background: rgba(255, 255, 255, 0.14);
+          border-color: rgba(255, 255, 255, 0.14);
+        }
+        .rec-actions .rec-action-btn-secondary {
+          justify-content: flex-start;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.035));
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: var(--text-primary);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+        .rec-actions .rec-action-btn-secondary:hover:not(:disabled) {
+          background: linear-gradient(180deg, rgba(16, 185, 129, 0.14), rgba(16, 185, 129, 0.08));
+          border-color: rgba(16, 185, 129, 0.26);
+          box-shadow: 0 16px 28px rgba(16, 185, 129, 0.14);
+        }
+        .rec-actions .rec-action-btn-secondary .rec-action-icon-wrap {
+          background: rgba(16, 185, 129, 0.12);
+          border-color: rgba(16, 185, 129, 0.22);
+          color: #34d399;
+        }
+        .rec-actions .rec-action-btn-tertiary {
+          justify-content: flex-start;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: var(--text-secondary);
+        }
+        .rec-actions .rec-action-btn-tertiary:hover:not(:disabled) {
+          background: rgba(255, 255, 255, 0.07);
+          border-color: rgba(255, 255, 255, 0.14);
+          color: var(--text-primary);
+          box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14);
+        }
+        .rec-actions .rec-action-btn-tertiary .rec-action-icon-wrap {
+          background: rgba(255, 255, 255, 0.055);
+          border-color: rgba(255, 255, 255, 0.08);
         }
 
         /* ===== Premium popup — backdrop blur + slide-up ===== */
@@ -2222,7 +2759,17 @@ export default function LabPage() {
           .q3-grid,
           .q4-grid,
           .q5-grid { grid-template-columns: 1fr; }
-          .rec-actions { flex-direction: column; align-items: stretch; }
+          .rec-actions { grid-template-columns: 1fr; }
+          .rec-action-btn { min-height: 58px; }
+          .scenario-picker-btn {
+            padding: 10px 12px;
+            font-size: 13px;
+            gap: 8px;
+          }
+          .scenario-picker-btn-icon-wrap {
+            width: 26px;
+            height: 26px;
+          }
         }
       `}</style>
     </div>
