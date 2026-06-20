@@ -491,6 +491,13 @@ export default function StrategyLab() {
   // the page to introduce a separate "completedType" state slot. Reset to
   // null at the start of every new run.
   const simulationLastTerminalRef = useRef(/** @type {"success"|"cached"|"error"|null} */(null));
+  // Ref pointing at the recommendations section. After the modal
+  // auto-dismisses on success/cached, the page scrolls here so the user
+  // lands on the results without having to scroll past the OCR chart and
+  // simulation button — especially important on mobile where the page
+  // is long and the parameter panel has just been collapsed out of flow,
+  // shifting the recommendations' position.
+  const recommendationsAnchorRef = useRef(/** @type {HTMLElement | null} */(null));
 
   // Estimate total simulation count from current constraints — runs the
   // strategy generator synchronously (no amortisation, just enumeration) to
@@ -1328,6 +1335,38 @@ export default function StrategyLab() {
     // way to dismiss the modal mid-run (backdrop + Escape are inert).
     setSimulationModalOpen(false);
     simulationLastTerminalRef.current = null;
+  };
+
+  /**
+   * Dismiss the simulation modal AND scroll the user to the
+   * recommendations section. Used as the modal's onDismiss handler so
+   * the auto-dismiss (and any manual close after success/error) lands
+   * the user on the results without them having to scroll past the OCR
+   * chart and the (now-collapsed) parameter panel.
+   *
+   * The 120ms scroll delay matters: on dismiss, the modal unmounts and
+   * restores body overflow (see modal's scroll-lock effect). Scrolling
+   * BEFORE that restore races with the browser's scroll-restoration,
+   * so we wait one frame after dismiss so the page is back in its
+   * natural scroll state.
+   *
+   * We only auto-scroll on success/cached (i.e. the user just saw a
+   * real run finish). On error the modal stays open until the user
+   * clicks Close — they probably don't want to be pulled away from the
+   * error message, so we just dismiss without scrolling.
+   */
+  const handleSimulationDismiss = () => {
+    const shouldScroll = simulationLastTerminalRef.current === "success" ||
+      simulationLastTerminalRef.current === "cached";
+    setSimulationModalOpen(false);
+    if (shouldScroll && recommendationsAnchorRef.current) {
+      setTimeout(() => {
+        recommendationsAnchorRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 120);
+    }
   };
 
   const renderStrategySplit = (/** @type {string} */ strategyId) => {
@@ -2941,7 +2980,7 @@ export default function StrategyLab() {
 
           {/* Recommendations Cards */}
           {optimisedData && (
-            <section className="recommendations-section accent-amber">
+            <section ref={recommendationsAnchorRef} className="recommendations-section accent-amber">
               <h2 className="section-title"><span className="step-num">9</span>{t("strategyLab.step9.title")}</h2>
               <p className="text-muted" style={{ fontSize: "12px", marginBottom: "16px", lineHeight: "1.6" }}>
                 {t("strategyLab.step9.intro")}{" "}
@@ -3557,7 +3596,7 @@ export default function StrategyLab() {
           simCountIsHigh={simCountIsHigh}
           simCountWarningThreshold={SIM_COUNT_WARNING_THRESHOLD}
           onCancel={handleCancelSimulation}
-          onDismiss={() => setSimulationModalOpen(false)}
+          onDismiss={handleSimulationDismiss}
         />
 
       </div>
