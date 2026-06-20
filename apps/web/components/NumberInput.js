@@ -1,5 +1,57 @@
 "use client";
 
+import { useLayoutEffect, useRef } from "react";
+
+function hasDecimalStep(step) {
+  const numericStep = Number(step);
+  return Number.isFinite(numericStep) && !Number.isInteger(numericStep);
+}
+
+function isFiniteValue(value) {
+  const num = Number(value);
+  return Number.isFinite(num);
+}
+
+function formatNumericText(raw, { allowDecimal, allowNegative }) {
+  if (raw === null || raw === undefined) return "";
+  const text = String(raw).replace(/,/g, "");
+  if (text === "") return "";
+
+  let sign = "";
+  let body = text;
+  if (allowNegative && body.startsWith("-")) {
+    sign = "-";
+    body = body.slice(1);
+  }
+
+  const parts = allowDecimal ? body.split(".", 2) : [body];
+  const integerPart = (parts[0] || "").replace(/\D/g, "");
+  const decimalPart = allowDecimal && parts.length > 1 ? parts[1].replace(/\D/g, "") : "";
+  if (!integerPart && !decimalPart) return sign ? "-" : "";
+
+  const grouped = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (!allowDecimal) return `${sign}${grouped}`;
+  if (text.endsWith(".") && decimalPart === "") return `${sign}${grouped}.`;
+  return decimalPart ? `${sign}${grouped}.${decimalPart}` : `${sign}${grouped}`;
+}
+
+function sanitizeNumericText(raw, { allowDecimal, allowNegative }) {
+  if (raw === null || raw === undefined) return "";
+  let text = String(raw).replace(/,/g, "");
+  if (text === "") return "";
+
+  const sign = allowNegative && text.startsWith("-") ? "-" : "";
+  if (sign) text = text.slice(1);
+  text = text.replace(/[^\d.]/g, "");
+  if (!allowDecimal) return `${sign}${text.replace(/\./g, "")}`;
+
+  const firstDot = text.indexOf(".");
+  if (firstDot === -1) return `${sign}${text}`;
+  const left = text.slice(0, firstDot).replace(/\./g, "");
+  const right = text.slice(firstDot + 1).replace(/\./g, "");
+  return `${sign}${left}.${right}`;
+}
+
 /**
  * NumberInput — unified numeric input primitive that replaces the 6+ raw
  * `<input type="number">` usages across the dashboard / setup / strategy-lab
@@ -28,6 +80,7 @@
  * @param {"sm"|"md"|"lg"} [props.size="md"]
  * @param {boolean} [props.disabled=false]
  * @param {string} [props.error]
+ * @param {string} [props.placeholder]
  * @param {string} props.ariaLabel - REQUIRED: every call site must pass one
  * @param {string} [props.id]
  * @param {string} [props.className]
@@ -47,11 +100,32 @@ export default function NumberInput(/** @type {any} */ props) {
     size = "md",
     disabled = false,
     error,
+    placeholder,
     ariaLabel,
     id,
     className = "",
     inputMode = "decimal"
   } = props;
+  const inputRef = useRef(null);
+  const allowDecimal = hasDecimalStep(step) || inputMode === "decimal";
+  const allowNegative = isFiniteValue(min) ? Number(min) < 0 : false;
+  const formattedValue = formatNumericText(value ?? "", { allowDecimal, allowNegative });
+
+  useLayoutEffect(() => {
+    if (inputRef.current && inputRef.current.value !== formattedValue) {
+      inputRef.current.value = formattedValue;
+    }
+  }, [formattedValue]);
+
+  const emitChange = (event) => {
+    const nextRaw = sanitizeNumericText(event.currentTarget.value, { allowDecimal, allowNegative });
+    event.currentTarget.value = formatNumericText(nextRaw, { allowDecimal, allowNegative });
+    onChange?.({
+      ...event,
+      target: { ...event.target, value: nextRaw },
+      currentTarget: { ...event.currentTarget, value: nextRaw }
+    });
+  };
 
   const wrapClass = [
     "ni-wrap",
@@ -66,22 +140,29 @@ export default function NumberInput(/** @type {any} */ props) {
   return (
     <div className={wrapClass}>
       {label ? <label className="ni-label">{label}</label> : null}
-      <div className="ni-control">
+      <div
+        className="ni-control"
+        onClick={() => {
+          if (!disabled) inputRef.current?.focus();
+        }}
+      >
         {prefix ? <span className="ni-prefix">{prefix}</span> : null}
         <input
+          ref={inputRef}
           id={id}
-          type="number"
+          type="text"
           className="ni-input"
           data-align={align}
-          value={value ?? ""}
-          onChange={onChange}
+          defaultValue={formattedValue}
+          onChange={emitChange}
           min={min}
           max={max}
           step={step}
           disabled={disabled}
           aria-label={ariaLabel}
           aria-invalid={error ? "true" : undefined}
-          inputMode={inputMode}
+          placeholder={placeholder}
+          inputMode={inputMode === "decimal" || allowDecimal ? "decimal" : "numeric"}
         />
         {suffix ? <span className="ni-suffix">{suffix}</span> : null}
       </div>
@@ -104,11 +185,13 @@ export default function NumberInput(/** @type {any} */ props) {
         .ni-control {
           display: inline-flex;
           align-items: center;
+          width: 100%;
           background: rgba(0, 0, 0, 0.2);
           border: 1px solid var(--border-glass);
           border-radius: var(--radius-sm);
           transition: var(--transition-smooth);
           overflow: hidden;
+          cursor: text;
         }
         .ni-control:focus-within {
           border-color: var(--color-primary);
@@ -133,21 +216,18 @@ export default function NumberInput(/** @type {any} */ props) {
           color: var(--text-primary);
           font-family: var(--font-body);
           font-variant-numeric: tabular-nums;
+          line-height: 1.2;
+          caret-color: var(--color-primary);
+        }
+        .ni-input::placeholder {
+          color: color-mix(in srgb, var(--text-secondary) 88%, #ffffff);
+          opacity: 0.7;
         }
         .ni-input[data-align="right"] {
           text-align: right;
         }
         .ni-input[data-align="left"] {
           text-align: left;
-        }
-        /* Hide native number spinners — visually noisy on dark glass */
-        .ni-input::-webkit-outer-spin-button,
-        .ni-input::-webkit-inner-spin-button {
-          -webkit-appearance: none;
-          margin: 0;
-        }
-        .ni-input[type=number] {
-          -moz-appearance: textfield;
         }
         .ni-prefix,
         .ni-suffix {

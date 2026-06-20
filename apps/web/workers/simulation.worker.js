@@ -234,3 +234,31 @@ self.onmessage = async (e) => {
     self.postMessage({ type: "error", error: err.message || String(err) });
   }
 };
+
+// ---------------------------------------------------------------------------
+// Global error handlers — surface module-load and async failures to the page.
+// Without these, a parse error during top-level `import` would silently kill
+// the worker (no onmessage ever fires) and the page would see a stuck modal.
+// ---------------------------------------------------------------------------
+self.addEventListener("error", (e) => {
+  try {
+    self.postMessage({
+      type: "error",
+      error: (e && (e.message || (e.error && e.error.message))) || "worker error"
+    });
+  } catch {
+    // postMessage may itself throw if the page has gone away; nothing to do.
+  }
+});
+
+self.addEventListener("unhandledrejection", (e) => {
+  try {
+    const reason = e && e.reason;
+    self.postMessage({
+      type: "error",
+      error: (reason && (reason.message || String(reason))) || "unhandled rejection"
+    });
+  } catch {
+    // ignore
+  }
+});

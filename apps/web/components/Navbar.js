@@ -89,6 +89,14 @@ export default function Navbar() {
       )
     },
     {
+      key: "lab",
+      label: t("nav.lab"),
+      href: "/lab",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 L15 8 L22 9 L17 14 L18 21 L12 18 L6 21 L7 14 L2 9 L9 8 Z"/></svg>
+      )
+    },
+    {
       key: "about",
       label: t("nav.about"),
       href: "/about",

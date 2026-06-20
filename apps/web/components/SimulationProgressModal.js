@@ -360,9 +360,7 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           position: fixed;
           inset: 0;
           z-index: 1205;
-          background: var(--backdrop-scrim);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
+          background: #050a12;
           display: flex;
           align-items: flex-start;
           justify-content: center;
@@ -379,6 +377,9 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           animation: prg-slide-in 180ms ease-out;
           display: flex;
           flex-direction: column;
+          background: #10192d;
+          border-color: #263450;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
         }
 
         /* Lock card height ONLY for the running phase. Use height (NOT
@@ -433,8 +434,8 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           width: 36px;
           height: 36px;
           border-radius: var(--radius-pill);
-          border: 1px solid var(--border-strong);
-          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid #394a67;
+          background: #16233b;
           color: #fff;
           font-size: 22px;
           line-height: 1;
@@ -445,7 +446,7 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
 
         .prg-close:hover,
         .prg-close:focus-visible {
-          background: rgba(255, 255, 255, 0.10);
+          background: #1d2b47;
           outline: none;
         }
 
@@ -454,8 +455,8 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           margin-bottom: var(--sp-4);
           padding: 10px 12px;
           border-radius: var(--radius-md);
-          background: rgba(245, 158, 11, 0.12);
-          border: 1px solid rgba(245, 158, 11, 0.40);
+          background: #2a2410;
+          border: 1px solid #8a5c11;
           color: var(--chart-amber);
         }
 
@@ -476,7 +477,7 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
         .prg-bar-container {
           height: 8px;
           border-radius: 4px;
-          background: rgba(255, 255, 255, 0.08);
+          background: #1a2436;
           overflow: hidden;
           margin-bottom: 10px;
         }
@@ -528,8 +529,8 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
         .prg-current-cell {
           padding: 10px 12px;
           border-radius: var(--radius-md);
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid var(--border-glass);
+          background: #16233b;
+          border: 1px solid #263450;
           display: flex;
           flex-direction: column;
           gap: 4px;
@@ -577,7 +578,8 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           margin: 0;
           padding: 8px 12px;
           border-radius: var(--radius-sm);
-          background: rgba(255, 255, 255, 0.03);
+          background: #10192d;
+          border: 1px solid #263450;
           color: var(--text-muted);
           font-size: var(--fs-xs);
           line-height: 1.5;
@@ -605,8 +607,8 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
           margin: var(--sp-3) 0 var(--sp-4);
           padding: 22px 18px;
           border-radius: var(--radius-lg);
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid var(--border-glass);
+          background: #16233b;
+          border: 1px solid #263450;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -615,13 +617,13 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
         }
 
         .prg-complete[data-tone="emerald"] {
-          background: linear-gradient(180deg, rgba(16, 185, 129, 0.10), rgba(16, 185, 129, 0.02));
-          border-color: rgba(16, 185, 129, 0.30);
+          background: #0f2b21;
+          border-color: #1f7a57;
         }
 
         .prg-complete[data-tone="rose"] {
-          background: linear-gradient(180deg, rgba(244, 63, 94, 0.10), rgba(244, 63, 94, 0.02));
-          border-color: rgba(244, 63, 94, 0.30);
+          background: #2c1219;
+          border-color: #8c2940;
         }
 
         .prg-complete-icon {
@@ -654,7 +656,7 @@ export default function SimulationProgressModal(/** @type {any} */ props) {
         .prg-footer {
           margin-top: var(--sp-4);
           padding-top: var(--sp-3);
-          border-top: 1px solid var(--border-glass);
+          border-top: 1px solid #263450;
         }
 
         /* Animations */
