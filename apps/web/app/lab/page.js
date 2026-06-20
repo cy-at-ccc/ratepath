@@ -66,6 +66,79 @@ function clampForecastYears(value) {
   return Math.max(FORECAST_YEARS_MIN, Math.min(FORECAST_YEARS_MAX, num));
 }
 
+function buildDetailTimelineDataFromResult({ detailResult, strategy, mortgage }) {
+  if (!detailResult?.timeline || !strategy) return null;
+
+  const frequency = mortgage?.repaymentFrequency || "monthly";
+  const snapshotMonths = [];
+  const forecastMonths = detailResult.timeline.length > 0
+    ? detailResult.timeline[detailResult.timeline.length - 1].monthIndex + 1
+    : 0;
+  for (let m = 6; m <= forecastMonths; m += 6) {
+    snapshotMonths.push(m);
+  }
+  if (snapshotMonths.length === 0) return null;
+
+  const getEventMonth = (periodIndex) => {
+    if (frequency === "monthly") return periodIndex;
+    if (frequency === "fortnightly") return Math.floor(periodIndex * 12 / 26);
+    return Math.floor(periodIndex * 12 / 52);
+  };
+
+  const refixEvents = detailResult.refixEvents || [];
+
+  const tranches = strategy.allocations.map((alloc, idx) => {
+    const trancheId = `tranche-${idx}-${alloc.productCode}`;
+    const prod = nzProfile.products.find((p) => p.code === alloc.productCode);
+    const displayName = prod ? prod.displayName : alloc.productCode;
+    const initialBalance = alloc.amount;
+    let prevBalance = initialBalance;
+
+    const snapshots = snapshotMonths.map((snapshotMonth, snapshotIdx) => {
+      const prevSnapshot = snapshotIdx > 0 ? snapshotMonths[snapshotIdx - 1] : 0;
+      const windowMonths = detailResult.timeline.filter(
+        (t) => t.monthIndex >= prevSnapshot && t.monthIndex < snapshotMonth
+      );
+      const snapshotMonthData = detailResult.timeline.find((t) => t.monthIndex === snapshotMonth - 1)
+        || detailResult.timeline[detailResult.timeline.length - 1];
+      const trancheAtSnapshot = snapshotMonthData?.tranches?.find((t) => t.id === trancheId);
+
+      const rate = trancheAtSnapshot?.rate ?? 0;
+      const balance = trancheAtSnapshot?.closingBalance ?? prevBalance;
+      const interestPaid = windowMonths.reduce((sum, mt) => {
+        const td = mt.tranches?.find((t) => t.id === trancheId);
+        return sum + (td ? td.interest : 0);
+      }, 0);
+      const principalRepaid = prevBalance - balance;
+      const windowEvents = refixEvents.filter((e) => {
+        if (e.trancheId !== trancheId) return false;
+        const em = getEventMonth(e.periodIndex);
+        return em >= prevSnapshot && em < snapshotMonth;
+      }).map((e) => {
+        const newProd = nzProfile.products.find((p) => p.code === e.newProduct);
+        const newProdName = newProd ? newProd.displayName : e.newProduct;
+        return `${newProdName}: ${(e.newRate * 100).toFixed(2)}%`;
+      });
+
+      prevBalance = balance;
+
+      return {
+        month: snapshotMonth,
+        rate,
+        interestPaid,
+        principalRepaid,
+        totalPayment: interestPaid + principalRepaid,
+        balance,
+        events: windowEvents
+      };
+    });
+
+    return { trancheId, displayName, productCode: alloc.productCode, initialBalance, snapshots };
+  });
+
+  return { snapshotMonths, tranches, frequency };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers (pure)
 // ---------------------------------------------------------------------------
@@ -566,7 +639,12 @@ export default function LabPage() {
         includeTimeline: true,
         includeRefixEvents: true
       });
-      setDetailTimelineData(res);
+      const detailStrategy = allStrategies.find((s) => s.id === strategyId);
+      setDetailTimelineData(buildDetailTimelineDataFromResult({
+        detailResult: res,
+        strategy: detailStrategy,
+        mortgage
+      }));
     } catch (err) {
       console.warn("lab: detail timeline failed", err);
     } finally {

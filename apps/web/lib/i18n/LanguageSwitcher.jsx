@@ -14,15 +14,17 @@ import { useI18n } from "./useI18n.js";
  * @param {string} [props.className] - Optional className for the outer
  *   wrapper. Used to position the switcher in the sidebar or bottom
  *   tab bar via the consumer's flex layout.
+ * @param {"md" | "lg"} [props.size] - Visual size variant. `lg` is used
+ *   in the mobile drawer footer where the control needs more presence.
  */
-export default function LanguageSwitcher({ className = "" }) {
+export default function LanguageSwitcher({ className = "", size = "md" }) {
   const { locale, setLocale, t } = useI18n();
   const isEn = locale === "en-NZ";
   const isZh = locale === "zh-CN";
 
   return (
     <div
-      className={`lang-switch ${className}`}
+      className={`lang-switch ${size === "lg" ? "lang-switch--lg" : ""} ${className}`}
       role="group"
       aria-label={t("nav.languageToggle")}
     >
@@ -54,6 +56,11 @@ export default function LanguageSwitcher({ className = "" }) {
           height: 24px;
           flex-shrink: 0;
         }
+        .lang-switch--lg {
+          height: 34px;
+          padding: 3px;
+          gap: 1px;
+        }
         .lang-btn {
           appearance: none;
           background: transparent;
@@ -70,6 +77,13 @@ export default function LanguageSwitcher({ className = "" }) {
           transition: var(--transition-smooth);
           min-width: 22px;
           white-space: nowrap;
+        }
+        .lang-switch--lg .lang-btn {
+          font-size: 12px;
+          height: 26px;
+          min-width: 30px;
+          padding: 0 10px;
+          letter-spacing: 0.03em;
         }
         .lang-btn:hover {
           color: #fff;

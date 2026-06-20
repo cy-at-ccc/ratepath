@@ -234,7 +234,7 @@ export default function Navbar() {
             </div>
 
             <div className="nav-drawer-footer">
-              <LanguageSwitcher />
+              <LanguageSwitcher size="lg" />
             </div>
           </aside>
         </div>
@@ -708,7 +708,9 @@ export default function Navbar() {
           border-top: 1px solid var(--border-glass);
           display: flex;
           align-items: center;
-          justify-content: flex-start;
+          justify-content: flex-end;
+          width: 100%;
+          padding-inline: 2px 0;
         }
 
         @keyframes nd-fade-in {
