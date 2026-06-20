@@ -34,6 +34,7 @@ const DEFAULT_MARKET_RATES = {
 const DEFAULT_FORECAST_YEARS = 5;
 const FORECAST_YEARS_MIN = 3;
 const FORECAST_YEARS_MAX = 10;
+const REPAYMENT_YEARS_MAX = 40;
 
 const SHORT_TO_DELTA = {
   "fall-strong": -0.02,
@@ -204,14 +205,39 @@ function estimateMonthlyPayment(principal, annualRate, termYears) {
   return (principal * r) / (1 - Math.pow(1 + r, -n));
 }
 
+function getPeriodsPerYearForFrequency(frequency) {
+  if (frequency === "weekly") return 52;
+  if (frequency === "fortnightly") return 26;
+  return 12;
+}
+
+function estimatePeriodicPayment(principal, annualRate, termYears, frequency) {
+  if (!principal || principal <= 0) return 0;
+  const periodsPerYear = getPeriodsPerYearForFrequency(frequency);
+  const totalPeriods = Math.max(1, Math.round((termYears || 25) * periodsPerYear));
+  const periodicRate = (annualRate || 0.0579) / periodsPerYear;
+  if (periodicRate === 0) return principal / totalPeriods;
+  const rateFactor = Math.pow(1 + periodicRate, totalPeriods);
+  return (principal * periodicRate * rateFactor) / (rateFactor - 1);
+}
+
+function estimatePayoffYears(principal, annualRate, periodicPayment, frequency) {
+  if (!principal || principal <= 0 || !periodicPayment || periodicPayment <= 0) return 0;
+  const periodsPerYear = getPeriodsPerYearForFrequency(frequency);
+  const periodicRate = (annualRate || 0.0579) / periodsPerYear;
+  if (periodicRate === 0) {
+    return principal / periodicPayment / periodsPerYear;
+  }
+  const interestOnlyPayment = principal * periodicRate;
+  if (periodicPayment <= interestOnlyPayment) {
+    return REPAYMENT_YEARS_MAX;
+  }
+  const periods = -Math.log(1 - (principal * periodicRate) / periodicPayment) / Math.log(1 + periodicRate);
+  return periods / periodsPerYear;
+}
+
 function defaultPaymentForAmount(amount, frequency, annualRate) {
-  const monthly = estimateMonthlyPayment(amount, annualRate || 0.0579, 25);
-  // Use the same divisor as the engine's getPeriodsPerYear (52 / 26 / 12),
-  // so the suggested per-period payment matches what simulateMortgageTimeline
-  // would amortise at.
-  if (frequency === "weekly") return Math.round((monthly * 12) / 52);
-  if (frequency === "fortnightly") return Math.round((monthly * 12) / 26);
-  return Math.round(monthly);
+  return Math.round(estimatePeriodicPayment(amount, annualRate || 0.0579, 25, frequency));
 }
 
 function buildMortgageFromAnswers(answers, marketRates) {
@@ -360,6 +386,18 @@ export default function LabPage() {
     if (saved.mediumOutlook) out.mediumOutlook = saved.mediumOutlook;
     if (saved.uncertainty) out.uncertainty = saved.uncertainty;
     if (saved.forecastYears !== null && saved.forecastYears !== undefined) out.forecastYears = clampForecastYears(saved.forecastYears);
+    if (out.targetMode === "term" && Number.isFinite(out.targetYears) && out.targetYears > 0) {
+      out.targetPayment = Math.round(
+        estimatePeriodicPayment(out.loanAmount, marketRates.floating, out.targetYears, out.repaymentFrequency)
+      );
+    } else if (out.targetMode === "payment" && Number.isFinite(out.targetPayment) && out.targetPayment > 0) {
+      out.targetYears = Math.max(
+        1,
+        Math.ceil(estimatePayoffYears(out.loanAmount, marketRates.floating, out.targetPayment, out.repaymentFrequency))
+      );
+    } else {
+      out.targetPayment = defaultPaymentForAmount(out.loanAmount, out.repaymentFrequency, marketRates.floating);
+    }
     return out;
   }, []);
 
@@ -374,6 +412,30 @@ export default function LabPage() {
   const [forecastYears, setForecastYears] = useState(initialForm.forecastYears);
   const normalizedForecastYears = clampForecastYears(forecastYears);
   const forecastMonths = normalizedForecastYears * 12;
+
+  const syncTargetFromMode = useCallback((nextMode, nextLoanAmount, nextYears, nextPayment, nextFrequency) => {
+    const loan = Number.isFinite(nextLoanAmount) ? nextLoanAmount : loanAmount;
+    const frequency = nextFrequency || repaymentFrequency;
+    if (nextMode === "term") {
+      if (Number.isFinite(nextYears) && nextYears > 0) {
+        const payment = Math.round(estimatePeriodicPayment(loan, marketRates.floating, nextYears, frequency));
+        setTargetYears(nextYears);
+        setTargetPayment(payment);
+      } else {
+        setTargetYears(nextYears);
+        setTargetPayment(NaN);
+      }
+      return;
+    }
+    if (Number.isFinite(nextPayment) && nextPayment > 0) {
+      const years = Math.max(1, Math.ceil(estimatePayoffYears(loan, marketRates.floating, nextPayment, frequency)));
+      setTargetPayment(nextPayment);
+      setTargetYears(years);
+    } else {
+      setTargetPayment(nextPayment);
+      setTargetYears(NaN);
+    }
+  }, [loanAmount, marketRates.floating, repaymentFrequency]);
 
   // ---- Persist form on change (debounced) --------------------------------
   useEffect(() => {
@@ -771,9 +833,25 @@ export default function LabPage() {
               value={Number.isFinite(loanAmount) ? loanAmount : ""}
               onChange={(e) => {
                 const raw = e.target.value;
-                if (raw === "") { setLoanAmount(NaN); return; }
+                if (raw === "") {
+                  setLoanAmount(NaN);
+                  setTargetYears(NaN);
+                  setTargetPayment(NaN);
+                  return;
+                }
                 const v = parseInt(raw, 10);
-                setLoanAmount(Number.isFinite(v) ? v : NaN);
+                if (!Number.isFinite(v)) {
+                  setLoanAmount(NaN);
+                  setTargetYears(NaN);
+                  setTargetPayment(NaN);
+                  return;
+                }
+                setLoanAmount(v);
+                if (targetMode === "term") {
+                  syncTargetFromMode("term", v, targetYears, targetPayment, repaymentFrequency);
+                } else {
+                  syncTargetFromMode("payment", v, targetYears, targetPayment, repaymentFrequency);
+                }
               }}
               min={1000}
               step={1000}
@@ -812,12 +890,21 @@ export default function LabPage() {
                     <span className="q2-option-text">{t("lab.q2.term.before")}</span>
                     <NumberInput
                       ariaLabel={t("lab.q2.term.aria")}
-                      value={targetMode === "term" && Number.isFinite(targetYears) ? targetYears : ""}
+                      value={Number.isFinite(targetYears) ? targetYears : ""}
                       onChange={(e) => {
                         const raw = e.target.value;
-                        if (raw === "") { setTargetYears(NaN); return; }
+                        if (raw === "") {
+                          setTargetYears(NaN);
+                          setTargetPayment(NaN);
+                          return;
+                        }
                         const v = parseInt(raw, 10);
-                        setTargetYears(Number.isFinite(v) ? v : NaN);
+                        if (!Number.isFinite(v)) {
+                          setTargetYears(NaN);
+                          setTargetPayment(NaN);
+                          return;
+                        }
+                        syncTargetFromMode("term", loanAmount, v, targetPayment, repaymentFrequency);
                       }}
                       min={1}
                       max={40}
@@ -834,7 +921,7 @@ export default function LabPage() {
                   <p className="q2-option-hint">{t("lab.q2.term.hint")}</p>
                 </div>
                 <span className="q2-option-badge">
-                  {targetMode === "term" ? t("lab.choice.selected") : ""}
+                  {targetMode === "term" ? t("lab.choice.selected") : t("lab.choice.autoCalculated")}
                 </span>
               </div>
 
@@ -858,12 +945,21 @@ export default function LabPage() {
                     <span className="q2-option-text">{t("lab.q2.payment.before")}</span>
                     <NumberInput
                       ariaLabel={t("lab.q2.payment.aria")}
-                      value={targetMode === "payment" && Number.isFinite(targetPayment) ? targetPayment : ""}
+                      value={Number.isFinite(targetPayment) ? targetPayment : ""}
                       onChange={(e) => {
                         const raw = e.target.value;
-                        if (raw === "") { setTargetPayment(NaN); return; }
+                        if (raw === "") {
+                          setTargetPayment(NaN);
+                          setTargetYears(NaN);
+                          return;
+                        }
                         const v = parseInt(raw, 10);
-                        setTargetPayment(Number.isFinite(v) ? v : NaN);
+                        if (!Number.isFinite(v)) {
+                          setTargetPayment(NaN);
+                          setTargetYears(NaN);
+                          return;
+                        }
+                        syncTargetFromMode("payment", loanAmount, targetYears, v, repaymentFrequency);
                       }}
                       min={1}
                       step={10}
@@ -879,7 +975,7 @@ export default function LabPage() {
                   <p className="q2-option-hint">{t("lab.q2.payment.hint")}</p>
                 </div>
                 <span className="q2-option-badge">
-                  {targetMode === "payment" ? t("lab.choice.selected") : ""}
+                  {targetMode === "payment" ? t("lab.choice.selected") : t("lab.choice.autoCalculated")}
                 </span>
               </div>
             </div>
@@ -892,7 +988,14 @@ export default function LabPage() {
                     key={f}
                     type="button"
                     className={`chip-btn ${repaymentFrequency === f ? "selected" : ""}`}
-                    onClick={() => setRepaymentFrequency(f)}
+                    onClick={() => {
+                      setRepaymentFrequency(f);
+                      if (targetMode === "term") {
+                        syncTargetFromMode("term", loanAmount, targetYears, targetPayment, f);
+                      } else {
+                        syncTargetFromMode("payment", loanAmount, targetYears, targetPayment, f);
+                      }
+                    }}
                     aria-pressed={repaymentFrequency === f}
                   >
                     <span>{t(`common.${f}`)}</span>
@@ -1678,7 +1781,7 @@ export default function LabPage() {
           font-weight: 800;
         }
         .q2-option-badge {
-          min-width: 82px;
+          min-width: 118px;
           justify-self: end;
           color: #cffafe;
           font-size: 11px;
@@ -1689,7 +1792,7 @@ export default function LabPage() {
           animation: selected-label-in 220ms ease both;
         }
         .q2-option-row:not(.selected) .q2-option-badge {
-          opacity: 0;
+          color: rgba(191, 219, 254, 0.72);
           animation: none;
         }
         .option-selected-text,

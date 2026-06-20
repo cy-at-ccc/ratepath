@@ -93,7 +93,14 @@ export default function Navbar() {
       label: t("nav.lab"),
       href: "/lab",
       icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 L15 8 L22 9 L17 14 L18 21 L12 18 L6 21 L7 14 L2 9 L9 8 Z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 19h16" />
+          <path d="M6 15l4-4 3 3 5-7" />
+          <circle cx="6" cy="15" r="1" />
+          <circle cx="10" cy="11" r="1" />
+          <circle cx="13" cy="14" r="1" />
+          <circle cx="18" cy="7" r="1" />
+        </svg>
       )
     },
     {
