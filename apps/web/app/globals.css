@@ -185,7 +185,8 @@ a {
 .glass-panel.accent-emerald::before,
 .glass-panel.accent-amber::before,
 .glass-panel.accent-rose::before,
-.glass-panel.accent-cyan::before {
+.glass-panel.accent-cyan::before,
+.glass-panel.accent-violet::before {
   content: "";
   position: absolute;
   top: 0;
@@ -211,6 +212,9 @@ a {
 }
 .glass-panel.accent-cyan::before {
   background: linear-gradient(90deg, transparent, var(--accent-cyan) 30%, var(--accent-blue) 70%, transparent);
+}
+.glass-panel.accent-violet::before {
+  background: linear-gradient(90deg, transparent, var(--accent-purple) 30%, #c084fc 70%, transparent);
 }
 
 /* Subtle starfield backdrop on the body to add depth */

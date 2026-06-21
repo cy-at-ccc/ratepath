@@ -169,7 +169,9 @@ function buildMediumTermMonteCarloPolicyPath({
     const previousAnchor = anchorPath[month - 1]?.rate ?? anchor;
     const anchorDrift = anchor - previousAnchor;
     const progress = (month - SHORT_TERM_HORIZON_MONTHS) / Math.max(1, DETERMINISTIC_HORIZON_MONTHS - SHORT_TERM_HORIZON_MONTHS);
-    const sigma = Math.max(0.00008, uncertainty * (0.018 + 0.032 * progress));
+    // TODO(lab-noise-tuning): bumped ~4× from 0.018 + 0.032 to surface monthly
+    // volatility on the OCR scenario chart. Revert or tune further after review.
+    const sigma = Math.max(0.00008, uncertainty * (0.07 + 0.13 * progress));
     const shock = previousShock * 0.45 + normalSample(rng) * sigma;
     const meanReversion = (anchor - currentRate) * 0.18;
 
@@ -211,7 +213,9 @@ function buildLongTermMonteCarloPolicyPath({
   const month36Rate = path[Math.min(DETERMINISTIC_HORIZON_MONTHS, path.length - 1)]?.rate ?? month12Rate;
   const mediumTermDelta = month36Rate - month12Rate;
   const monthlyTrendStep = Math.max(0.00006, Math.abs(mediumTermDelta) / 24 * 0.75);
-  const baseNoiseScale = Math.max(0.00012, uncertainty * 0.09);
+  // TODO(lab-noise-tuning): bumped ~4× from 0.09 to surface monthly volatility
+  // on the OCR scenario chart. Revert or tune further after review.
+  const baseNoiseScale = Math.max(0.00012, uncertainty * 0.36);
 
   let currentRate = month36Rate;
   let initialPreferredDirection = mediumTermDelta > 0.00001 ? -1 : mediumTermDelta < -0.00001 ? 1 : (rng() < 0.5 ? -1 : 1);

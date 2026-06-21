@@ -61,8 +61,8 @@ const UNCERTAINTY_TO_DELTA = {
   high:   0.020
 };
 
-const STEPS = ["welcome", "q1", "q2", "q3", "q4", "q5", "q6", "ocr", "results"];
-const QUESTION_STEPS = ["q1", "q2", "q3", "q4", "q5", "q6"];
+const STEPS = ["welcome", "q1", "q2", "q3split", "q3", "q4", "q5", "q6", "ocr", "results"];
+const QUESTION_STEPS = ["q1", "q2", "q3split", "q3", "q4", "q5", "q6"];
 
 const PORTFOLIO_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#f43f5e", "#06b6d4", "#8b5cf6", "#ec4899"];
 
@@ -375,19 +375,34 @@ function buildMortgageFromAnswers(answers, marketRates) {
   };
 }
 
-function buildConstraints() {
+// Map the q3split "loan split preference" wizard choice to the engine's
+// strategy-generator constraints. Kept module-level (constant) so it can be
+// read by the q3split card descriptions without re-creating on every render.
+//
+// `maxFloatingPercentage` stays at 0 across the board so lab keeps its
+// "100% fixed-rate" character (matches the original lab behaviour before
+// the split question was added). To unlock floating combinations, change
+// each entry below — the optimiser & strategy-generator already support
+// it; the lab page just needs to opt in.
+const SPLIT_TO_PARAMS = {
+  single:     { maxSplits: 1, percentageStep: 1.00, maxFloatingPercentage: 0 },
+  two:        { maxSplits: 2, percentageStep: 0.10, maxFloatingPercentage: 0 },
+  three:      { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 0 },
+  four:       { maxSplits: 4, percentageStep: 0.10, maxFloatingPercentage: 0 },
+  noIdea:     { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 0 },
+  // "Diversification preset" from strategy-lab (PRESET_PROFILES.diversification):
+  // maxSplits=4, percentageStep=0.05, maxFloatingPercentage=0.30. Kept at
+  // 0 here to honour the lab's 100%-fixed constraint while still widening
+  // the candidate pool by bumping maxSplits + tightening the step.
+  modelDecide:{ maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 0 }
+};
+
+function buildConstraints(splitPreference) {
+  const params = SPLIT_TO_PARAMS[splitPreference] || SPLIT_TO_PARAMS.noIdea;
   return {
-    maxSplits: nzProfile.rules.maxSplits,
+    ...params,
     minPercentage: nzProfile.rules.minPercentage,
-    // 10% step matches the Strategy Lab default preset — coarser grid than
-    // the country adapter's 5% to keep the candidate set interpretable and
-    // mirror Strategy Lab's default behaviour.
-    percentageStep: 0.10,
     minTrancheAmount: nzProfile.rules.minTrancheAmount,
-    // Force 100% fixed-rate: maxFloating=0 ⇒ minFixed=1.0, so every candidate
-    // strategy has zero floating exposure. Strategy generator's PR-1 prunes
-    // any allocation with >0% floating.
-    maxFloatingPercentage: 0,
     mustKeepFloating: false
   };
 }
@@ -479,6 +494,7 @@ export default function LabPage() {
       targetYears: 25,
       targetPayment: 0,
       repaymentFrequency: "fortnightly",
+      splitPreference: "noIdea",
       shortOutlook: null,
       mediumOutlook: null,
       uncertainty: null,
@@ -494,6 +510,7 @@ export default function LabPage() {
     if (typeof saved.targetPayment === "number") out.targetPayment = saved.targetPayment;
     else out.targetPayment = defaultPaymentForAmount(out.loanAmount, out.repaymentFrequency);
     if (saved.repaymentFrequency) out.repaymentFrequency = saved.repaymentFrequency;
+    if (saved.splitPreference) out.splitPreference = saved.splitPreference;
     if (saved.shortOutlook) out.shortOutlook = saved.shortOutlook;
     if (saved.mediumOutlook) out.mediumOutlook = saved.mediumOutlook;
     if (saved.uncertainty) out.uncertainty = saved.uncertainty;
@@ -518,6 +535,7 @@ export default function LabPage() {
   const [targetYears, setTargetYears] = useState(initialForm.targetYears);
   const [targetPayment, setTargetPayment] = useState(initialForm.targetPayment);
   const [repaymentFrequency, setRepaymentFrequency] = useState(initialForm.repaymentFrequency);
+  const [splitPreference, setSplitPreference] = useState(initialForm.splitPreference);
   const [shortOutlook, setShortOutlook] = useState(initialForm.shortOutlook);
   const [mediumOutlook, setMediumOutlook] = useState(initialForm.mediumOutlook);
   const [uncertainty, setUncertainty] = useState(initialForm.uncertainty);
@@ -554,12 +572,14 @@ export default function LabPage() {
     const handle = setTimeout(() => {
       writeSavedForm({
         loanAmount, targetMode, targetYears, targetPayment, repaymentFrequency,
+        splitPreference,
         shortOutlook, mediumOutlook, uncertainty,
         forecastYears: Number.isFinite(forecastYears) ? forecastYears : null
       });
     }, 250);
     return () => clearTimeout(handle);
   }, [loanAmount, targetMode, targetYears, targetPayment, repaymentFrequency,
+      splitPreference,
       shortOutlook, mediumOutlook, uncertainty, forecastYears]);
 
   // ---- Premium popup: Escape to close + body scroll lock ------------------
@@ -721,6 +741,7 @@ export default function LabPage() {
           repaymentFrequency
         );
         return targetPayment >= minInterest;
+      case "q3split": return !!splitPreference;
       case "q3": return !!shortOutlook;
       case "q4": return !!mediumOutlook;
       case "q5": return !!uncertainty;
@@ -729,6 +750,7 @@ export default function LabPage() {
       default: return true;
     }
   }, [step, loanAmount, targetMode, targetYears, targetPayment, repaymentFrequency,
+      splitPreference,
       shortOutlook, mediumOutlook, uncertainty, forecastYears, scenarios, marketRates]);
 
   // ---- Run simulation -----------------------------------------------------
@@ -745,7 +767,7 @@ export default function LabPage() {
       strategies = generateSplitStrategies({
         totalAmount: loanAmount,
         allowedProducts: nzProfile.products.map((p) => ({ code: p.code, type: p.type })),
-        constraints: buildConstraints(),
+        constraints: buildConstraints(splitPreference),
         refixRule: { type: "same-term" }
       });
     } catch (err) {
@@ -842,6 +864,7 @@ export default function LabPage() {
       setPhase("form");
     }
   }, [loanAmount, targetMode, targetYears, targetPayment, repaymentFrequency,
+      splitPreference,
       marketRates, scenarios, shortOutlook, mediumOutlook, uncertainty, t, forecastMonths]);
 
   // ---- Open detail modal (lazy-load timeline) ----------------------------
@@ -1227,6 +1250,37 @@ export default function LabPage() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+        );
+
+      case "q3split":
+        return (
+          <div className="glass-panel accent-violet wizard-step">
+            <h2 className="card-header"><span className="card-header-accent" />{t("lab.q3split.title")}</h2>
+            <p className="wizard-step-hint">{t("lab.q3split.hint")}</p>
+            <div className="choice-grid q3split-grid">
+              {[
+                { value: "single",     glyph: "1",  label: t("lab.q3split.single"),     desc: t("lab.q3split.singleDesc"),     tone: "teal" },
+                { value: "two",        glyph: "2",  label: t("lab.q3split.two"),        desc: t("lab.q3split.twoDesc"),        tone: "cyan" },
+                { value: "three",      glyph: "3",  label: t("lab.q3split.three"),      desc: t("lab.q3split.threeDesc"),      tone: "primary" },
+                { value: "four",       glyph: "4",  label: t("lab.q3split.four"),       desc: t("lab.q3split.fourDesc"),       tone: "amber" },
+                { value: "noIdea",     glyph: "—",  label: t("lab.q3split.noIdea"),     desc: t("lab.q3split.noIdeaDesc"),     tone: "rose" },
+                { value: "modelDecide",glyph: "✦",  label: t("lab.q3split.modelDecide"),desc: t("lab.q3split.modelDecideDesc"),tone: "green" }
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`choice-card tone-${opt.tone} ${splitPreference === opt.value ? "selected" : ""}`}
+                  onClick={() => setSplitPreference(opt.value)}
+                  aria-pressed={splitPreference === opt.value}
+                >
+                  <span className="choice-card-glyph" aria-hidden="true">{opt.glyph}</span>
+                  <span className="choice-card-label">{opt.label}</span>
+                  <span className="choice-card-desc">{opt.desc}</span>
+                  {splitPreference === opt.value && <span className="choice-card-status">{t("lab.choice.selected")}</span>}
+                </button>
+              ))}
             </div>
           </div>
         );
@@ -2165,6 +2219,7 @@ export default function LabPage() {
         .q3-grid { grid-template-columns: repeat(2, 1fr); }
         .q4-grid { grid-template-columns: repeat(2, 1fr); }
         .q5-grid { grid-template-columns: repeat(3, 1fr); }
+        .q3split-grid { grid-template-columns: repeat(3, 1fr); }
         .choice-card {
           --choice-color: var(--color-primary);
           --choice-glow: rgba(99, 102, 241, 0.28);
@@ -2277,6 +2332,17 @@ export default function LabPage() {
           font-weight: 700;
           letter-spacing: 0.01em;
         }
+        .choice-card-desc {
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--text-secondary);
+          line-height: 1.45;
+          margin-top: 2px;
+          max-width: 22ch;
+        }
+        .choice-card.selected .choice-card-desc {
+          color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+        }
         .choice-card-status {
           padding: 4px 9px;
           border-radius: 999px;
@@ -2296,6 +2362,11 @@ export default function LabPage() {
         .choice-grid > .choice-card:nth-child(2) { animation-delay: 110ms; }
         .choice-grid > .choice-card:nth-child(3) { animation-delay: 180ms; }
         .choice-grid > .choice-card:nth-child(4) { animation-delay: 250ms; }
+        .choice-grid > .choice-card:nth-child(5) { animation-delay: 320ms; }
+        .choice-grid > .choice-card:nth-child(6) { animation-delay: 390ms; }
+        @media (max-width: 720px) {
+          .q3split-grid { grid-template-columns: 1fr; }
+        }
         @keyframes choice-reveal {
           from { opacity: 0; transform: translateY(8px) scale(0.96); }
           to   { opacity: 1; transform: translateY(0) scale(1); }
