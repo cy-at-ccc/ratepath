@@ -689,6 +689,32 @@ export default function LabPage() {
     });
   }, []);
 
+  // ---- Auto-advance (card questions) -------------------------------------
+  // Card-based questions (q3split / q3 / q4 / q5) advance to the next step
+  // ~220 ms after the user selects an option. The short delay lets the
+  // "selected" state render first so the click feels acknowledged, but is
+  // short enough that the wizard feels responsive. Re-clicking the same
+  // option is a no-op (no advance) so users can change their mind or use
+  // the Next button after going back.
+  const advanceTimerRef = useRef(null);
+  const cancelAutoAdvance = useCallback(() => {
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, []);
+  const scheduleAutoAdvance = useCallback(() => {
+    cancelAutoAdvance();
+    advanceTimerRef.current = setTimeout(() => {
+      advanceTimerRef.current = null;
+      goNext();
+    }, 220);
+  }, [cancelAutoAdvance, goNext]);
+
+  // Cancel any pending advance when the step changes (e.g. user clicked
+  // Back, or we navigated programmatically) or when the component unmounts.
+  useEffect(() => () => cancelAutoAdvance(), [step, cancelAutoAdvance]);
+
   const goBack = useCallback(() => {
     setStep((s) => {
       const idx = STEPS.indexOf(s);
@@ -1272,7 +1298,11 @@ export default function LabPage() {
                   key={opt.value}
                   type="button"
                   className={`choice-card tone-${opt.tone} ${splitPreference === opt.value ? "selected" : ""}`}
-                  onClick={() => setSplitPreference(opt.value)}
+                  onClick={() => {
+                    if (splitPreference === opt.value) return;
+                    setSplitPreference(opt.value);
+                    scheduleAutoAdvance();
+                  }}
                   aria-pressed={splitPreference === opt.value}
                 >
                   <span className="choice-card-glyph" aria-hidden="true">{opt.glyph}</span>
@@ -1302,7 +1332,11 @@ export default function LabPage() {
                   key={opt.value}
                   type="button"
                   className={`choice-card tone-${opt.tone} ${shortOutlook === opt.value ? "selected" : ""}`}
-                  onClick={() => setShortOutlook(opt.value)}
+                  onClick={() => {
+                    if (shortOutlook === opt.value) return;
+                    setShortOutlook(opt.value);
+                    scheduleAutoAdvance();
+                  }}
                   aria-pressed={shortOutlook === opt.value}
                 >
                   <span className="choice-card-glyph" aria-hidden="true">{opt.label}</span>
@@ -1349,7 +1383,11 @@ export default function LabPage() {
                   key={opt.value}
                   type="button"
                   className={`choice-card tone-${opt.tone} ${mediumOutlook === opt.value ? "selected" : ""}`}
-                  onClick={() => setMediumOutlook(opt.value)}
+                  onClick={() => {
+                    if (mediumOutlook === opt.value) return;
+                    setMediumOutlook(opt.value);
+                    scheduleAutoAdvance();
+                  }}
                   aria-pressed={mediumOutlook === opt.value}
                 >
                   <span className="choice-card-glyph" aria-hidden="true">{opt.label}</span>
@@ -1377,7 +1415,11 @@ export default function LabPage() {
                   key={opt.value}
                   type="button"
                   className={`choice-card tone-${opt.tone} ${uncertainty === opt.value ? "selected" : ""}`}
-                  onClick={() => setUncertainty(opt.value)}
+                  onClick={() => {
+                    if (uncertainty === opt.value) return;
+                    setUncertainty(opt.value);
+                    scheduleAutoAdvance();
+                  }}
                   aria-pressed={uncertainty === opt.value}
                 >
                   <span className="choice-card-glyph" aria-hidden="true">{opt.glyph}</span>
