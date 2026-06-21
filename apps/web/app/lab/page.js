@@ -652,7 +652,8 @@ export default function LabPage() {
           uncertainty: UNCERTAINTY_TO_DELTA[uncertainty],
           scenarioProbabilities: { low: 0.15, base: 0.7, high: 0.15 },
           longTermCycleYears: 2,
-          longTermReversalBias: 0.7,
+          longTermReversalBias: 0.9,
+          longTermAmplitude: 1.0,
           monteCarloSampleCount: 200
         }
       });
@@ -1499,7 +1500,13 @@ export default function LabPage() {
             {scenarios && chartSeries.length > 0 ? (
               <>
                 <div className="ocr-chart-wrap">
-                  <SvgChart data={chartSeries} yAxisType="rate" height={320} />
+                  <SvgChart
+                    data={chartSeries}
+                    yAxisType="rate"
+                    height={320}
+                    yMin={0}
+                    yMax={Math.max(0.05, marketRates.ocr + 0.025)}
+                  />
                 </div>
                 <p className="ocr-summary">{ocrSummary}</p>
               </>

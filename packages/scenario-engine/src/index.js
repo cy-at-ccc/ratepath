@@ -191,6 +191,7 @@ function buildMediumTermMonteCarloPolicyPath({
  * @param {number} input.reversalBias
  * @param {number} input.uncertainty
  * @param {number} input.rateCap
+ * @param {number} input.longTermAmplitude - UI multiplier on the cycle step only (noise stays fixed; default 1.0, clamped 0.5-2.0)
  * @param {string} input.seedText
  * @returns {Array<{month: number, rate: number}>}
  */
@@ -201,6 +202,7 @@ function buildLongTermMonteCarloPolicyPath({
   reversalBias,
   uncertainty,
   rateCap,
+  longTermAmplitude,
   seedText
 }) {
   if (forecastMonths <= DETERMINISTIC_HORIZON_MONTHS) {
@@ -212,9 +214,17 @@ function buildLongTermMonteCarloPolicyPath({
   const month12Rate = path[Math.min(12, path.length - 1)]?.rate ?? path[0]?.rate ?? 0;
   const month36Rate = path[Math.min(DETERMINISTIC_HORIZON_MONTHS, path.length - 1)]?.rate ?? month12Rate;
   const mediumTermDelta = month36Rate - month12Rate;
-  const monthlyTrendStep = Math.max(0.00006, Math.abs(mediumTermDelta) / 24 * 0.75);
-  // TODO(lab-noise-tuning): bumped ~4× from 0.09 to surface monthly volatility
-  // on the OCR scenario chart. Revert or tune further after review.
+  // longTermAmplitude is a UI-facing multiplier (default 1.0) that scales
+  // ONLY the long-term cycle step (visible zigzag amplitude). The per-month
+  // noise scale stays at the engine's tuned baseline so dragging the slider
+  // changes the cycle's visibility against the noise floor — the higher the
+  // amplitude, the more the cycle dominates the chart, without artificially
+  // inflating the noise. Mean reversion, cycle frequency, reversal pattern,
+  // and in-cycle oscillation coefficient are not affected.
+  // The 0.001 floor (raised from 0.00025) ensures the cycle is large enough
+  // to be visible above the noise on the P50 median path of a 200-sample MC
+  // pool, even for neutral scenarios where medium-term delta is small.
+  const monthlyTrendStep = Math.max(0.001, Math.abs(mediumTermDelta) / 24 * 0.75) * longTermAmplitude;
   const baseNoiseScale = Math.max(0.00012, uncertainty * 0.36);
 
   let currentRate = month36Rate;
@@ -233,13 +243,27 @@ function buildLongTermMonteCarloPolicyPath({
       cycleDirection = rng() < reversalBias ? preferredDirection : -preferredDirection;
       cycleMagnitude = monthlyTrendStep * (0.8 + rng() * 0.6);
       cycleNoiseScale = baseNoiseScale * (0.75 + rng() * 0.75);
-      cyclePhaseOffset = rng() * Math.PI * 2;
+      // cyclePhaseOffset is now 0 (was rng()*2π) so all samples share the same
+      // within-cycle phase. This keeps the deterministic cycle visible in the
+      // per-month quantile (P50) path — random phases would cancel out in
+      // the median across 200 samples, leaving only the cumulative drift.
+      // The reversalBias slider still varies which direction each sample
+      // takes; the magnitude still varies per sample. Only the within-cycle
+      // phase offset is now aligned.
+      cyclePhaseOffset = 0;
     }
 
     const phase = monthInCycle / Math.max(1, cycleMonths - 1);
     const directionalDrift = cycleDirection * cycleMagnitude * (0.7 + 0.3 * Math.cos(Math.PI * phase));
-    const oscillation = Math.sin(phase * Math.PI * 2 + cyclePhaseOffset) * cycleMagnitude * 0.18;
-    const meanReversion = (month36Rate - currentRate) * 0.018;
+    // oscillation coefficient bumped 0.18 → 0.5 so each cycle has a visible
+    // crest/trough on top of the monotonic ramp, instead of a smooth wave.
+    // Its absolute amplitude is auto-scaled by cycleMagnitude, which is in
+    // turn scaled by longTermAmplitude — no extra coupling needed.
+    const oscillation = Math.sin(phase * Math.PI * 2 + cyclePhaseOffset) * cycleMagnitude * 0.5;
+    // meanReversion 0.018 → 0.006 (half-life 38.5 mo → 115.5 mo) so the
+    // long-term path is not pulled back to the month-36 anchor as aggressively.
+    // This is the "physics" knob — independent of longTermAmplitude.
+    const meanReversion = (month36Rate - currentRate) * 0.006;
     const noise = (rng() - 0.5) * 2 * cycleNoiseScale;
 
     currentRate = roundRate(currentRate + directionalDrift + oscillation + meanReversion + noise, rateCap);
@@ -297,6 +321,7 @@ export function validateScenario(scenario) {
  * @param {{ low?: number, base?: number, high?: number }} [input.controls.scenarioProbabilities] - Scenario probability weights
  * @param {number} [input.controls.longTermCycleYears] - Post-36-month dominant swing cycle length in years
  * @param {number} [input.controls.longTermReversalBias] - Probability that the next long-term cycle reverses the 13-36m trend
+ * @param {number} [input.controls.longTermAmplitude] - UI multiplier on long-term cycle step only; per-month noise stays at the engine baseline (default 1.0, clamped 0.5-2.0)
  * @param {number} [input.controls.monteCarloSampleCount] - Number of Monte Carlo samples per scenario family
  * @param {number} [input.controls.policyRateCap] - Maximum generated policy rate
  * @returns {RateScenario[]} Array of three validated RateScenario objects (low, base, high)
@@ -314,6 +339,7 @@ export function generateScenarios({
   const scenarioProbabilities = normaliseScenarioProbabilities(controls?.scenarioProbabilities);
   const longTermCycleMonths = Math.max(12, (controls?.longTermCycleYears ?? 2) * 12);
   const longTermReversalBias = Math.min(0.95, Math.max(0.5, controls?.longTermReversalBias ?? 0.7));
+  const longTermAmplitude = Math.min(2.0, Math.max(0.5, controls?.longTermAmplitude ?? 1.0));
   const monteCarloSampleCount = Math.max(1, Math.round(controls?.monteCarloSampleCount ?? DEFAULT_MONTE_CARLO_SAMPLE_COUNT));
   const policyRateCap = Math.max(0.01, controls?.policyRateCap ?? DEFAULT_POLICY_RATE_CAP);
 
@@ -404,6 +430,7 @@ export function generateScenarios({
           uncertainty,
           longTermCycleMonths,
           longTermReversalBias,
+          longTermAmplitude,
           policyRateCap,
           scenarioFamily: spec.id,
           scenarioProbability: spec.probability
@@ -422,6 +449,7 @@ export function generateScenarios({
           reversalBias: longTermReversalBias,
           uncertainty,
           rateCap: policyRateCap,
+          longTermAmplitude,
           seedText: `long-${stableStringify(seedInput)}`
         });
         const productRatePaths = deriveProductRatePaths({
@@ -451,6 +479,7 @@ export function generateScenarios({
             isMonteCarloTail: forecastMonths > DETERMINISTIC_HORIZON_MONTHS,
             monteCarloSampleIndex: sampleIndex,
             monteCarloSampleCount,
+            longTermAmplitude,
             policyRateCap,
             longTermCycleMonths,
             longTermReversalBias,

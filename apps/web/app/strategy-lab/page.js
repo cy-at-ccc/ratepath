@@ -137,7 +137,8 @@ export default function StrategyLab() {
   const [uncertainty, setUncertainty] = useState(0.01); // 0 to 2%
   const [scenarioProbabilities, setScenarioProbabilities] = useState({ low: 15, base: 70, high: 15 });
   const [longTermCycleYears, setLongTermCycleYears] = useState(2);
-  const [longTermReversalBias, setLongTermReversalBias] = useState(0.5);
+  const [longTermReversalBias, setLongTermReversalBias] = useState(0.9);
+  const [longTermAmplitude, setLongTermAmplitude] = useState(1.0); // 0.5 to 2.0, default = "no change" against the new engine baseline
   const [monteCarloSampleCount, setMonteCarloSampleCount] = useState(200); // 50 to 1000
   const [simDurationYears, setSimDurationYears] = useState(5); // default 5 years (60 months)
 
@@ -364,12 +365,14 @@ export default function StrategyLab() {
   };
 
   const isLongTermModified = longTermCycleYears !== 2 ||
-    longTermReversalBias !== 0.5 ||
+    longTermReversalBias !== 0.9 ||
+    longTermAmplitude !== 1.0 ||
     monteCarloSampleCount !== 200;
 
   const handleResetLongTerm = () => {
     setLongTermCycleYears(2);
-    setLongTermReversalBias(0.5);
+    setLongTermReversalBias(0.9);
+    setLongTermAmplitude(1.0);
     setMonteCarloSampleCount(200);
   };
 
@@ -807,6 +810,7 @@ export default function StrategyLab() {
           if (p.scenarioProbabilities !== undefined) setScenarioProbabilities(p.scenarioProbabilities);
           if (p.longTermCycleYears !== undefined) setLongTermCycleYears(p.longTermCycleYears);
           if (p.longTermReversalBias !== undefined) setLongTermReversalBias(p.longTermReversalBias);
+          if (p.longTermAmplitude !== undefined) setLongTermAmplitude(p.longTermAmplitude);
           if (p.monteCarloSampleCount !== undefined) setMonteCarloSampleCount(p.monteCarloSampleCount);
           if (p.simDurationYears !== undefined) setSimDurationYears(p.simDurationYears);
           if (p.maxSplits !== undefined) setMaxSplits(p.maxSplits);
@@ -890,6 +894,7 @@ export default function StrategyLab() {
         },
         longTermCycleYears,
         longTermReversalBias,
+        longTermAmplitude,
         monteCarloSampleCount
       }
     });
@@ -1304,6 +1309,7 @@ export default function StrategyLab() {
             scenarioProbabilities,
             longTermCycleYears,
             longTermReversalBias,
+            longTermAmplitude,
             monteCarloSampleCount,
             simDurationYears,
             maxSplits,
@@ -2354,6 +2360,22 @@ export default function StrategyLab() {
 
                   <div className="form-group">
                     <div className="slider-label-row">
+                      <span className="form-label">{t("strategyLab.longTerm.amplitudeLabel")}</span>
+                      <span className="slider-value">{longTermAmplitude.toFixed(2)}{t("strategyLab.longTerm.amplitudeUnit")}</span>
+                    </div>
+                    <Slider min={0.5} max={2.0} step={0.25} value={longTermAmplitude} onChange={(e) => setLongTermAmplitude(parseFloat(e.target.value))} aria-label={t("strategyLab.longTerm.amplitudeAriaLabel")} aria-valuetext={`${longTermAmplitude.toFixed(2)}×`} />
+                    <div className="slider-range-desc">
+                      <span>{t("strategyLab.longTerm.amplitudeRangeConservative")}</span>
+                      <span>{t("strategyLab.longTerm.amplitudeRangeDefault")}</span>
+                      <span>{t("strategyLab.longTerm.amplitudeRangeExaggerated")}</span>
+                    </div>
+                    <div className="param-explanation">
+                      {t("strategyLab.longTerm.amplitudeExplain")}
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <div className="slider-label-row">
                       <span className="form-label">{t("strategyLab.monteCarloSampleCount.label")}</span>
                       <span className="slider-value">{monteCarloSampleCount}</span>
                     </div>
@@ -2868,7 +2890,13 @@ export default function StrategyLab() {
           <section className="glass-panel chart-section accent-cyan">
             <h2 className="section-title"><span className="step-num">7</span>{t("strategyLab.step7.title")}</h2>
             <div style={{ marginTop: "16px" }}>
-              <SvgChart data={chartScenarioPaths} yAxisType="rate" height={220} />
+              <SvgChart
+                data={chartScenarioPaths}
+                yAxisType="rate"
+                height={220}
+                yMin={0}
+                yMax={Math.max(0.05, marketRates.ocr + 0.025)}
+              />
             </div>
             <div className="chart-explain-box">
               <div className="chart-explain-title">{t("strategyLab.step7.howToReadTitle")}</div>

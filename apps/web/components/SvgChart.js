@@ -53,9 +53,11 @@ function withAlpha(hex, alpha) {
  * @param {string} [props.yAxisType="rate"] - Type of axis: "rate" (e.g., 5.50%) or "currency" (e.g., $450,000)
  * @param {string} [props.title]
  * @param {number} [props.height=300] - Height of chart
+ * @param {number} [props.yMin] - Optional fixed y-axis lower bound (decimal rate, e.g. 0 for 0%). When provided, overrides the default data-driven auto-fit so the visible scale stays stable across amplitude/path-shape changes.
+ * @param {number} [props.yMax] - Optional fixed y-axis upper bound (decimal rate, e.g. 0.05 for 5%). When provided, overrides the default data-driven auto-fit.
  * @returns {any}
  */
-export default function SvgChart({ data, yAxisType = "rate", title, height = 300 }) {
+export default function SvgChart({ data, yAxisType = "rate", title, height = 300, yMin: yMinProp, yMax: yMaxProp }) {
   const { t } = useI18n();
   const [hoverMonth, setHoverMonth] = useState(/** @type {number|null} */ (null));
   const [hoverX, setHoverX] = useState(0);
@@ -179,9 +181,17 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
   const minVal = Math.min(...allValues);
   const maxVal = Math.max(...allValues);
 
-  // Buffer bounds
-  const yMin = yAxisType === "rate" ? Math.max(0, minVal - 0.005) : Math.max(0, minVal * 0.95);
-  const yMax = yAxisType === "rate" ? maxVal + 0.005 : maxVal * 1.05;
+  // Buffer bounds. When the caller passes yMin/yMax, use them as a fixed
+  // range so the visible scale stays stable across amplitude / path-shape
+  // changes (otherwise the chart auto-widens to fit the data, hiding the
+  // visual impact of e.g. the longTermAmplitude slider). Otherwise fall
+  // back to the data-driven auto-fit with a tight ±0.5pp buffer.
+  const yMin = yMinProp !== undefined
+    ? yMinProp
+    : (yAxisType === "rate" ? Math.max(0, minVal - 0.005) : Math.max(0, minVal * 0.95));
+  const yMax = yMaxProp !== undefined
+    ? yMaxProp
+    : (yAxisType === "rate" ? maxVal + 0.005 : maxVal * 1.05);
   const yRange = yMax - yMin || 1;
   const xRange = maxMonth - minMonth || 1;
 
@@ -359,8 +369,10 @@ export default function SvgChart({ data, yAxisType = "rate", title, height = 300
   }
 
   const xGridLines = [];
-  // Yearly ticks (or every 6 months for short series)
-  const tickStep = xRange <= 18 ? 6 : 12;
+  // Yearly ticks (or every 6 months for short series). On narrow viewports
+  // (<480px) the 11 yearly labels overlap; drop to every 2 years so 11 yearly
+  // labels become 6 (现在, 2年, 4年, 6年, 8年, 10年) and fit comfortably.
+  const tickStep = xRange <= 18 ? 6 : (width < 480 ? 24 : 12);
   for (let m = 0; m <= maxMonth; m += tickStep) {
     if (m >= minMonth) xGridLines.push(m);
   }

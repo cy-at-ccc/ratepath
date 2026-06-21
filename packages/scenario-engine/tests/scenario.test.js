@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateScenarios, validateScenario } from "../src/index.js";
+import { buildQuantileScenarios } from "../src/quantile.js";
 
 describe("Scenario Engine Tests", () => {
   const currentProductRates = {
@@ -268,5 +269,135 @@ describe("Scenario Engine Tests", () => {
     };
 
     expect(() => validateScenario(badScenario)).toThrow();
+  });
+
+  // Helper: aggregate a 200-sample MC pool into a proper P50 path. The
+  // lab/strategy-lab page renders this P50 on the OCR chart, so the
+  // regression target is the quantile path, not a single raw sample.
+  // (Sorting by id and picking the middle is WRONG — it picks the seed-deterministic
+  // median sample, not the statistical median rate.)
+  function buildP50Path(scenarios) {
+    const quantiles = buildQuantileScenarios(
+      scenarios,
+      [0.5],
+      { forecastMonths: scenarios[0].forecastMonths, currentProductRates, betas, products }
+    );
+    return quantiles[0]?.policyRatePath ?? [];
+  }
+
+  function peakToTrough(path, fromMonth, toMonth) {
+    const segment = path.filter((p) => p.month >= fromMonth && p.month <= toMonth);
+    if (segment.length === 0) return 0;
+    const rates = segment.map((p) => p.rate);
+    return Math.max(...rates) - Math.min(...rates);
+  }
+
+  it("long-term amplitude: default 1.0× produces visible swing over the long-term horizon", () => {
+    // 10-year horizon. The /lab chart displays a 200-sample P50 path,
+    // so the regression target is the *median* path's peak-to-trough.
+    const scenarios = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 120, // 10 years
+      controls: {
+        shortTermChange: -0.005,
+        mediumTermDirection: -0.5,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        longTermCycleYears: 2,
+        longTermReversalBias: 0.7,
+        longTermAmplitude: 1.0,
+        monteCarloSampleCount: 200
+      }
+    });
+
+    const median = buildP50Path(scenarios);
+    // Years 3-10 = months 36-120. With cycle floor 0.001, mean reversion
+    // 0.006, oscillation 0.5, and aligned phase offset, the P50 path (median
+    // across 200 MC samples) shows a peak-to-trough of ~0.8%. This is ~8×
+    // larger than the pre-tuning behaviour (~0.1%) and reads as clearly
+    // visible crests/troughs on the OCR chart. We assert ≥0.5% to leave
+    // margin for the 70/30 cycle-direction split and noise-vs-cycle overlap
+    // that compresses the P50 amplitude below the single-sample theoretical
+    // max of ~1.5%.
+    expect(peakToTrough(median, 36, 120)).toBeGreaterThanOrEqual(0.005);
+  });
+
+  it("long-term amplitude: 2.0× produces more swing than 0.5× on the median path", () => {
+    const baseControls = {
+      shortTermChange: -0.005,
+      mediumTermDirection: -0.5,
+      changeSpeed: 0.5,
+      uncertainty: 0.01,
+      longTermCycleYears: 2,
+      longTermReversalBias: 0.7,
+      monteCarloSampleCount: 200
+    };
+    const low = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 120,
+      controls: { ...baseControls, longTermAmplitude: 0.5 }
+    });
+    const high = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 120,
+      controls: { ...baseControls, longTermAmplitude: 2.0 }
+    });
+
+    const lowSwing = peakToTrough(buildP50Path(low), 36, 120);
+    const highSwing = peakToTrough(buildP50Path(high), 36, 120);
+
+    // 2.0× is 4× the linear amplitude of 0.5×, and the amplitude slider
+    // only scales the cycle (noise stays fixed), so the visible peak-to-trough
+    // ratio on the P50 should track that 4× closely. Empirically the
+    // ratio is ~5× on the P50 path; we assert 2.5× to leave room for
+    // cycle-direction jitter and noise interference across 200 samples.
+    expect(highSwing).toBeGreaterThan(lowSwing * 2.5);
+  });
+
+  it("long-term amplitude: clamps out-of-range values to [0.5, 2.0]", () => {
+    const tooLow = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 60,
+      controls: {
+        shortTermChange: 0,
+        mediumTermDirection: 0,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        longTermAmplitude: 0.1 // way below floor
+      }
+    });
+    const tooHigh = generateScenarios({
+      initialRate: 0.05,
+      currentProductRates,
+      betas,
+      products,
+      forecastMonths: 60,
+      controls: {
+        shortTermChange: 0,
+        mediumTermDirection: 0,
+        changeSpeed: 0.5,
+        uncertainty: 0.01,
+        longTermAmplitude: 10.0 // way above ceiling
+      }
+    });
+
+    // Clamped values are recorded in scenario.assumptions.longTermAmplitude
+    // so test callers can verify the clamp took effect.
+    const lowSample = tooLow.find((s) => s.assumptions?.scenarioFamily === "base");
+    const highSample = tooHigh.find((s) => s.assumptions?.scenarioFamily === "base");
+    expect(lowSample.assumptions.longTermAmplitude).toBe(0.5);
+    expect(highSample.assumptions.longTermAmplitude).toBe(2.0);
   });
 });
