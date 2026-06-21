@@ -64,11 +64,10 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
   // rotated 90deg. Resets whenever the modal closes (see useEffect below).
   const [tableRotated, setTableRotated] = useState(false);
 
-  // Show the rotate CTA only on narrow viewports in portrait orientation.
-  // `(max-width: 768px)` matches the rest of the app's mobile breakpoint
-  // (Navbar, globals, this modal). We don't gate on orientation alone —
-  // landscape phones have plenty of horizontal room already.
-  const showRotateCta = useMediaQuery("(max-width: 768px) and (orientation: portrait)");
+  // Show the rotate CTA on narrow portrait viewports, or any viewport
+  // too short to comfortably show the full timeline table inline
+  // (e.g. landscape phones where vh is typically 320–430 px).
+  const showRotateCta = useMediaQuery("(max-width: 768px) and (orientation: portrait), (max-height: 500px)");
 
   // Focusable selector — used by the focus trap below
   const FOCUSABLE_SELECTOR = [
@@ -559,7 +558,7 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         {tableRotated && typeof document !== "undefined" && createPortal(
           <div className="sdm-rotate-portal" role="dialog" aria-modal="true" aria-label={t("strategyDetail.timelineDetailHeader")}>
             <div className="sdm-rotate-portal-scroller" ref={rotateScrollerRef}>
-              <InlineTimelineV2 data={detailTimelineData} />
+              <InlineTimelineV2 data={detailTimelineData} maxHeight="none" />
             </div>
             <button
               type="button"
@@ -1045,24 +1044,23 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
           inset: 0;
           z-index: 2147483600;
           background: var(--bg-primary);
-          display: grid;
-          place-items: center;
+          overflow: hidden;
           padding: 0;
           animation: sdm-rotate-fade-in 200ms ease-out both;
         }
         .sdm-rotate-portal-scroller {
+          position: absolute;
+          top: 50%;
+          left: 50%;
           width: 100vh;
           height: 100vw;
-          transform: rotate(90deg);
+          transform: translate(-50%, -50%) rotate(90deg);
           transform-origin: center center;
           overflow: auto;
           background: var(--bg-primary);
         }
         /* Compactness overrides so the rotated table fits within the
-           rotated frame width (100vh of the viewport, ~844 px on iPhone 12
-           Pro). Without these, the column widths from InlineTimelineV2
-           (180 + 140 + 112*N + 148 px) would overflow the rotated frame
-           and require horizontal scroll, defeating the purpose. */
+           rotated frame width (100vh of the viewport). */
         .sdm-rotate-portal-scroller :global(.sdm-timeline-table-v2) {
           font-size: 11px;
           width: max-content;
@@ -1091,12 +1089,6 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         }
         .sdm-rotate-portal-scroller :global(.sdm-v2-final-col-selector) {
           width: 110px !important;
-        }
-        /* Fade edges so user sees a scroll affordance when content extends
-           beyond the visible area in the rotated frame. */
-        .sdm-rotate-portal-scroller {
-          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
-          -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
         }
         .sdm-rotate-exit {
           position: fixed;
@@ -1349,7 +1341,7 @@ function InlineTimeline(/** @type {any} */ props) {
 
 function InlineTimelineV2(/** @type {any} */ props) {
   const { t } = useI18n();
-  const { data } = props;
+  const { data, maxHeight = "420px" } = props;
   const { snapshotMonths = [], tranches = [] } = data || {};
   if (!tranches.length || !snapshotMonths.length) {
     return <div className="sdm-muted">{t("strategyDetail.noTimeline")}</div>;
@@ -1382,7 +1374,7 @@ function InlineTimelineV2(/** @type {any} */ props) {
   })();
 
   return (
-    <div style={{ overflowX: "auto", maxHeight: "420px" }}>
+    <div style={{ overflowX: "auto", maxHeight }}>
       <table className="sdm-timeline-table-v2">
         <colgroup>
           <col style={{ width: "180px" }} />

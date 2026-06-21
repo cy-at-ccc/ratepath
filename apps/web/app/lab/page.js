@@ -3065,13 +3065,26 @@ export default function LabPage() {
           .rec-actions { grid-template-columns: 1fr; }
           .rec-action-btn { min-height: 58px; }
           .scenario-picker-btn {
-            padding: 10px 12px;
-            font-size: 13px;
-            gap: 8px;
+            /* Tighter than the previous 10px/12px/8px so 3 fit in ~280px */
+            padding: 8px 10px;
+            font-size: 12px;
+            line-height: 1.2;
+            gap: 6px;
+            /* Let the label wrap to 2 lines on very narrow screens
+               instead of overflowing the pill border. */
+            white-space: normal;
+            min-height: 40px;
           }
           .scenario-picker-btn-icon-wrap {
-            width: 26px;
-            height: 26px;
+            width: 22px;
+            height: 22px;
+          }
+          .scenario-picker-btn-label {
+            text-align: center;
+            /* CJK: keep 4-char words like "利率下降" together.
+               English: allow "Rates fall" to wrap after the space. */
+            word-break: keep-all;
+            overflow-wrap: normal;
           }
         }
       `}</style>
