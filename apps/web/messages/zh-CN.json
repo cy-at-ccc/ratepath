@@ -1084,10 +1084,10 @@
   "strategyLab.warnings.inProgressBody": "已超过 {threshold} 警告阈值。可等待当前仿真完成，或取消后收紧拆分数 / 增大步长 / 缩短时长。",
 
   "nav.lab": "轻松策略",
-  "nav.lab.tip": "通过 6 个简单问题生成属于你的利率预期和贷款建议",
+  "nav.lab.tip": "通过 7 个简单问题生成属于你的利率预期和贷款建议",
 
   "lab.welcome.title": "用 60 秒规划你的房贷",
-  "lab.welcome.body": "RatePath 帮你比较不同的固定 + 浮动利率组合,在不同的未来利率情境下,找到最合适你的还款方案。回答 6 个简单问题即可。",
+  "lab.welcome.body": "RatePath 帮你比较不同的固定期限组合（如 1 年、2 年、5 年固定），在不同的未来利率情境下，找到最合适你的还款方案。回答 7 个简单问题即可。",
   "lab.welcome.start": "开始",
 
   "lab.progress.label": "第 {current} / {total} 题",
@@ -1125,9 +1125,9 @@
   "lab.q3split.single":      "纯一笔",
   "lab.q3split.singleDesc":  "只用一种产品(如全 1 年固定)。最简单。",
   "lab.q3split.two":         "分两笔",
-  "lab.q3split.twoDesc":     "一种产品配另一种(如浮动 + 3 年固定)。能分散利率波动。",
+  "lab.q3split.twoDesc":     "一种产品配另一种（如 1 年 + 3 年固定）。能分散利率波动。",
   "lab.q3split.three":       "分三笔",
-  "lab.q3split.threeDesc":   "三种搭配(如浮动 + 1 年 + 3 年)。常用组合。",
+  "lab.q3split.threeDesc":   "三种搭配（如 1 年 + 2 年 + 3 年固定）。常用组合。",
   "lab.q3split.four":        "分四笔",
   "lab.q3split.fourDesc":    "最多四种产品。覆盖更多期限。计算较慢。",
   "lab.q3split.modelDecide": "让模型告诉我最优",
@@ -1145,11 +1145,14 @@
   "lab.q4.indep.flat": "走平",
   "lab.q4.indep.fall": "下降",
 
-  "lab.q5.title": "你觉得未来利率的波动幅度会有多大?",
-  "lab.q5.hint": "这只是你的直觉判断。它会决定接下来的利率预测图是窄一些还是宽一些，也会影响最后的推荐结果。",
-  "lab.q5.low":    "比较平稳",
-  "lab.q5.medium": "中等波动",
-  "lab.q5.high":   "大幅波动",
+  "lab.q5.title":    "利率可能偏离预测多远?",
+  "lab.q5.hint":     "这会设定基准利率路径的'可能发生'区间。区间越宽，我们就要为更大的偏离做准备，并给出更稳妥的贷款方案。",
+  "lab.q5.low":        "小幅偏离",
+  "lab.q5.lowDesc":    "利率紧贴预测，变动很小",
+  "lab.q5.medium":     "中等偏离",
+  "lab.q5.mediumDesc": "利率可能在预测上方或下方偏离一些",
+  "lab.q5.high":       "大幅偏离",
+  "lab.q5.highDesc":   "无论涨跌，利率都可能远离预测",
 
   "lab.q6.title": "您想把这次预测拉长到多久?",
   "lab.q6.hint": "请输入 3 到 10 年。这个时长会决定接下来的利率预测图画到哪里，以及模拟测试要跑多久。",
@@ -1188,7 +1191,7 @@
   "lab.runSim": "运行仿真",
   "lab.runSimAria": "基于以上预期,运行贷款拆分仿真",
   "lab.running.title": "正在计算你的贷款拆分",
-  "lab.running.subtitle": "我们正在比较不同固定和浮动组合,并用你的利率预期做压力测试。",
+  "lab.running.subtitle": "我们正在比较不同的固定期限组合，并用你的利率预期做压力测试。",
 
   "lab.results.heading": "为你匹配的贷款方案",
   "lab.results.metrics.interest": "预计总利息",
@@ -1205,9 +1208,9 @@
   "lab.results.scenarioPicker.aria":   "切换利率情景",
   "lab.results.scenarioPicker.hint":   "同一套方案,不同利率未来。下面的按钮会把上方 OCR 预测图的结果切换为利率下降、持平或上升三种情景。",
   "lab.results.scenarioPicker.intro":   "选择不同的利率情形,查看对应的还款数字。",
-  "lab.results.scenarioPicker.lowDesc":    "如果未来利率走低,固定利率部分到期重定时会更便宜;浮动利率部分立刻省钱。这是最好的情况。",
+  "lab.results.scenarioPicker.lowDesc":    "如果未来利率走低，固定利率部分到期重定时会更便宜。这是最好的情况。",
   "lab.results.scenarioPicker.baseDesc":   "最可能发生的情况。利率维持在当前水平上下波动。这是中位估算——一半时间比这好,一半时间比这差。",
-  "lab.results.scenarioPicker.highDesc":   "最坏打算。利率走高,固定利率部分到期重定时变贵,浮动利率部分立刻多还钱。如果这组数字你还能承受,基本就稳了。",
+  "lab.results.scenarioPicker.highDesc":   "最坏打算。利率走高，固定利率部分到期重定时变贵。如果这组数字你还能承受，基本就稳了。",
 
   "lab.premium.title": "高级实验室",
   "lab.premium.body": "这是为 premium 用户准备的功能,正在开发中。届时你可以自定义偏好权重、调整风险参数、尝试更多拆分组合。",
@@ -1215,5 +1218,5 @@
 
   "lab.detail.intro.riskAverse":  "你的答案显示你比较担心利率上行,所以我们把大部分本金锁定在长期固定里,即使利率继续上升,你的月供峰值也能压住。",
   "lab.detail.intro.neutral":     "这个方案平衡了总利息和稳定性,把本金分散在不同的固定期限里,避免所有本金同时重新定价。",
-  "lab.detail.intro.riskSeeking": "你的答案显示你对利率下行比较乐观,所以我们保留了少量浮动部分,争取最低的总利息。"
+  "lab.detail.intro.riskSeeking": "你的答案显示你对利率下行比较乐观，所以我们倾向于选较短的固定期限，争取最低的总利息。"
 }

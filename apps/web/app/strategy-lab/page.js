@@ -1040,7 +1040,7 @@ export default function StrategyLab() {
       }
     ]);
 
-  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, monteCarloSampleCount, simDurationYears, marketRates, t]);
+  }, [shortTermChange, mediumTermDirection, changeSpeed, uncertainty, scenarioProbabilities, longTermCycleYears, longTermReversalBias, longTermAmplitude, monteCarloSampleCount, simDurationYears, marketRates, t]);
 
   // Recalculate optimization recommendations ONLY when the underlying
   // simulation results or the right-side scenario basis changes.

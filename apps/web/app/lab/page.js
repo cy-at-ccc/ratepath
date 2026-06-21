@@ -1437,9 +1437,9 @@ export default function LabPage() {
             <p className="wizard-step-hint">{t("lab.q5.hint")}</p>
             <div className="choice-grid q5-grid">
               {[
-                { value: "low",    text: t("lab.q5.low"),    glyph: "I",   tone: "green" },
-                { value: "medium", text: t("lab.q5.medium"), glyph: "II",  tone: "primary" },
-                { value: "high",   text: t("lab.q5.high"),   glyph: "III", tone: "red" }
+                { value: "low",    glyph: "I",   label: t("lab.q5.low"),    desc: t("lab.q5.lowDesc"),    tone: "green" },
+                { value: "medium", glyph: "II",  label: t("lab.q5.medium"), desc: t("lab.q5.mediumDesc"), tone: "primary" },
+                { value: "high",   glyph: "III", label: t("lab.q5.high"),   desc: t("lab.q5.highDesc"),   tone: "red" }
               ].map((opt) => (
                 <button
                   key={opt.value}
@@ -1453,7 +1453,8 @@ export default function LabPage() {
                   aria-pressed={uncertainty === opt.value}
                 >
                   <span className="choice-card-glyph" aria-hidden="true">{opt.glyph}</span>
-                  <span className="choice-card-label">{opt.text}</span>
+                  <span className="choice-card-label">{opt.label}</span>
+                  <span className="choice-card-desc">{opt.desc}</span>
                   {uncertainty === opt.value && <span className="choice-card-status">{t("lab.choice.selected")}</span>}
                 </button>
               ))}
@@ -2346,6 +2347,12 @@ export default function LabPage() {
         .q3-grid { grid-template-columns: repeat(2, 1fr); }
         .q4-grid { grid-template-columns: repeat(2, 1fr); }
         .q5-grid { grid-template-columns: repeat(3, 1fr); }
+        /* q5 cards now carry a *Desc sub-line; bump min-height so the
+           description has breathing room without depending on flex grow
+           (the cards have overflow:hidden, so we set the height instead
+           of letting the content stretch). 156px is calibrated against
+           the longest sub-desc at the 3-column desktop width. */
+        .q5-grid .choice-card { min-height: 156px; }
         .q3split-grid { grid-template-columns: repeat(3, 1fr); }
         /* After dropping the "没想法" card we have 5 cards. The 5th
            (modelDecide) spans columns 2-3 in the second row so the layout
@@ -2373,6 +2380,18 @@ export default function LabPage() {
           .q3split-grid > .choice-card:nth-child(5) {
             grid-column: auto;
           }
+        }
+        /* q5 mobile collapse — mirror q3split's responsive pattern. The
+           3-column desktop layout squeezes the *Desc text on phones, so
+           drop to 2 cols below 720px (with the 3rd card spanning) and to
+           1 col below 480px. */
+        @media (max-width: 720px) {
+          .q5-grid { grid-template-columns: repeat(2, 1fr); }
+          .q5-grid > .choice-card:nth-child(3) { grid-column: 1 / -1; }
+        }
+        @media (max-width: 480px) {
+          .q5-grid { grid-template-columns: 1fr; }
+          .q5-grid > .choice-card:nth-child(3) { grid-column: auto; }
         }
         .choice-card {
           --choice-color: var(--color-primary);

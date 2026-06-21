@@ -1084,10 +1084,10 @@
   "strategyLab.warnings.inProgressBody": "Above the {threshold} warning threshold. Either wait for the current run to finish, or cancel and tighten splits, increase step, or shorten horizon.",
 
   "nav.lab": "Easy Strategy",
-  "nav.lab.tip": "Answer 6 quick questions to generate your personalised rate outlook and loan recommendation",
+  "nav.lab.tip": "Answer 7 quick questions to generate your personalised rate outlook and loan recommendation",
 
   "lab.welcome.title": "Plan your mortgage in 60 seconds",
-  "lab.welcome.body": "RatePath compares different fixed + floating combinations under future-rate scenarios and finds the best fit for you. Answer 6 quick questions to get started.",
+  "lab.welcome.body": "RatePath compares different fixed-rate combinations (e.g. 1-year, 2-year, 5-year) under future-rate scenarios and finds the best fit for you. Answer 7 quick questions to get started.",
   "lab.welcome.start": "Start",
 
   "lab.progress.label": "Question {current} / {total}",
@@ -1125,9 +1125,9 @@
   "lab.q3split.single":       "One product",
   "lab.q3split.singleDesc":   "A single product (e.g. all 1-year fixed). Simplest option.",
   "lab.q3split.two":          "Two products",
-  "lab.q3split.twoDesc":      "One product + another (e.g. floating + 3-year fixed). Smooths rate swings.",
+  "lab.q3split.twoDesc":      "One product + another (e.g. 1-year + 3-year fixed). Smooths rate swings.",
   "lab.q3split.three":        "Three products",
-  "lab.q3split.threeDesc":    "Three-way mix (e.g. floating + 1y + 3y). Common default.",
+  "lab.q3split.threeDesc":    "Three-way mix (e.g. 1-year + 2-year + 3-year fixed). Common default.",
   "lab.q3split.four":         "Four products",
   "lab.q3split.fourDesc":     "Up to four products. Covers more terms. Slower simulation.",
   "lab.q3split.modelDecide":  "Let the model decide",
@@ -1145,11 +1145,14 @@
   "lab.q4.indep.flat": "Flat",
   "lab.q4.indep.fall": "Fall",
 
-  "lab.q5.title": "How much do you think rates might change?",
-  "lab.q5.hint": "This is just your gut feeling. It decides whether the forecast above looks narrow or wide, and it changes the final recommendation too.",
-  "lab.q5.low":    "Not much change",
-  "lab.q5.medium": "A bit up and down",
-  "lab.q5.high":   "Hard to tell",
+  "lab.q5.title": "How far off from the forecast could rates be?",
+  "lab.q5.hint": "This sets the size of the 'what could happen' band around the base rate path. A wider band means we plan for bigger deviations and lean toward a safer loan split.",
+  "lab.q5.low":       "Small deviation",
+  "lab.q5.lowDesc":   "Rates stay close to the forecast",
+  "lab.q5.medium":    "Some deviation",
+  "lab.q5.mediumDesc": "Rates may drift moderately above or below the forecast",
+  "lab.q5.high":      "Large deviation",
+  "lab.q5.highDesc":  "Rates could swing well away from the forecast in either direction",
 
   "lab.q6.title": "How long do you want this forecast to run?",
   "lab.q6.hint": "Enter 3 to 10 years. This duration decides how far the OCR curve is drawn and how long the simulation runs.",
@@ -1188,7 +1191,7 @@
   "lab.runSim": "Run simulation",
   "lab.runSimAria": "Run the split-strategy simulation based on your outlook",
   "lab.running.title": "Calculating your split",
-  "lab.running.subtitle": "RatePath is comparing fixed and floating combinations against your rate outlook.",
+  "lab.running.subtitle": "RatePath is comparing fixed-rate combinations against your rate outlook.",
 
   "lab.results.heading": "Your personalised split",
   "lab.results.metrics.interest": "Total interest",
@@ -1205,9 +1208,9 @@
   "lab.results.scenarioPicker.aria":   "Switch rate scenario",
   "lab.results.scenarioPicker.hint":   "Same plan, different rate futures. These buttons switch the outcome from the OCR forecast graph above into falling, flat, or rising rate scenarios.",
   "lab.results.scenarioPicker.intro":   "Pick a rate scenario to see the matching numbers.",
-  "lab.results.scenarioPicker.lowDesc":    "If OCR and mortgage rates fall, your fixed portions get cheaper at the next refix. Floating portions save right away. These are your best-case numbers.",
+  "lab.results.scenarioPicker.lowDesc":    "If OCR and mortgage rates fall, your fixed portions get cheaper at the next refix. These are your best-case numbers.",
   "lab.results.scenarioPicker.baseDesc":   "The most likely path. Rates hover near today's level. These are your central estimate — half the time reality will be better, half worse.",
-  "lab.results.scenarioPicker.highDesc":   "The worst case to plan for. Rates climb, your fixed portions get more expensive at refix, and floating portions cost more right away. If you can still afford these numbers, you can handle anything.",
+  "lab.results.scenarioPicker.highDesc":   "The worst case to plan for. Rates climb, so your fixed portions get more expensive at refix. If you can still afford these numbers, you can handle anything.",
 
   "lab.premium.title": "Advanced Lab",
   "lab.premium.body": "This is a premium feature in development. Soon you'll be able to customise preference weights, tune risk parameters, and try many more split combinations.",
@@ -1215,5 +1218,5 @@
 
   "lab.detail.intro.riskAverse":  "Your answers suggest you're worried about rates rising, so we lock most of your principal into long-term fixed terms to keep your worst-case payment in check.",
   "lab.detail.intro.neutral":     "This split balances total interest against stability by spreading your principal across different fixed terms, avoiding simultaneous refix.",
-  "lab.detail.intro.riskSeeking": "Your answers suggest you're optimistic about rates falling, so we keep a meaningful floating slice to capture the lower total interest."
+  "lab.detail.intro.riskSeeking": "Your answers suggest you're optimistic about rates falling, so we lean toward shorter fixed terms to capture the lower total interest."
 }
