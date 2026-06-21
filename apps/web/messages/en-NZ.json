@@ -364,6 +364,8 @@
   "strategyDetail.diffLine": "Interest {interest}; Peak {peak}",
   "strategyDetail.dash": "—",
   "strategyDetail.noTimeline": "No timeline data",
+  "strategyDetail.rotateTableCta":      "View rotated",
+  "strategyDetail.rotateTableExitAria": "Exit rotated view",
   "opt.pro.costLow": "Expected interest cost is very low; best in class for interest control.",
   "opt.con.costHigh": "Expected total interest cost is on the high side.",
   "opt.pro.div.costPremium": "Diversification preset: total cost is slightly above the optimum, in exchange for lower refix concentration and higher flexibility.",
@@ -1121,8 +1123,6 @@
   "lab.q3split.threeDesc":    "Three-way mix (e.g. floating + 1y + 3y). Common default.",
   "lab.q3split.four":         "Four products",
   "lab.q3split.fourDesc":     "Up to four products. Covers more terms. Slower simulation.",
-  "lab.q3split.noIdea":       "No preference",
-  "lab.q3split.noIdeaDesc":   "Use the standard default (3 splits, 100% fixed).",
   "lab.q3split.modelDecide":  "Let the model decide",
   "lab.q3split.modelDecideDesc": "Try many splits and pick the best one for you.",
 
@@ -1197,6 +1197,10 @@
   "lab.results.scenarioPicker.high":   "Rates rise",
   "lab.results.scenarioPicker.aria":   "Switch rate scenario",
   "lab.results.scenarioPicker.hint":   "Same plan, different rate futures. These buttons switch the outcome from the OCR forecast graph above into falling, flat, or rising rate scenarios.",
+  "lab.results.scenarioPicker.intro":   "Pick a rate scenario to see the matching numbers.",
+  "lab.results.scenarioPicker.lowDesc":    "If OCR and mortgage rates fall, your fixed portions get cheaper at the next refix. Floating portions save right away. These are your best-case numbers.",
+  "lab.results.scenarioPicker.baseDesc":   "The most likely path. Rates hover near today's level. These are your central estimate — half the time reality will be better, half worse.",
+  "lab.results.scenarioPicker.highDesc":   "The worst case to plan for. Rates climb, your fixed portions get more expensive at refix, and floating portions cost more right away. If you can still afford these numbers, you can handle anything.",
 
   "lab.premium.title": "Advanced Lab",
   "lab.premium.body": "This is a premium feature in development. Soon you'll be able to customise preference weights, tune risk parameters, and try many more split combinations.",

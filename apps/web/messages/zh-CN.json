@@ -364,6 +364,8 @@
   "strategyDetail.diffLine": "利息 {interest}；峰值 {peak}",
   "strategyDetail.dash": "—",
   "strategyDetail.noTimeline": "无时间线数据",
+  "strategyDetail.rotateTableCta":     "横屏查看",
+  "strategyDetail.rotateTableExitAria":"退出横屏查看",
   "opt.pro.costLow": "预期利息成本极低，利息支出控制最佳。",
   "opt.con.costHigh": "预期整体利息成本支出较高。",
   "opt.pro.div.costPremium": "分散化预设下：总成本略高于最优方案，但换来更低的再融资集中度和更高的灵活度。",
@@ -1121,8 +1123,6 @@
   "lab.q3split.threeDesc":   "三种搭配(如浮动 + 1 年 + 3 年)。常用组合。",
   "lab.q3split.four":        "分四笔",
   "lab.q3split.fourDesc":    "最多四种产品。覆盖更多期限。计算较慢。",
-  "lab.q3split.noIdea":      "没想法",
-  "lab.q3split.noIdeaDesc":  "用一组常见默认参数(3 笔、100% 固定)。",
   "lab.q3split.modelDecide": "让模型告诉我最优",
   "lab.q3split.modelDecideDesc": "让模型多试几种拆分,自动挑出最划算的。",
 
@@ -1197,6 +1197,10 @@
   "lab.results.scenarioPicker.high":   "利率上升",
   "lab.results.scenarioPicker.aria":   "切换利率情景",
   "lab.results.scenarioPicker.hint":   "同一套方案,不同利率未来。下面的按钮会把上方 OCR 预测图的结果切换为利率下降、持平或上升三种情景。",
+  "lab.results.scenarioPicker.intro":   "选择不同的利率情形,查看对应的还款数字。",
+  "lab.results.scenarioPicker.lowDesc":    "如果未来利率走低,固定利率部分到期重定时会更便宜;浮动利率部分立刻省钱。这是最好的情况。",
+  "lab.results.scenarioPicker.baseDesc":   "最可能发生的情况。利率维持在当前水平上下波动。这是中位估算——一半时间比这好,一半时间比这差。",
+  "lab.results.scenarioPicker.highDesc":   "最坏打算。利率走高,固定利率部分到期重定时变贵,浮动利率部分立刻多还钱。如果这组数字你还能承受,基本就稳了。",
 
   "lab.premium.title": "高级实验室",
   "lab.premium.body": "这是为 premium 用户准备的功能,正在开发中。届时你可以自定义偏好权重、调整风险参数、尝试更多拆分组合。",

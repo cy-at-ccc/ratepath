@@ -8,13 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UI is in Simplified Chinese (zh-CN). Data defaults are sourced from RBNZ (NZ OCR as the policy rate).
 
-> **Homepage & page visibility (2026-06-21).** The public homepage is the 6-question Easy Strategy wizard at `/lab`; the root route `/` is a thin client-side redirect to `/lab`. The Mortgage Dashboard, Mortgage Setup, and Strategy Lab are part of the planned PREMIUM tier — they are temporarily hidden from the navbar but the files are kept in the codebase with explicit `⚠️ PREMIUM-GATED PAGE — DO NOT DELETE ⚠️` banners. See [`apps/web/CLAUDE.md`](apps/web/CLAUDE.md) → "Hidden Premium Pages" for the full list, rationale, and re-enable instructions.
+> **Homepage & page visibility (2026-06-21).** The public homepage is the 6-question Easy Strategy wizard at `/lab`; the root route `/` is a thin client-side redirect to `/lab`. The Mortgage Dashboard, Mortgage Setup, and Strategy Lab are part of the planned PREMIUM tier — they are temporarily hidden from the navbar but the files are kept in the codebase with explicit `⚠️ PREMIUM-GATED PAGE — DO NOT DELETE ⚠️` banners. The "跳到高级实验室 / Open advanced lab" button on the `/lab` results card is also hidden (premium-tier placeholder, not built yet). See [`apps/web/CLAUDE.md`](apps/web/CLAUDE.md) → "Hidden Premium Pages" and "Hidden Premium UI" for the full lists, rationale, and re-enable instructions.
 
 ## Workspace Layout
 
 Monorepo (npm workspaces) with no build pipeline — packages are consumed by source via path aliases.
 
-```
+```text
 apps/web/             Next.js 16.2.9 front-end (port 4321)
 packages/schemas/     Zod schemas + JSDoc typedefs (single source of truth for domain types)
 packages/country-adapters/  Per-market product config + beta sensitivities (only NZ implemented)

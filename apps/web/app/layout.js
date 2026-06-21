@@ -10,14 +10,26 @@ export const metadata = {
   title: "RatePath - Mortgage Strategy Simulator",
   description: "Simulate future interest-rate scenarios, compare split strategies, and optimise your mortgage.",
   applicationName: "RatePath",
-  themeColor: "#1e1b4b",
-  colorScheme: "dark",
   appleWebApp: {
     capable: true,
     title: "RatePath",
     statusBarStyle: "black-translucent",
   },
   formatDetection: { telephone: false },
+};
+
+// In Next.js 16, themeColor and colorScheme belong in the `viewport` export
+// (not `metadata`). The `width: "device-width"` initial-scale pair is
+// **critical for mobile**: without it mobile browsers render the page at
+// 980px wide and scale it down, which means our `@media (max-width: 720px)`
+// rules never trigger and the desktop 3-column grids squeeze into ~330px
+// viewports, mangling the choice cards. See `node_modules/next/dist/docs/
+// 01-app/03-api-reference/04-functions/generate-viewport.md`.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#1e1b4b",
+  colorScheme: "dark",
 };
 
 /**

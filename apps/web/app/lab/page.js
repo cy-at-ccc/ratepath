@@ -379,26 +379,28 @@ function buildMortgageFromAnswers(answers, marketRates) {
 // strategy-generator constraints. Kept module-level (constant) so it can be
 // read by the q3split card descriptions without re-creating on every render.
 //
-// `maxFloatingPercentage` stays at 0 across the board so lab keeps its
-// "100% fixed-rate" character (matches the original lab behaviour before
-// the split question was added). To unlock floating combinations, change
-// each entry below — the optimiser & strategy-generator already support
-// it; the lab page just needs to opt in.
+// `maxFloatingPercentage` is 0 across the board so the lab stays 100%
+// fixed-rate (matches the original lab behaviour before the split question
+// was added). To unlock floating combinations, change each entry below —
+// the optimiser & strategy-generator already support it; the lab page just
+// needs to opt in.
+//
+// `percentageStep` for modelDecide is 0.10 (matching the 2/3/4 choices)
+// rather than 0.05. The 5% step inflated the candidate pool to ~5K–10K
+// strategies and the simulation matrix to 20K–40K runs; 10% step on a
+// 100%-fixed search space is more than granular enough and the engine's
+// two-stage Pareto-prune (see `pruneAfterFirstScenario` in the worker
+// postMessage) handles the remaining scale.
 const SPLIT_TO_PARAMS = {
   single:     { maxSplits: 1, percentageStep: 1.00, maxFloatingPercentage: 0 },
   two:        { maxSplits: 2, percentageStep: 0.10, maxFloatingPercentage: 0 },
   three:      { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 0 },
   four:       { maxSplits: 4, percentageStep: 0.10, maxFloatingPercentage: 0 },
-  noIdea:     { maxSplits: 3, percentageStep: 0.10, maxFloatingPercentage: 0 },
-  // "Diversification preset" from strategy-lab (PRESET_PROFILES.diversification):
-  // maxSplits=4, percentageStep=0.05, maxFloatingPercentage=0.30. Kept at
-  // 0 here to honour the lab's 100%-fixed constraint while still widening
-  // the candidate pool by bumping maxSplits + tightening the step.
-  modelDecide:{ maxSplits: 4, percentageStep: 0.05, maxFloatingPercentage: 0 }
+  modelDecide:{ maxSplits: 4, percentageStep: 0.10, maxFloatingPercentage: 0 }
 };
 
 function buildConstraints(splitPreference) {
-  const params = SPLIT_TO_PARAMS[splitPreference] || SPLIT_TO_PARAMS.noIdea;
+  const params = SPLIT_TO_PARAMS[splitPreference] || SPLIT_TO_PARAMS.modelDecide;
   return {
     ...params,
     minPercentage: nzProfile.rules.minPercentage,
@@ -464,6 +466,13 @@ export default function LabPage() {
   const [detailModalStrategyId, setDetailModalStrategyId] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailTimelineData, setDetailTimelineData] = useState(null);
+
+  // ⚠️  PREMIUM-GATED UI — DO NOT DELETE ⚠️
+  // State for the "Advanced Lab" premium popup. Both this state AND the
+  // matching upgrade button + popup JSX (in the results step) are
+  // currently inert (commented out as `{false && (...)}`). They are kept
+  // so the premium tier can be re-enabled later by simply uncommenting.
+  // See apps/web/CLAUDE.md → "Hidden Premium UI".
   const [premiumPopupOpen, setPremiumPopupOpen] = useState(false);
   const triggerBtnRef = useRef(null);
   const upgradeBtnRef = useRef(null);
@@ -494,7 +503,7 @@ export default function LabPage() {
       targetYears: 25,
       targetPayment: 0,
       repaymentFrequency: "fortnightly",
-      splitPreference: "noIdea",
+      splitPreference: "modelDecide",
       shortOutlook: null,
       mediumOutlook: null,
       uncertainty: null,
@@ -714,6 +723,27 @@ export default function LabPage() {
   // Cancel any pending advance when the step changes (e.g. user clicked
   // Back, or we navigated programmatically) or when the component unmounts.
   useEffect(() => () => cancelAutoAdvance(), [step, cancelAutoAdvance]);
+
+  // Scroll the page to the top whenever the wizard step changes. This is
+  // especially important for the card-based questions (q3split/q3/q4/q5)
+  // where the user clicks a card near the bottom of the viewport and the
+  // wizard auto-advances 220 ms later — without this, the next question's
+  // title is off-screen and the user is staring at a previously-selected
+  // card. The first-render guard avoids snapping the page to the top on
+  // initial mount, which would fight any hash-anchor deep links the
+  // user came in with.
+  const isFirstStepRef = useRef(true);
+  useEffect(() => {
+    if (isFirstStepRef.current) {
+      isFirstStepRef.current = false;
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const prefersReduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: prefersReduced ? "auto" : "smooth" });
+  }, [step]);
 
   const goBack = useCallback(() => {
     setStep((s) => {
@@ -1291,7 +1321,6 @@ export default function LabPage() {
                 { value: "two",        glyph: "2",  label: t("lab.q3split.two"),        desc: t("lab.q3split.twoDesc"),        tone: "cyan" },
                 { value: "three",      glyph: "3",  label: t("lab.q3split.three"),      desc: t("lab.q3split.threeDesc"),      tone: "primary" },
                 { value: "four",       glyph: "4",  label: t("lab.q3split.four"),       desc: t("lab.q3split.fourDesc"),       tone: "amber" },
-                { value: "noIdea",     glyph: "—",  label: t("lab.q3split.noIdea"),     desc: t("lab.q3split.noIdeaDesc"),     tone: "rose" },
                 { value: "modelDecide",glyph: "✦",  label: t("lab.q3split.modelDecide"),desc: t("lab.q3split.modelDecideDesc"),tone: "green" }
               ].map((opt) => (
                 <button
@@ -1484,6 +1513,7 @@ export default function LabPage() {
         return (
           <div className="glass-panel accent-emerald wizard-step results-step">
             <h2 className="card-header"><span className="card-header-accent" />{t("lab.results.heading")}</h2>
+            <p className="scenario-picker-intro">{t("lab.results.scenarioPicker.intro")}</p>
             {!enrichedTopRec ? (
               <p className="ocr-summary">{t("lab.error.sim")}</p>
             ) : (
@@ -1531,6 +1561,38 @@ export default function LabPage() {
                   </button>
                 </div>
                 <p className="scenario-picker-hint">{t("lab.results.scenarioPicker.hint")}</p>
+                {/* Plain-language explainer rows. Each is a native <details>
+                    so it is keyboard-accessible, gets a free expand/collapse
+                    affordance, and starts collapsed (no `open` attribute) to
+                    save vertical space. The summary shows the scenario tag
+                    + title in its accent colour; clicking expands the body
+                    with the beginner-friendly description. */}
+                <div className="scenario-explainers" aria-label={t("lab.results.scenarioPicker.aria")}>
+                  <details className="scenario-explainer scenario-explainer-fall">
+                    <summary>
+                      <span className="scenario-explainer-tag" aria-hidden="true">▼</span>
+                      <span className="scenario-explainer-title">{t("lab.results.scenarioPicker.low")}</span>
+                      <span className="scenario-explainer-chevron" aria-hidden="true" />
+                    </summary>
+                    <p className="scenario-explainer-body">{t("lab.results.scenarioPicker.lowDesc")}</p>
+                  </details>
+                  <details className="scenario-explainer scenario-explainer-flat">
+                    <summary>
+                      <span className="scenario-explainer-tag" aria-hidden="true">→</span>
+                      <span className="scenario-explainer-title">{t("lab.results.scenarioPicker.base")}</span>
+                      <span className="scenario-explainer-chevron" aria-hidden="true" />
+                    </summary>
+                    <p className="scenario-explainer-body">{t("lab.results.scenarioPicker.baseDesc")}</p>
+                  </details>
+                  <details className="scenario-explainer scenario-explainer-rise">
+                    <summary>
+                      <span className="scenario-explainer-tag" aria-hidden="true">▲</span>
+                      <span className="scenario-explainer-title">{t("lab.results.scenarioPicker.high")}</span>
+                      <span className="scenario-explainer-chevron" aria-hidden="true" />
+                    </summary>
+                    <p className="scenario-explainer-body">{t("lab.results.scenarioPicker.highDesc")}</p>
+                  </details>
+                </div>
                 <div className="rec-card">
                   <div
                     className="portfolio-bar"
@@ -1593,6 +1655,14 @@ export default function LabPage() {
                         <ArrowRightIcon />
                       </span>
                     </button>
+                    {/* ⚠️  PREMIUM-GATED UI — DO NOT DELETE ⚠️
+                        "跳到高级实验室 / Open advanced lab" button — opens the
+                        lab.premium popup (lines ~1771–1798, also commented out
+                        below). Hidden because the premium tier is not built yet.
+                        Re-enable for premium users by uncommenting this block +
+                        the matching popup JSX below. See
+                        apps/web/CLAUDE.md → "Hidden Premium UI". */}
+                    {false && (
                     <button
                       ref={upgradeBtnRef}
                       type="button"
@@ -1609,6 +1679,7 @@ export default function LabPage() {
                         <span>{t("lab.results.upgrade")}</span>
                       </span>
                     </button>
+                    )}
                     <button type="button" className="btn btn-ghost rec-action-btn rec-action-btn-tertiary" onClick={goToFirstQuestion}>
                       <span className="rec-action-copy">
                         <span className="rec-action-icon-wrap" aria-hidden="true">
@@ -1768,7 +1839,14 @@ export default function LabPage() {
         formatMoney={formatMoney}
       />
 
-      {premiumPopupOpen && (
+      {/* ⚠️  PREMIUM-GATED UI — DO NOT DELETE ⚠️
+          Premium "Advanced Lab" popup — matches the upgrade button above (also
+          commented out). Hidden because the premium tier is not built yet.
+          Triggered by setPremiumPopupOpen(true); until that button is
+          re-enabled, this modal will never render. To restore: uncomment the
+          block below AND the matching upgrade button in the results step.
+          See apps/web/CLAUDE.md → "Hidden Premium UI". */}
+      {false && premiumPopupOpen && (
         <div
           className="premium-popup-scrim"
           onClick={closePremiumPopup}
@@ -2262,6 +2340,33 @@ export default function LabPage() {
         .q4-grid { grid-template-columns: repeat(2, 1fr); }
         .q5-grid { grid-template-columns: repeat(3, 1fr); }
         .q3split-grid { grid-template-columns: repeat(3, 1fr); }
+        /* After dropping the "没想法" card we have 5 cards. The 5th
+           (modelDecide) spans columns 2-3 in the second row so the layout
+           stays balanced and the "advanced" choice reads as a wider CTA. */
+        .q3split-grid > .choice-card:nth-child(5) {
+          grid-column: 2 / span 2;
+        }
+        /* Mobile breakpoints (depend on the viewport meta tag in
+           app/layout.js being width: device-width to fire). Three
+           ranges:
+           - < 480px (small phones, portrait): 1 column. Each card gets
+             the full width and the modelDecide card no longer needs to
+             span — it just sits on its own row.
+           - 480-720px (large phones, landscape, small tablets): 2 columns.
+             modelDecide spans both.
+           - >= 720px (desktop): 3 columns, original layout. */
+        @media (max-width: 720px) {
+          .q3split-grid { grid-template-columns: repeat(2, 1fr); }
+          .q3split-grid > .choice-card:nth-child(5) {
+            grid-column: 1 / -1;
+          }
+        }
+        @media (max-width: 480px) {
+          .q3split-grid { grid-template-columns: 1fr; }
+          .q3split-grid > .choice-card:nth-child(5) {
+            grid-column: auto;
+          }
+        }
         .choice-card {
           --choice-color: var(--color-primary);
           --choice-glow: rgba(99, 102, 241, 0.28);
@@ -2561,12 +2666,97 @@ export default function LabPage() {
         .scenario-picker-btn-label {
           min-width: 0;
         }
+        .scenario-picker-intro {
+          font-size: 13px;
+          color: var(--text-secondary, #cbd5e1);
+          margin: -4px 4px 4px;
+          line-height: 1.5;
+        }
         .scenario-picker-hint {
           font-size: 12px;
           color: var(--text-secondary, #94a3b8);
           margin: 0 4px 4px;
           max-width: 1120px;
           line-height: 1.5;
+        }
+
+        /* Plain-language explainer rows. Native <details> is used so the
+           expand/collapse behaviour, keyboard support, and ARIA semantics
+           come for free. Each row is a 1-line summary when collapsed
+           (saves ~120px of vertical space vs. always-open cards). The
+           coloured top border + tag char (▼/→/▲) reuse the same accent
+           palette as the buttons above so the user can visually link
+           "this row explains that button". */
+        .scenario-explainers {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          margin: 0 4px 8px;
+        }
+        .scenario-explainer {
+          --explainer-accent: #6366f1;
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.025);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-top: 2px solid var(--explainer-accent);
+          overflow: hidden;
+        }
+        .scenario-explainer-fall { --explainer-accent: #10b981; }
+        .scenario-explainer-flat { --explainer-accent: #6366f1; }
+        .scenario-explainer-rise { --explainer-accent: #f59e0b; }
+        .scenario-explainer > summary {
+          list-style: none;
+          cursor: pointer;
+          padding: 10px 14px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--explainer-accent);
+          user-select: none;
+          transition: background 140ms ease;
+        }
+        .scenario-explainer > summary::-webkit-details-marker { display: none; }
+        .scenario-explainer > summary:hover {
+          background: color-mix(in srgb, var(--explainer-accent) 8%, rgba(255, 255, 255, 0.025));
+        }
+        .scenario-explainer > summary:focus-visible {
+          outline: 2px solid var(--explainer-accent);
+          outline-offset: -2px;
+        }
+        .scenario-explainer-tag {
+          font-size: 13px;
+          line-height: 1;
+          color: var(--explainer-accent);
+          font-weight: 700;
+          width: 16px;
+          text-align: center;
+        }
+        .scenario-explainer-title {
+          flex: 1;
+          letter-spacing: 0.01em;
+        }
+        .scenario-explainer-chevron {
+          width: 12px;
+          height: 12px;
+          border-right: 2px solid var(--explainer-accent);
+          border-bottom: 2px solid var(--explainer-accent);
+          transform: rotate(45deg);
+          margin-top: -3px;
+          transition: transform 180ms ease;
+          opacity: 0.7;
+        }
+        .scenario-explainer[open] > summary .scenario-explainer-chevron {
+          transform: rotate(-135deg);
+          margin-top: 3px;
+        }
+        .scenario-explainer-body {
+          margin: 0;
+          padding: 0 14px 12px 40px;
+          font-size: 12.5px;
+          color: var(--text-secondary, #cbd5e1);
+          line-height: 1.55;
         }
 
         /* ===== Results — rec-card hover lift ===== */

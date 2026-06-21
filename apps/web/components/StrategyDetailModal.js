@@ -2,9 +2,11 @@
 // @ts-nocheck — Modal CSS lives alongside component via styled-jsx; types
 // are tracked as technical debt.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import SvgChart from "./SvgChart.js";
 import { useI18n } from "../lib/i18n/useI18n.js";
+import useMediaQuery from "../lib/hooks/useMediaQuery.js";
 
 /**
  * StrategyDetailModal — full-detail popup for any benchmark / preference /
@@ -55,6 +57,18 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
   const closeBtnRef = useRef(/** @type {any} */ (null));
   const lastFocusedRef = useRef(/** @type {any} */ (null));
   const cardRef = useRef(/** @type {any} */ (null));
+  const rotateScrollerRef = useRef(/** @type {any} */ (null));
+
+  // Rotation overlay state — true when user has tapped "横屏查看" on the
+  // table header in portrait-mobile and the table is shown fullscreen,
+  // rotated 90deg. Resets whenever the modal closes (see useEffect below).
+  const [tableRotated, setTableRotated] = useState(false);
+
+  // Show the rotate CTA only on narrow viewports in portrait orientation.
+  // `(max-width: 768px)` matches the rest of the app's mobile breakpoint
+  // (Navbar, globals, this modal). We don't gate on orientation alone —
+  // landscape phones have plenty of horizontal room already.
+  const showRotateCta = useMediaQuery("(max-width: 768px) and (orientation: portrait)");
 
   // Focusable selector — used by the focus trap below
   const FOCUSABLE_SELECTOR = [
@@ -72,6 +86,12 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
     lastFocusedRef.current = typeof document !== "undefined" ? document.activeElement : null;
     const handler = (/** @type {any} */ e) => {
       if (e.key === "Escape") {
+        // Inner rotation overlay intercepts Escape before the modal closes —
+        // user expects to dismiss the layered surface, not lose the whole modal.
+        if (tableRotated) {
+          setTableRotated(false);
+          return;
+        }
         onClose?.();
         return;
       }
@@ -118,7 +138,31 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
       // Restore focus to whatever opened the modal
       try { lastFocusedRef.current?.focus?.(); } catch { /* ignore */ }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, tableRotated]);
+
+  // Reset the rotation overlay whenever the modal closes, so the next open
+  // starts in the normal portrait layout (no stale rotated state if the
+  // user closed the modal while the table was flipped).
+  useEffect(() => {
+    if (!isOpen) setTableRotated(false);
+  }, [isOpen]);
+
+  // Auto-scroll the rotated scroller to top-left on enter, so the user
+  // starts seeing the row labels (leftmost columns of the original table,
+  // which appear at the top of the rotated frame). Without this the
+  // browser preserves the previous scroll position which can leave the
+  // user looking at the wrong end of a wide table.
+  useEffect(() => {
+    if (!tableRotated) return;
+    // Wait one tick so the portal node is mounted before we scroll.
+    const id = setTimeout(() => {
+      const el = rotateScrollerRef.current;
+      if (!el) return;
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+    }, 0);
+    return () => clearTimeout(id);
+  }, [tableRotated]);
 
   if (!isOpen || !strategy) {
     return (
@@ -469,17 +513,64 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
               <BalanceLinechart data={detailTimelineData} />
             ) : null}
 
-            <h3 className="sdm-section-title" style={{ marginTop: "16px" }}>
-              {t("strategyDetail.timelineDetailHeader")}{detailScenarioLabel ? ` · ${detailScenarioLabel}` : ""}
-            </h3>
+            <div className="sdm-timeline-header-row">
+              <h3 className="sdm-section-title" style={{ marginTop: "16px" }}>
+                {t("strategyDetail.timelineDetailHeader")}{detailScenarioLabel ? ` · ${detailScenarioLabel}` : ""}
+              </h3>
+              {showRotateCta && (
+                <button
+                  type="button"
+                  className="sdm-rotate-cta"
+                  onClick={() => setTableRotated(true)}
+                  aria-label={t("strategyDetail.rotateTableCta")}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                    <rect x="6" y="2" width="12" height="20" rx="2" />
+                    <path d="M11 18h2" />
+                    <path d="M9 5l3-3 3 3" />
+                    <path d="M9 19l3 3 3-3" />
+                  </svg>
+                  <span>{t("strategyDetail.rotateTableCta")}</span>
+                </button>
+              )}
+            </div>
             {isDetailLoading ? (
               <div className="sdm-muted">{t("strategyDetail.timelineLoadingShort")}</div>
             ) : detailTimelineData && detailTimelineData.tranches && detailTimelineData.tranches.length > 0 ? (
-              <InlineTimelineV2 data={detailTimelineData} />
+              !tableRotated ? (
+                <div className="sdm-timeline-table-wrap">
+                  <div className="sdm-timeline-table-scroller">
+                    <InlineTimelineV2 data={detailTimelineData} />
+                  </div>
+                </div>
+              ) : null
             ) : (
               <div className="sdm-muted">{t("strategyDetail.timelineMissing")}</div>
             )}
           </div>
+        )}
+
+        {/* Rotated table overlay — rendered via portal at document.body so
+            it escapes the modal card's transform context (the slide-in
+            animation leaves a residual `transform: translateY(0) scale(1)`
+            which creates a containing block for position:fixed descendants).
+            Without the portal, the rotated wrap would be sized/positioned
+            relative to the card, not the viewport. */}
+        {tableRotated && typeof document !== "undefined" && createPortal(
+          <div className="sdm-rotate-portal" role="dialog" aria-modal="true" aria-label={t("strategyDetail.timelineDetailHeader")}>
+            <div className="sdm-rotate-portal-scroller" ref={rotateScrollerRef}>
+              <InlineTimelineV2 data={detailTimelineData} />
+            </div>
+            <button
+              type="button"
+              className="sdm-rotate-exit"
+              onClick={() => setTableRotated(false)}
+              aria-label={t("strategyDetail.rotateTableExitAria")}
+            >
+              ×
+            </button>
+          </div>,
+          document.body
         )}
 
         {/* FOOTER */}
@@ -914,8 +1005,129 @@ export default function StrategyDetailModal(/** @type {any} */ props) {
         @media (max-width: 420px) {
           .sdm-metrics { grid-template-columns: 1fr; }
         }
+        /* === Mobile rotation overlay (table fullscreen, rotated 90deg) === */
+        .sdm-timeline-header-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .sdm-rotate-cta {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          border-radius: 999px;
+          background: rgba(99, 102, 241, 0.12);
+          border: 1px solid rgba(99, 102, 241, 0.4);
+          color: var(--text-primary);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.18s ease, transform 0.18s ease;
+          min-height: var(--touch-target, 32px);
+        }
+        .sdm-rotate-cta:hover { background: rgba(99, 102, 241, 0.2); transform: translateY(-1px); }
+        .sdm-rotate-cta:active { transform: scale(0.97); }
+        .sdm-rotate-cta svg { width: 14px; height: 14px; }
+
+        .sdm-timeline-table-wrap {
+          position: relative;
+        }
+        /* Rotated overlay is rendered via React portal at document.body so it
+           escapes the modal card's transform context. Without the portal, the
+           modal's residual transform (translateY(0) scale(1)) would create a
+           containing block and position: fixed would resolve against the
+           card, not the viewport. */
+        .sdm-rotate-portal {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483600;
+          background: var(--bg-primary);
+          display: grid;
+          place-items: center;
+          padding: 0;
+          animation: sdm-rotate-fade-in 200ms ease-out both;
+        }
+        .sdm-rotate-portal-scroller {
+          width: 100vh;
+          height: 100vw;
+          transform: rotate(90deg);
+          transform-origin: center center;
+          overflow: auto;
+          background: var(--bg-primary);
+        }
+        /* Compactness overrides so the rotated table fits within the
+           rotated frame width (100vh of the viewport, ~844 px on iPhone 12
+           Pro). Without these, the column widths from InlineTimelineV2
+           (180 + 140 + 112*N + 148 px) would overflow the rotated frame
+           and require horizontal scroll, defeating the purpose. */
+        .sdm-rotate-portal-scroller :global(.sdm-timeline-table-v2) {
+          font-size: 11px;
+          width: max-content;
+          max-width: 100vh;
+        }
+        .sdm-rotate-portal-scroller :global(.sdm-timeline-table-v2 th),
+        .sdm-rotate-portal-scroller :global(.sdm-timeline-table-v2 td) {
+          padding: 6px 10px;
+        }
+        /* Narrower sticky columns in rotated view to fit more snapshots. */
+        .sdm-rotate-portal-scroller :global(.sdm-v2-head-sticky-1),
+        .sdm-rotate-portal-scroller :global(.sdm-v2-tranche-name) {
+          min-width: 120px !important;
+          width: 120px !important;
+        }
+        .sdm-rotate-portal-scroller :global(.sdm-v2-head-sticky-2),
+        .sdm-rotate-portal-scroller :global(.sdm-v2-row-label) {
+          min-width: 90px !important;
+          width: 90px !important;
+          left: 120px !important;
+        }
+        /* Narrower snapshot columns via inline-style override (colgroup uses
+           style={{ width: "112px" }} so we need !important). */
+        .sdm-rotate-portal-scroller :global(colgroup col) {
+          width: 86px !important;
+        }
+        .sdm-rotate-portal-scroller :global(.sdm-v2-final-col-selector) {
+          width: 110px !important;
+        }
+        /* Fade edges so user sees a scroll affordance when content extends
+           beyond the visible area in the rotated frame. */
+        .sdm-rotate-portal-scroller {
+          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+          -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+        }
+        .sdm-rotate-exit {
+          position: fixed;
+          top: max(env(safe-area-inset-top, 0px), 12px);
+          right: max(env(safe-area-inset-right, 0px), 12px);
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: rgba(15, 20, 34, 0.92);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          color: #fff;
+          font-size: 22px;
+          line-height: 1;
+          cursor: pointer;
+          z-index: 2147483647;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          backdrop-filter: blur(8px);
+          font-family: inherit;
+          padding: 0;
+        }
+        .sdm-rotate-exit:hover { background: rgba(40, 50, 75, 0.95); }
+        .sdm-rotate-exit:active { transform: scale(0.94); }
+        @keyframes sdm-rotate-fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
         @media (prefers-reduced-motion: reduce) {
           .sdm-backdrop, .sdm-card { animation: none; }
+          .sdm-rotate-portal { animation: none; }
         }
       `}</style>
     </div>

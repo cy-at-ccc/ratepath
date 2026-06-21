@@ -80,6 +80,40 @@ Each file starts with a `⚠️ PREMIUM-GATED PAGE — DO NOT DELETE ⚠️` ban
 - `/about` (legal + market config) — free for everyone.
 - `/legal/privacy`, `/legal/disclaimer` — free for everyone.
 
+## Hidden Premium UI (inside the `/lab` results step)
+
+In addition to the hidden premium **pages** above, the `/lab` results card has one premium **UI element** that is hidden from free-tier users:
+
+| UI element | Location | Status |
+| --- | --- | --- |
+| "跳到高级实验室 / Open advanced lab" button + matching premium popup modal | `apps/web/app/lab/page.js` results step | Hidden — premium tier not built yet |
+
+### Why this is hidden
+
+The button opens an informational "Advanced Lab" popup (an amber-accented modal) that today only says "this is for premium users, coming soon". Since premium is not implemented, the button would just navigate to a page that doesn't exist yet — so the entire element is hidden from free-tier users.
+
+### Why the code is kept
+
+The button + popup JSX, the `premiumPopupOpen` state, the `upgradeBtnRef` ref, the `closePremiumPopup` callback, the body-scroll-lock effect, and the `.premium-popup-scrim` / `.premium-popup` CSS are all **kept** in the file with `⚠️ PREMIUM-GATED UI — DO NOT DELETE ⚠️` banners. The two render blocks are wrapped in `{false && (...)}` so they compile and lint clean but never reach the DOM.
+
+### How to identify
+
+- Both render blocks begin with `⚠️  PREMIUM-GATED UI — DO NOT DELETE ⚠️`.
+- The `premiumPopupOpen` state declaration has the same banner above it.
+
+### How to re-enable this UI element
+
+1. In the results step, change `{false && (` back to `{` (one-line edit on the upgrade button).
+2. In the popup JSX, change `{false && premiumPopupOpen && (` back to `{premiumPopupOpen && (`.
+3. The premium popup title/body/OK strings (`lab.premium.title`, `lab.premium.body`, `lab.premium.ok`) and the button label (`lab.results.upgrade`) are already in both message files — no i18n work needed.
+4. Once premium routing exists, replace the popup body with a real upgrade CTA (e.g. link to `/premium/checkout`).
+
+### Related premium UI (NOT yet hidden — being kept honest)
+
+- `lab.results.upgrade` i18n key — **kept** so future re-enable needs no retranslation.
+- `lab.premium.title/body/ok` i18n keys — **kept** for the same reason.
+- Privacy-notice clause `legal.privacy.s3.l6` enumerating "提供账号体系、订阅、付费、内购或登录功能" — describes future capabilities, no implementation.
+
 ## State Persistence
 
 - **IndexedDB** (`features/storage.js`) — DB `MortgageStrategyDB` v1, stores: `mortgages`, `scenarios`, `constraints`, `savedResults`, `marketCache`. All ops are typed in JSDoc; SSR is rejected with a clear error. The `dbPromise` singleton resets itself on `onerror`/`onblocked` so a transient failure can be retried.
