@@ -16,7 +16,8 @@
       "Bash(NEXT_PUBLIC_BUILD_ID=local-test npx next build)",
       "Bash(git config *)",
       "Bash(git commit -m 'feat: Monte Carlo P10/P50/P90 quantile scenarios + i18n audit + docs' -m '**Scenario engine: quantile aggregation** *)",
-      "Bash(git commit -m 'fix\\(deploy\\): configure Cloudflare Workers static-assets deployment' -m '**Problem** *)"
+      "Bash(git commit -m 'fix\\(deploy\\): configure Cloudflare Workers static-assets deployment' -m '**Problem** *)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('apps/web/messages/zh-CN.json','utf8'\\)\\); JSON.parse\\(require\\('fs'\\).readFileSync\\('apps/web/messages/en-NZ.json','utf8'\\)\\); console.log\\('JSON_OK'\\)\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\ChrisYang\\AppData\\Local\\Temp"
