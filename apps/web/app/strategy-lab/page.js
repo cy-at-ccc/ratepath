@@ -2141,10 +2141,40 @@ export default function StrategyLab() {
                     <div className="slider-label-row">
                       <span className="form-label">{t("strategyLab.mediumTermDirection.label")}</span>
                       <span className="slider-value">
-                        {mediumTermDirection < -0.1 ? t("strategyLab.mediumTermDirection.textNeg") : mediumTermDirection > 0.1 ? t("strategyLab.mediumTermDirection.textPos") : t("strategyLab.mediumTermDirection.textMid")}
+                        <span className="slider-value-main">
+                          {mediumTermDirection >= 0 ? "+" : ""}{mediumTermDirection.toFixed(2)}
+                        </span>
+                        <span className="slider-value-sub">
+                          {Math.abs(mediumTermDirection) < 0.05
+                            ? t("strategyLab.mediumTermDirection.valueBpsFlat")
+                            : t(
+                                mediumTermDirection > 0
+                                  ? "strategyLab.mediumTermDirection.valueBpsRise"
+                                  : "strategyLab.mediumTermDirection.valueBpsFall",
+                                { bps: Math.round(Math.abs(mediumTermDirection) * 50) }
+                              )}
+                        </span>
                       </span>
                     </div>
-                    <Slider min={-1.0} max={1.0} step={0.1} value={mediumTermDirection} onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))} aria-label={t("strategyLab.mediumTermDirection.label")} aria-valuetext={mediumTermDirection < -0.1 ? t("strategyLab.mediumTermDirection.textNeg") : mediumTermDirection > 0.1 ? t("strategyLab.mediumTermDirection.textPos") : t("strategyLab.mediumTermDirection.textMid")} />
+                    <Slider
+                      min={-1.0}
+                      max={1.0}
+                      step={0.1}
+                      value={mediumTermDirection}
+                      onChange={(e) => setMediumTermDirection(parseFloat(e.target.value))}
+                      aria-label={t("strategyLab.mediumTermDirection.label")}
+                      aria-valuetext={
+                        `${mediumTermDirection >= 0 ? "+" : ""}${mediumTermDirection.toFixed(2)}, ` +
+                        (Math.abs(mediumTermDirection) < 0.05
+                          ? t("strategyLab.mediumTermDirection.valueBpsFlat")
+                          : t(
+                              mediumTermDirection > 0
+                                ? "strategyLab.mediumTermDirection.valueBpsRise"
+                                : "strategyLab.mediumTermDirection.valueBpsFall",
+                              { bps: Math.round(Math.abs(mediumTermDirection) * 50) }
+                            ))
+                      }
+                    />
                     <div className="slider-range-desc">
                       <span>{t("strategyLab.mediumTermDirection.range0")}</span>
                       <span>{t("strategyLab.mediumTermDirection.range1")}</span>
@@ -3915,6 +3945,20 @@ export default function StrategyLab() {
           font-size: 13px;
           font-weight: 600;
           color: var(--color-primary);
+          display: inline-flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 2px;
+          line-height: 1.2;
+        }
+        .slider-value-main {
+          font-variant-numeric: tabular-nums;
+        }
+        .slider-value-sub {
+          font-size: 11px;
+          font-weight: 400;
+          color: var(--text-secondary, #94a3b8);
+          font-variant-numeric: tabular-nums;
         }
 
         .slider-range-desc {

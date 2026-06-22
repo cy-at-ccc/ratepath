@@ -61,6 +61,24 @@ const UNCERTAINTY_TO_DELTA = {
   high:   0.020
 };
 
+// Single source of truth for the engine controls object built from the
+// user's wizard answers. Used by both the scenario generator and the OCR
+// step's engine-parameter disclosure panel — keeping them in lockstep so
+// the displayed values are exactly the ones the engine received.
+function buildEngineControls({ shortOutlook, mediumOutlook, uncertainty }) {
+  return {
+    shortTermChange: SHORT_TO_DELTA[shortOutlook] ?? 0,
+    mediumTermDirection: deriveMediumDirection(shortOutlook, mediumOutlook),
+    changeSpeed: 0.5,
+    uncertainty: UNCERTAINTY_TO_DELTA[uncertainty] ?? 0,
+    scenarioProbabilities: { low: 0.15, base: 0.7, high: 0.15 },
+    longTermCycleYears: 2,
+    longTermReversalBias: 0.9,
+    longTermAmplitude: 1.0,
+    monteCarloSampleCount: 200
+  };
+}
+
 const STEPS = ["welcome", "q1", "q2", "q3split", "q3", "q4", "q5", "q6", "ocr", "results"];
 const QUESTION_STEPS = ["q1", "q2", "q3split", "q3", "q4", "q5", "q6"];
 
@@ -137,6 +155,17 @@ function formatAllocationPct(value) {
   const pct = Number(value);
   if (!Number.isFinite(pct)) return "0%";
   return `${Math.round(pct * 100)}%`;
+}
+
+// Engine-parameter formatters for the OCR disclosure panel.
+function fmtPct(/** @type {number} */ v) {
+  if (!Number.isFinite(v)) return "—";
+  return `${(v * 100).toFixed(2)}%`;
+}
+function fmtSigned(/** @type {number} */ v) {
+  if (!Number.isFinite(v)) return "—";
+  if (!v) return "0.00";
+  return v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
 }
 
 function clampForecastYears(value) {
@@ -645,17 +674,7 @@ export default function LabPage() {
         betas: nzBetas,
         products: nzProfile.products,
         forecastMonths,
-        controls: {
-          shortTermChange: SHORT_TO_DELTA[shortOutlook],
-          mediumTermDirection: deriveMediumDirection(shortOutlook, mediumOutlook),
-          changeSpeed: 0.5,
-          uncertainty: UNCERTAINTY_TO_DELTA[uncertainty],
-          scenarioProbabilities: { low: 0.15, base: 0.7, high: 0.15 },
-          longTermCycleYears: 2,
-          longTermReversalBias: 0.9,
-          longTermAmplitude: 1.0,
-          monteCarloSampleCount: 200
-        }
+        controls: buildEngineControls({ shortOutlook, mediumOutlook, uncertainty })
       });
 
       // Stage 1b: 3 quantile scenarios from the MC pool.
@@ -1032,6 +1051,14 @@ export default function LabPage() {
       };
     });
   }, [scenarios, t]);
+
+  // ---- Engine controls (for the OCR-step disclosure panel) --------------
+  // Single source of truth shared with the `scenarios` useMemo above — the
+  // panel shows exactly what `generateScenarios` received.
+  const engineControls = useMemo(
+    () => buildEngineControls({ shortOutlook, mediumOutlook, uncertainty }),
+    [shortOutlook, mediumOutlook, uncertainty]
+  );
 
   // ---- Risk score + intro helper -----------------------------------------
   const riskScore = deriveRiskScore(shortOutlook, mediumOutlook, uncertainty);
@@ -1510,6 +1537,67 @@ export default function LabPage() {
                   />
                 </div>
                 <p className="ocr-summary">{ocrSummary}</p>
+                <details className="scenario-explainer engine-params-explainer">
+                  <summary>
+                    <span className="scenario-explainer-tag" aria-hidden="true">⚙</span>
+                    <span className="scenario-explainer-title">{t("lab.ocr.engineParams.title")}</span>
+                    <span className="scenario-explainer-chevron" aria-hidden="true">▾</span>
+                  </summary>
+                  <div className="scenario-explainer-body">
+                    <p className="scenario-explainer-text">{t("lab.ocr.engineParams.hint")}</p>
+                    <dl className="engine-params-list">
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.shortTermChange")}</dt>
+                          <dd>{fmtPct(engineControls.shortTermChange)}</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.shortTermChange")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.mediumTermDirection")}</dt>
+                          <dd>{fmtSigned(engineControls.mediumTermDirection)}</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.mediumTermDirection")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.uncertainty")}</dt>
+                          <dd>{fmtPct(engineControls.uncertainty)}</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.uncertainty")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.longTermCycleYears")}</dt>
+                          <dd>{engineControls.longTermCycleYears} yr</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.longTermCycleYears")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.longTermReversalBias")}</dt>
+                          <dd>{fmtPct(engineControls.longTermReversalBias)}</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.longTermReversalBias")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.longTermAmplitude")}</dt>
+                          <dd>{engineControls.longTermAmplitude.toFixed(2)}×</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.longTermAmplitude")}</p>
+                      </div>
+                      <div className="engine-params-item">
+                        <div className="engine-params-row-flex">
+                          <dt>{t("lab.ocr.engineParams.monteCarloSampleCount")}</dt>
+                          <dd>{engineControls.monteCarloSampleCount}</dd>
+                        </div>
+                        <p className="engine-params-help">{t("lab.ocr.engineParams.help.monteCarloSampleCount")}</p>
+                      </div>
+                    </dl>
+                  </div>
+                </details>
               </>
             ) : (
               <p className="ocr-summary">{t("lab.error.sim")}</p>
@@ -2783,6 +2871,52 @@ export default function LabPage() {
           font-size: 12.5px;
           color: var(--text-secondary, #cbd5e1);
           line-height: 1.55;
+        }
+        .scenario-explainer-text {
+          margin: 8px 0 0 0;
+          color: var(--text-secondary, #cbd5e1);
+        }
+        /* ===== Engine-parameters disclosure (OCR step) ===== */
+        /* Violet accent mirrors the q3split panel so users can link
+           "advanced / engine-level" surfaces. The parameter rows
+           themselves stay neutral to keep the disclosure scannable. */
+        .engine-params-explainer {
+          --explainer-accent: #8b5cf6;
+          margin-top: 8px;
+        }
+        .engine-params-explainer .scenario-explainer-title { font-weight: 500; }
+        .engine-params-list {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          margin: 12px 0 0 0;
+          padding: 0;
+        }
+        .engine-params-item { margin: 0; }
+        .engine-params-row-flex {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .engine-params-row-flex dt {
+          color: var(--text-secondary, #94a3b8);
+          font-size: 0.85rem;
+          font-weight: 500;
+        }
+        .engine-params-row-flex dd {
+          margin: 0;
+          font-variant-numeric: tabular-nums;
+          font-size: 0.9rem;
+          color: var(--text-primary, #e2e8f0);
+          font-weight: 600;
+        }
+        .engine-params-help {
+          margin: 4px 0 0 0;
+          font-size: 0.78rem;
+          line-height: 1.5;
+          color: var(--text-secondary, #94a3b8);
+          opacity: 0.85;
         }
 
         /* ===== Results — rec-card hover lift ===== */
